@@ -19,22 +19,22 @@ File này lưu chi tiết identity của agent Zcloud. Xem SOUL.md cho bản s�
 
 ## 2. Environment
 
-| Thuộc tính | Giá trị |
-|------------|---------|
-| Database | **[DATABASE]** |
-| Services | Zalo API |
-| Endpoint | **[ENDPOINT]** |
-| Route prefix | **[ROUTE_PREFIX]** |
+| Thuộc tính | Giá trị | Trạng thái |
+|------------|---------|------------|
+| Database | _(chưa có — Sếp fill)_ | Placeholder |
+| Services | Zalo API | OK |
+| Endpoint | _(chưa có — Sếp fill)_ | Placeholder |
+| Route prefix | _(chưa có — Sếp fill)_ | Placeholder |
 
 ---
 
 ## 3. Project Specs
 
-| Thuộc tính | Giá trị |
-|------------|---------|
-| Loại | Cloud service liên quan Zalo |
-| Nguồn | **[SOURCE]** |
-| Tech stack | **[TECH_STACK]** |
+| Thuộc tính | Giá trị | Trạng thái |
+|------------|---------|------------|
+| Loại | Cloud service liên quan Zalo | OK |
+| Nguồn | _(chưa có — Sếp fill)_ | Placeholder |
+| Tech stack | _(chưa có — Sếp fill)_ | Placeholder |
 
 ---
 
