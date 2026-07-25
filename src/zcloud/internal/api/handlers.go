@@ -211,7 +211,7 @@ func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	ok(w, msgs)
 }
 
-// Send message (tạm thời giả, sẽ nối core sau)
+// SendMessage gửi tin nhắn qua core API Zalo thật
 func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccountID string `json:"accountId"`
@@ -226,7 +226,104 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "missing fields")
 		return
 	}
-	ok(w, map[string]interface{}{"sent": true, "content": req.Content, "to": req.To})
+
+	// Lấy Zalo session từ database theo account
+	sessRec, err := s.Store.GetActiveSession(req.AccountID)
+	if err != nil || sessRec == nil {
+		fail(w, http.StatusUnauthorized, "not logged in. Vui lòng đăng nhập lại.")
+		return
+	}
+
+	// Parse cookies từ JSON
+	var cookies map[string]string
+	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+
+	// Tạo session + client
+	session := &core.Session{
+		Cookies:    cookies,
+		SecretKey:  sessRec.SecretKey,
+		IMEI:       sessRec.IMEI,
+		UserAgent:  sessRec.UserAgent,
+		APIType:    sessRec.APIType,
+		APIVersion: sessRec.APIVersion,
+	}
+	var wsURLs []string
+	json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
+	session.WSURLs = wsURLs
+
+	client := core.NewClient(session)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	msg, err := client.SendMessage(ctx, req.To, req.Content, core.MsgTypeText)
+	if err != nil {
+		s.Logger.Printf("send msg error: %v", err)
+		fail(w, http.StatusInternalServerError, "Gửi tin thất bại: "+err.Error())
+		return
+	}
+
+	// Lưu tin nhắn vào database
+	attJSON, _ := json.Marshal(msg.Attachments)
+	s.Store.SaveMessage(&store.Message{
+		ID:        msg.ID,
+		AccountID: req.AccountID,
+		ConvID:    req.To,
+		FromID:    session.UserID,
+		Content:   msg.Content,
+		MsgType:   int(msg.Type),
+		Timestamp: msg.Timestamp,
+		Attachments: string(attJSON),
+	})
+
+	ok(w, map[string]interface{}{
+		"sent":      true,
+		"msgId":     msg.ID,
+		"content":   msg.Content,
+		"to":        req.To,
+		"timestamp": msg.Timestamp,
+	})
+}
+
+// HandleGetConversationsFromAPI lấy danh sách hội thoại từ Zalo API thật
+func (s *Server) HandleGetConversationsFromAPI(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		fail(w, http.StatusBadRequest, "missing accountId")
+		return
+	}
+
+	sessRec, err := s.Store.GetActiveSession(accountID)
+	if err != nil || sessRec == nil {
+		fail(w, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	var cookies map[string]string
+	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+
+	session := &core.Session{
+		Cookies:    cookies,
+		SecretKey:  sessRec.SecretKey,
+		IMEI:       sessRec.IMEI,
+		UserAgent:  sessRec.UserAgent,
+		APIType:    sessRec.APIType,
+		APIVersion: sessRec.APIVersion,
+	}
+
+	client := core.NewClient(session)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	convs, err := client.GetConversations(ctx)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if convs == nil {
+		convs = []core.Conversation{}
+	}
+	ok(w, convs)
 }
 
 // ====================================
