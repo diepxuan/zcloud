@@ -118,9 +118,9 @@ func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 
 	var qrResp struct {
 		Data struct {
-			Code  int    `json:"code"`
-			Token string `json:"token"`
-			Image string `json:"image"`
+			Code  interface{} `json:"code"` // có thể là int hoặc string
+			Token string      `json:"token"`
+			Image string      `json:"image"`
 		} `json:"data"`
 		ErrorCode int `json:"error_code"`
 	}
