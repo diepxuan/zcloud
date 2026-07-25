@@ -15,12 +15,6 @@ import (
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
-// Client đại diện cho một Zalo client (core stub)
-type Client struct {
-	AccountID string
-	Session   map[string]string
-}
-
 // Server gắn kết HTTP server với store + core client
 type Server struct {
 	Store  *store.Store
@@ -28,7 +22,7 @@ type Server struct {
 
 	// Multi-user: map accountID → ZaloClient
 	mu      sync.RWMutex
-	clients map[string]*Client
+	clients map[string]*core.Client
 }
 
 // NewServer tạo server instance
@@ -36,7 +30,7 @@ func NewServer(s *store.Store, logger *log.Logger) *Server {
 	return &Server{
 		Store:   s,
 		Logger:  logger,
-		clients: make(map[string]*Client),
+		clients: make(map[string]*core.Client),
 	}
 }
 

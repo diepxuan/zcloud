@@ -17,8 +17,11 @@ type Config struct {
 	// Session
 	SessionDir string // Thư mục lưu session
 
-	// DB (tùy chọn — nếu set thì dùng SQLite thay local file)
+	// DB (tùy chọn — SQLite path, mặc định tạo zcloud.db)
 	DBPath string
+
+	// Media
+	MediaDir string // Thư mục lưu media files (ảnh, video, voice)
 
 	// Log
 	LogLevel int // 0=info, 1=debug, 2=verbose
@@ -42,7 +45,8 @@ func Parse() *Config {
 	flag.IntVar(&cfg.Port, "port", envInt("ZCLOUD_PORT", cfg.Port), "HTTP server port")
 	flag.StringVar(&cfg.Domain, "domain", envStr("ZCLOUD_DOMAIN", cfg.Domain), "Domain name")
 	flag.StringVar(&cfg.SessionDir, "session-dir", envStr("ZCLOUD_SESSION_DIR", cfg.SessionDir), "Session storage directory")
-	flag.StringVar(&cfg.DBPath, "db-path", envStr("ZCLOUD_DB_PATH", ""), "Database path (optional)")
+	flag.StringVar(&cfg.DBPath, "db-path", envStr("ZCLOUD_DB_PATH", ""), "Database path (default: zcloud.db)")
+	flag.StringVar(&cfg.MediaDir, "media-dir", envStr("ZCLOUD_MEDIA_DIR", "./zcloud-media"), "Media storage directory")
 	flag.IntVar(&cfg.LogLevel, "log-level", envInt("ZCLOUD_LOG_LEVEL", cfg.LogLevel), "Log level: 0=info, 1=debug, 2=verbose")
 	flag.BoolVar(&cfg.DevMode, "dev", envBool("ZCLOUD_DEV", false), "Development mode")
 	flag.Parse()

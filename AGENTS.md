@@ -14,12 +14,16 @@ Mỗi session startup, đọc theo thứ tự:
 8. `MEMORY.md` — trí nhớ dài hạn
 
 ## Dự án: zcloud
-- **Mục tiêu:** Cloud service Zalo — đăng nhập browser + chat real-time + lịch sử
+- **Mục tiêu:** Xây dựng cloud service Zalo đầy đủ:
+  1. ✅ Có URL cho Sếp đăng nhập bằng QR code
+  2. ✅ Có thể chat real-time với user Zalo khác
+  3. ✅ Lưu lịch sử chat và media lâu dài (SQLite + disk)
+  4. ✅ Đồng bộ lịch sử theo chuẩn Zalo (WebSocket cmd 510/511)
 - **Source code:** `src/zcloud/` (Go module `github.com/diepxuan/zcloud`)
 - **Master plan:** `docs/master-plan.md`
 - **Danh sách công việc:** `docs/tasks.md`
 - **Chính sách push:** Em toàn quyền quyết định, push trực tiếp vào `main` sau mỗi subtask. Không cần review.
-- **Công nghệ:** Go core + server, vanilla JS web UI
+- **Công nghệ:** Go core + server, SQLite + disk storage, vanilla JS web UI
 
 ## Cấu trúc thư mục
 - `src/zcloud/` — Source code chính

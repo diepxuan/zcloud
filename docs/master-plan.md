@@ -1,24 +1,46 @@
 # Master Plan: zcloud
 
-> **Mục tiêu:** Xây dựng cloud service Zalo — đăng nhập trình duyệt + chat real-time + lịch sử tin nhắn.
+> **Mục tiêu:** Xây dựng cloud service Zalo với đầy đủ:
+> 1. URL cho Sếp đăng nhập bằng QR code
+> 2. Chat real-time với user Zalo khác
+> 3. Lưu lịch sử chat và media lâu dài (SQLite + disk)
+> 4. Đồng bộ lịch sử theo chuẩn Zalo (WebSocket cmd 510/511)
+> 
 > **Chiến lược:** Dùng Web API (chat.zalo.me), Go cho toàn bộ logic, đồng bộ Android là tùy chọn sau.
 > **Chính sách push:** Em toàn quyền, push trực tiếp vào `main` sau mỗi subtask. Không cần review.
+> **Hoàn thành dự án:** Khi đạt đủ 4 mục tiêu trên, dự án coi như hoàn tất.
 
 ---
 
 ## Kiến trúc tổng thể
 
 ```
-┌──────────────┐     HTTP/WS     ┌────────────────────────────┐     Zalo API     ┌──────────┐
-│   Browser    │ ◄─────────────►│  zcloudd (Go daemon)       │◄──────────────►│ Zalo Web │
-│  (vanilla JS)│                 │  :8080                      │  (chat.zalo.me) │          │
-└──────────────┘                 │  ┌──────────────────────┐  │                 └──────────┘
-                                 │  │ src/zcloud/internal/ │  │
-                                 │  │  ├── core/  (logic)  │  │
-                                 │  │  ├── api/   (server) │  │
-                                 │  │  └── store/ (data)   │  │
-                                 │  └──────────────────────┘  │
-                                 └────────────────────────────┘
+┌──────────────┐     HTTP/WS     ┌──────────────────────────────────┐     Zalo API     ┌──────────────┐
+│  Browser A   │ ◄─────────────►│  zcloudd (Go daemon)             │◄──────────────►│ Zalo Web     │
+│  (user A)    │                 │  :8080                            │  (chat.zalo.me) │ (user A)     │
+├──────────────┤                 │  ┌─────────────────────────────┐ │                 ├──────────────┤
+│  Browser B   │                 │  │ Multi-User Manager          │ │                 │ Zalo Web     │
+│  (user B)    │                 │  │ ├── user A → core client A  │ │                 │ (user B)     │
+├──────────────┤                 │  │ ├── user B → core client B  │ │                 ├──────────────┤
+│  Zalo OA     │◄──Webhook─────►│  │ └── ...                     │ │                 │ Zalo OA API  │
+│  webhook     │                 │  │ ┌─────────────────────────┐ │ │                 │              │
+└──────────────┘                 │  │ │ Zalo OA Processor       │ │ │                 └──────────────┘
+                                 │  │ │ - xác thực webhook      │ │ │
+                                 │  │ │ - xử lý event OA        │ │ │
+                                 │  │ │ - gửi tin qua API OA    │ │ │
+                                 │  │ └─────────────────────────┘ │ │
+                                 │  │ ┌─────────────────────────┐ │ │
+                                 │  │ │ Core (logic Zalo user)  │ │ │
+                                 │  │ │ - encrypt, auth, chat   │ │ │
+                                 │  │ │ - websocket             │ │ │
+                                 │  │ └─────────────────────────┘ │ │
+                                 │  │ ┌─────────────────────────┐ │ │
+                                 │  │ │ Store (DB + Media)      │ │ │
+                                 │  │ │ - SQLite (multi-user)   │ │ │
+                                 │  │ │ - media files on disk   │ │ │
+                                 │  │ └─────────────────────────┘ │ │
+                                 │  └─────────────────────────────┘ │
+                                 └──────────────────────────────────┘
 ```
 
 ## Cấu trúc thư mục
@@ -29,22 +51,24 @@
 │   ├── go.mod
 │   ├── cmd/zcloudd/main.go
 │   ├── internal/
-│   │   ├── core/       # Giao thức Zalo: mã hóa, đăng nhập, chat, websocket
-│   │   ├── api/        # HTTP server: router, xử lý, ws
-│   │   ├── store/      # Lưu dữ liệu: session, tin nhắn (local file + DB)
-│   │   └── config.go
+│   │   ├── core/       # Core Zalo user: encrypt, auth, chat, websocket
+│   │   ├── oa/         # Zalo OA: xác thực webhook, xử lý event, gửi tin
+│   │   ├── user/       # Multi-user manager — quản lý N user
+│   │   ├── api/        # HTTP server: router, handlers, ws
+│   │   ├── store/      # Storage: SQLite + media files
+│   │   └── config/     # Cấu hình
 │   ├── web/            # Web UI (file tĩnh)
 │   └── examples/
-├── docs/               # ⭐ Tài liệu
+├── docs/
 │   ├── master-plan.md  # File này — tổng thể
 │   ├── tasks.md        # Danh sách công việc + trạng thái
-│   ├── tasks/          # Chi tiết từng công việc (00-06)
+│   ├── tasks/          # Chi tiết từng công việc
 │   ├── protocol/       # Đặc tả API Zalo
-│   ├── design/         # Tài liệu thiết kế Go
-│   ├── references/     # Tham khảo: source code clone, ghi chép
-│   └── database/       # Schema DB cho production
+│   ├── design/         # Tài liệu thiết kế
+│   ├── references/     # Source tham khảo
+│   └── database/       # Schema DB
 ├── scripts/
-│   └── re/             # Kịch bản RE (Node.js — tạm thời)
+│   └── re/             # Kịch bản RE (Node.js — tạm)
 ├── README.md
 ├── CHANGELOG.md
 ├── CLAUDE.md
@@ -62,19 +86,27 @@
 
 | ID | Tên | Phụ thuộc | Trạng thái |
 |----|-----|:---------:|:----------:|
-| 00 | Thiết lập môi trường + Go project | — | 🔴 Chờ |
+| 00 | Thiết lập môi trường + Go project | — | 🟢 Xong |
 | 01 | Reverse Zalo Web API | 00 | 🔴 Chờ |
-| 02 | Reverse Android Đồng bộ | *01-06 xong* | 🔴 Chờ (tùy chọn) |
+| 02 | Reverse Android Đồng bộ | *01-06 xong* | 🟡 Tạm hoãn |
 | 03 | Thiết kế Core Protocol | 01 | 🔴 Chờ |
-| 04 | Xây dựng Core Library (Go) | 01, 03 | 🔴 Chờ |
+| 04 | Xây dựng Core Library (Go) | 01, 03 | 🟡 Đang làm |
 | 05 | Xây dựng Server Daemon | 04 | 🔴 Chờ |
 | 06 | Xây dựng Web UI | 05 | 🔴 Chờ |
+| 07 | Multi-user Manager | 04 | 🔴 Chờ |
+| 08 | Zalo OA Integration | 04 | 🔴 Chờ |
+| 09 | Database & Media Store | 04 | 🟡 Đang làm |
 
 ## Luồng thực thi
 
 ```
 00 ──► 01 ──► 03 ──► 04 ──► 05 ──► 06
-                                         └──► 02 (optional)
+               │              │
+               ▼              ▼
+               07 ───────────► 08 (Zalo OA)
+               
+Luồng song song: 07 (multi-user) chạy cùng lúc với 04, không block 05.
+08 (Zalo OA) có thể làm sau khi 04 + 07 ổn định.
 ```
 
 ---

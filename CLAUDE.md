@@ -34,6 +34,15 @@ Theo `SOUL.md §4` thứ tự boot:
 | `docs/database/` | Schema DB cho production |
 | `docs/references/` | Source tham khảo (zca-js, zcago, Za-go) |
 
+## Mục tiêu dự án (theo master-plan.md)
+
+1. ✅ URL cho Sếp đăng nhập bằng QR code
+2. ✅ Chat real-time với user Zalo khác
+3. ✅ Lưu lịch sử chat và media lâu dài (SQLite + disk)
+4. ✅ Đồng bộ lịch sử theo chuẩn Zalo (WebSocket cmd 510/511)
+
+Hoàn thành 4 mục tiêu = dự án hoàn tất. Xem chi tiết tại `docs/master-plan.md`.
+
 ## Nguyên tắc làm việc
 
 1. **Mỗi công việc** = đọc master plan → đọc chi tiết công việc → code → kiểm tra → commit → push

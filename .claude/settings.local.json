@@ -1,0 +1,8 @@
+{
+  "env": {
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "oc/mimo-v2.5-free",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "oc/deepseek-v4-flash-free",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "oc/nemotron-3-ultra-free",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "oc/big-pickle"
+  }
+}
