@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/config"
+	"github.com/diepxuan/zcloud/internal/store"
 )
 
 func main() {
@@ -20,10 +21,24 @@ func main() {
 	// Logger
 	logger := log.New(os.Stdout, "[zcloud] ", log.LstdFlags|log.Lshortfile)
 	logger.Printf("Khởi động zcloud daemon — %s", cfg.HTTPEndpoint())
-	logger.Printf("Session dir: %s", cfg.SessionDir)
-	if cfg.DBPath != "" {
-		logger.Printf("Database: %s", cfg.DBPath)
+	logger.Printf("Database: %s", cfg.DBPath)
+	logger.Printf("Media dir: %s", cfg.MediaDir)
+
+	// ====================================
+	// Initialize database
+	// ====================================
+
+	db, err := store.New(cfg.DBPath, cfg.MediaDir)
+	if err != nil {
+		logger.Fatalf("Database init error: %v", err)
 	}
+	defer db.Close()
+
+	// Tạo media directory nếu chưa có
+	if err := os.MkdirAll(cfg.MediaDir, 0755); err != nil {
+		logger.Fatalf("Media dir error: %v", err)
+	}
+	logger.Printf("Database sẵn sàng — %s", db.Path())
 
 	// ====================================
 	// HTTP server
