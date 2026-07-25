@@ -257,17 +257,6 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 // Helpers
 // ====================================
 
-func cookiesToString(cookies map[string]string) string {
-	result := ""
-	for k, v := range cookies {
-		if result != "" {
-			result += "; "
-		}
-		result += k + "=" + v
-	}
-	return result
-}
-
 func stringMapToHTTP(h map[string]string) http.Header {
 	hh := make(http.Header)
 	for k, v := range h {

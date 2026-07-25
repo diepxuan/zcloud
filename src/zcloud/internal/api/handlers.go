@@ -19,13 +19,10 @@ import (
 type Server struct {
 	Store  *store.Store
 	Logger *log.Logger
-
-	// Multi-user: map accountID → ZaloClient
 	mu      sync.RWMutex
 	clients map[string]*core.Client
 }
 
-// NewServer tạo server instance
 func NewServer(s *store.Store, logger *log.Logger) *Server {
 	return &Server{
 		Store:   s,
@@ -64,337 +61,76 @@ func fail(w http.ResponseWriter, status int, msg string) {
 // ====================================
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
-	ok(w, map[string]interface{}{
-		"service": "zcloud",
-		"time":    time.Now().Unix(),
-	})
+	ok(w, map[string]interface{}{"service": "zcloud", "time": time.Now().Unix()})
 }
 
 // ====================================
-// QR Login
+// QR Login (2 bước: create + poll)
 // ====================================
 
-// HandleLoginQR tạo QR code và trả về base64 image + token
-func (s *Server) HandleLoginQR(w http.ResponseWriter, r *http.Request) {
-	// Tạo context với timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
+var qrSessions = make(map[string]*core.QRLoginSession)
+var qrMu sync.RWMutex
 
-	// QR login real
-	result, err := core.QRLogin(ctx)
-	if err != nil {
-		s.Logger.Printf("QR login error: %v", err)
-		fail(w, http.StatusInternalServerError, "QR login failed: "+err.Error())
-		return
-	}
-
-	// Lưu session vào database
-	session := result.Session
-	cookiesJSON, _ := json.Marshal(session.Cookies)
-
-	// Tạo account nếu chưa có
-	accountID := "acc_" + session.UserID
-	if err := s.Store.CreateAccount(accountID, "Zalo User "+session.UserID[:8], 1); err != nil {
-		s.Logger.Printf("create account error: %v", err)
-	}
-
-	// Lưu session
-	wsURLsJSON, _ := json.Marshal(session.WSURLs)
-	sessRecord := &store.Session{
-		ID:         session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
-		AccountID:  accountID,
-		UserID:     session.UserID,
-		Cookies:    string(cookiesJSON),
-		SecretKey:  session.SecretKey,
-		IMEI:       session.IMEI,
-		UserAgent:  session.UserAgent,
-		Language:   "vi",
-		WSURLs:     string(wsURLsJSON),
-		APIType:    30,
-		APIVersion: 665,
-		IsActive:   1,
-		ExpiresAt:  session.ExpiresAt,
-	}
-	if err := s.Store.SaveSession(sessRecord); err != nil {
-		s.Logger.Printf("save session error: %v", err)
-	}
-
-	ok(w, map[string]interface{}{
-		"accountId": accountID,
-		"userId":    session.UserID,
-		"expiresAt": session.ExpiresAt,
-	})
-}
-
-// ====================================
-// Conversations
-// ====================================
-
-func (s *Server) HandleConversations(w http.ResponseWriter, r *http.Request) {
-	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" {
-		fail(w, http.StatusBadRequest, "missing accountId")
-		return
-	}
-
-	convs, err := s.Store.GetConversations(accountID)
-	if err != nil {
-		s.Logger.Printf("get convs error: %v", err)
-		fail(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if convs == nil {
-		convs = []store.Conversation{}
-	}
-	ok(w, convs)
-}
-
-// ====================================
-// Messages
-// ====================================
-
-func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
-	accountID := r.URL.Query().Get("accountId")
-	convID := r.URL.Query().Get("convId")
-	cursorStr := r.URL.Query().Get("cursor")
-	limitStr := r.URL.Query().Get("limit")
-
-	if accountID == "" || convID == "" {
-		fail(w, http.StatusBadRequest, "missing accountId or convId")
-		return
-	}
-
-	cursor, _ := strconv.ParseInt(cursorStr, 10, 64)
-	if cursor == 0 {
-		cursor = time.Now().UnixMilli() + 1
-	}
-
-	limit, _ := strconv.Atoi(limitStr)
-	if limit <= 0 {
-		limit = 50
-	}
-
-	msgs, err := s.Store.GetMessages(accountID, convID, cursor, limit)
-	if err != nil {
-		s.Logger.Printf("get msgs error: %v", err)
-		fail(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if msgs == nil {
-		msgs = []store.Message{}
-	}
-	ok(w, msgs)
-}
-
-// ====================================
-// Send Message (qua core)
-// ====================================
-
-func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		AccountID string `json:"accountId"`
-		To        string `json:"to"`   // conversation ID
-		Content   string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "invalid body: "+err.Error())
-		return
-	}
-
-	if req.AccountID == "" || req.Content == "" {
-		fail(w, http.StatusBadRequest, "missing accountId or content")
-		return
-	}
-
-	// TODO: qua core gửi tin nhắn thật
-	// Hiện tại return success giả
-
-	ok(w, map[string]interface{}{
-		"sent":    true,
-		"content": req.Content,
-		"to":      req.To,
-	})
-}
-
-// ====================================
-// QR Code page (trả về HTML với QR image)
-// ====================================
-
-func (s *Server) HandleQRPage(w http.ResponseWriter, r *http.Request) {
-	// Lấy QR image từ login
+func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	result, err := core.QRLogin(ctx)
+	qrSession, err := core.CreateQRLogin(ctx)
 	if err != nil {
-		// Nếu lỗi, hiển thị form cho phép nhập cookie
-		s.serveQRForm(w, "QR login error: "+err.Error())
+		s.Logger.Printf("create QR error: %v", err)
+		fail(w, http.StatusInternalServerError, "Tao QR that bai: "+err.Error())
 		return
 	}
 
-	// Trích xuất QR image từ login flow (lấy từ step 4)
-	qrImage := ""
-	if result.LoginInfo != nil {
-		if img, ok := result.LoginInfo["image"].(string); ok {
-			qrImage = img
-		}
-	}
+	token := qrSession.Token
+	qrMu.Lock()
+	qrSessions[token] = qrSession
+	qrMu.Unlock()
 
-	if qrImage == "" {
-		// Không có QR từ flow (do flow tự động login), cho phép login cookie
-		s.serveQRForm(w, "")
+	go func() {
+		time.Sleep(5 * time.Minute)
+		qrMu.Lock()
+		delete(qrSessions, token)
+		qrMu.Unlock()
+	}()
+
+	ok(w, map[string]interface{}{
+		"token":   token,
+		"image":   qrSession.ImageB64,
+		"expires": qrSession.ExpiresAt.Unix(),
+	})
+}
+
+func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		var req struct{ Token string `json:"token"` }
+		json.NewDecoder(r.Body).Decode(&req)
+		token = req.Token
+	}
+	if token == "" {
+		fail(w, http.StatusBadRequest, "missing token")
 		return
 	}
 
-	// Hiển thị QR + tự động check login status
-	s.serveQRWithCheck(w, qrImage, result)
-}
+	qrMu.RLock()
+	qrSession, exists := qrSessions[token]
+	qrMu.RUnlock()
 
-func (s *Server) serveQRForm(w http.ResponseWriter, errMsg string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	errBlock := ""
-	if errMsg != "" {
-		errBlock = fmt.Sprintf(`<div style="color:red;margin-bottom:12px">%s</div>`, errMsg)
-	}
-	fmt.Fprint(w, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>ZCloud Login</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.card{background:#fff;border-radius:12px;padding:32px;width:90%;max-width:420px;box-shadow:0 2px 12px rgba(0,0,0,.1)}
-h1{font-size:22px;margin-bottom:16px;color:#333}
-input,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:14px;margin-bottom:12px}
-button{width:100%;padding:12px;background:#0068ff;color:#fff;border:none;border-radius:6px;font-size:16px;cursor:pointer}
-button:hover{background:#0052cc}
-.qr{padding:24px;background:#fff;border-radius:8px;margin-bottom:16px;text-align:center}
-.qr img{max-width:240px}
-.hidden{display:none}
-.tab{display:flex;margin-bottom:16px;gap:8px}
-.tab button{flex:1;padding:8px;background:#eee;color:#333;border-radius:6px}
-.tab button.active{background:#0068ff;color:#fff}
-</style>
-</head><body>
-<div class="card">
-<h1>ZCloud Login</h1>
-`+errBlock+`
-<div class="tab">
-<button class="active" onclick="showTab('qr')">QR Code</button>
-<button onclick="showTab('cookie')">Cookie</button>
-</div>
-
-<div id="tab-qr">
-<p style="margin-bottom:16px;color:#666">Đang tạo QR code...</p>
-</div>
-
-<div id="tab-cookie" class="hidden">
-<p style="margin-bottom:12px;color:#666">Dán cookie từ Zalo Web (F12 → Application → Cookies → chat.zalo.me)</p>
-<textarea id="cookieInput" rows="6" placeholder="zpsid=...; zpw_sek=..."></textarea>
-<button onclick="loginCookie()">Đăng nhập</button>
-</div>
-
-<div id="status" style="margin-top:16px;padding:12px;border-radius:6px;display:none"></div>
-</div>
-
-<script>
-function showTab(tab){
-document.querySelectorAll('.tab button').forEach(b=>b.classList.remove('active'));
-document.getElementById('tab-qr').classList.add('hidden');
-document.getElementById('tab-cookie').classList.add('hidden');
-if(tab==='qr'){
-document.querySelector('.tab button:first-child').classList.add('active');
-document.getElementById('tab-qr').classList.remove('hidden');
-}else{
-document.querySelector('.tab button:last-child').classList.add('active');
-document.getElementById('tab-cookie').classList.remove('hidden');
-}
-}
-async function loginCookie(){
-const s=document.getElementById('status');
-const cookie=document.getElementById('cookieInput').value.trim();
-if(!cookie){s.innerHTML='<span style="color:red">Nhập cookie</span>';s.style.display='block';return}
-s.innerHTML='Đang đăng nhập...';s.style.display='block';s.style.background='#e8f4fd';
-try{
-const r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie})});
-const d=await r.json();
-if(d.ok){s.innerHTML='Đăng nhập thành công! Đang chuyển...';s.style.background='#d4edda';setTimeout(()=>window.location.href='/chat',1000)}
-else{s.innerHTML='<span style="color:red">Lỗi: '+d.error+'</span>';s.style.background='#f8d7da'}
-}catch(e){s.innerHTML='<span style="color:red">Lỗi kết nối</span>';s.style.background='#f8d7da'}
-}
-</script>
-</body></html>`)
-}
-
-func (s *Server) serveQRWithCheck(w http.ResponseWriter, qrImage string, result *core.LoginResult) {
-	qrBlock := ""
-	if qrImage != "" {
-		if strings.HasPrefix(qrImage, "data:image") {
-			qrBlock = fmt.Sprintf(`<img src="%s" alt="QR Code">`, qrImage)
-		} else {
-			qrBlock = fmt.Sprintf(`<img src="data:image/png;base64,%s" alt="QR Code">`, qrImage)
-		}
-	}
-
-	userID := ""
-	if result != nil && result.Session != nil {
-		userID = result.Session.UserID
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>ZCloud — Chat</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.card{background:#fff;border-radius:12px;padding:32px;width:90%%;max-width:420px;box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center}
-h1{font-size:20px;margin-bottom:8px;color:#333}
-p{color:#666;margin-bottom:8px;font-size:14px}
-.qr-box{padding:16px;border:2px dashed #ddd;border-radius:8px;margin:16px 0}
-.qr-box img{max-width:200px}
-.badge{display:inline-block;padding:4px 12px;background:#e8f4fd;color:#0068ff;border-radius:12px;font-size:12px;margin-top:8px}
-</style>
-</head><body>
-<div class="card">
-<h1>ZCloud</h1>
-<p>Đăng nhập thành công</p>
-<div class="badge">UID: %s</div>
-<div class="qr-box">%s</div>
-<p style="font-size:13px;color:#999">Đã đăng nhập. Đang chuyển đến chat...</p>
-</div>
-<script>setTimeout(()=>window.location.href='/chat',2000)</script>
-</body></html>`, userID, qrBlock)
-}
-
-// ====================================
-// Cookie login endpoint
-// ====================================
-
-func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Cookie string `json:"cookie"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, http.StatusBadRequest, "invalid body")
+	if !exists {
+		fail(w, http.StatusNotFound, "QR session expired")
 		return
 	}
 
-	cookies := parseCookieString(req.Cookie)
-	if len(cookies) == 0 {
-		fail(w, http.StatusBadRequest, "no cookies found")
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	result, err := core.LoginWithCookies(ctx, cookies, "", "")
+	result, err := core.PollQRLogin(ctx, qrSession)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "login failed: "+err.Error())
+		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// Lưu session
 	session := result.Session
 	accountID := "acc_" + session.UserID
 	s.Store.CreateAccount(accountID, "Zalo User "+session.UserID[:8], 1)
@@ -417,20 +153,131 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:  session.ExpiresAt,
 	})
 
+	qrMu.Lock()
+	delete(qrSessions, token)
+	qrMu.Unlock()
+
 	ok(w, map[string]interface{}{
 		"accountId": accountID,
 		"userId":    session.UserID,
 	})
 }
 
+// ====================================
+// Conversations & Messages
+// ====================================
+
+func (s *Server) HandleConversations(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		fail(w, http.StatusBadRequest, "missing accountId")
+		return
+	}
+	convs, err := s.Store.GetConversations(accountID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if convs == nil {
+		convs = []store.Conversation{}
+	}
+	ok(w, convs)
+}
+
+func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	convID := r.URL.Query().Get("convId")
+	cursorStr := r.URL.Query().Get("cursor")
+	limitStr := r.URL.Query().Get("limit")
+
+	if accountID == "" || convID == "" {
+		fail(w, http.StatusBadRequest, "missing accountId or convId")
+		return
+	}
+
+	cursor, _ := strconv.ParseInt(cursorStr, 10, 64)
+	if cursor == 0 {
+		cursor = time.Now().UnixMilli() + 1
+	}
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 { limit = 50 }
+
+	msgs, err := s.Store.GetMessages(accountID, convID, cursor, limit)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if msgs == nil { msgs = []store.Message{} }
+	ok(w, msgs)
+}
+
+// Send message (tạm thời giả, sẽ nối core sau)
+func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"accountId"`
+		To        string `json:"to"`
+		Content   string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.AccountID == "" || req.Content == "" {
+		fail(w, http.StatusBadRequest, "missing fields")
+		return
+	}
+	ok(w, map[string]interface{}{"sent": true, "content": req.Content, "to": req.To})
+}
+
+// ====================================
+// Cookie Login
+// ====================================
+
+func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Cookie string `json:"cookie"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	cookies := parseCookieString(req.Cookie)
+	if len(cookies) == 0 {
+		fail(w, http.StatusBadRequest, "no cookies found")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	result, err := core.CookieLogin(ctx, cookies, "", "")
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "login failed: "+err.Error())
+		return
+	}
+
+	session := result.Session
+	accountID := "acc_" + session.UserID
+	s.Store.CreateAccount(accountID, "Zalo User "+session.UserID[:8], 1)
+
+	cookiesJSON, _ := json.Marshal(session.Cookies)
+	wsURLsJSON, _ := json.Marshal(session.WSURLs)
+	s.Store.SaveSession(&store.Session{
+		ID:        session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
+		AccountID: accountID, UserID: session.UserID,
+		Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
+		IMEI: session.IMEI, UserAgent: session.UserAgent,
+		Language: "vi", WSURLs: string(wsURLsJSON),
+		APIType: 30, APIVersion: 665, IsActive: 1, ExpiresAt: session.ExpiresAt,
+	})
+
+	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
+}
+
 func parseCookieString(s string) map[string]string {
 	cookies := make(map[string]string)
-	pairs := strings.Split(s, ";")
-	for _, pair := range pairs {
+	for _, pair := range strings.Split(s, ";") {
 		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
+		if pair == "" { continue }
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) == 2 {
 			cookies[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
@@ -440,201 +287,150 @@ func parseCookieString(s string) map[string]string {
 }
 
 // ====================================
-// Chat page (Web UI chính)
+// Login Page (HTML)
+// ====================================
+
+func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>ZCloud Login</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.card{background:#fff;border-radius:12px;padding:32px;width:90%;max-width:420px;box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center}
+h1{font-size:22px;margin-bottom:16px;color:#333}
+p{color:#666;margin-bottom:16px;font-size:14px}
+.qr-box{padding:16px;border:2px dashed #ddd;border-radius:8px;margin:16px auto;text-align:center;min-height:200px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.qr-box img{max-width:220px}.qr-box .loading{color:#999;font-size:14px}
+.status{padding:12px;border-radius:6px;margin-top:12px;display:none}
+.status.info{background:#e8f4fd;color:#0068ff;display:block}
+.status.success{background:#d4edda;color:#155724;display:block}
+.status.error{background:#f8d7da;color:#721c24;display:block}
+.btn{padding:10px 24px;background:#0068ff;color:#fff;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:12px}
+.btn:hover{background:#0052cc}.btn.gray{background:#6c757d}
+.hidden{display:none}.mt8{margin-top:8px}
+.input-group{margin:12px 0;text-align:left}
+.input-group label{font-size:13px;color:#666;display:block;margin-bottom:4px}
+.input-group textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;min-height:80px;font-family:monospace}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{flex:1;padding:8px;background:#eee;color:#333;border-radius:6px;border:none;cursor:pointer;font-size:13px}
+.tabs button.on{background:#0068ff;color:#fff}
+</style></head><body>
+<div class="card">
+<h1>ZCloud</h1>
+<p>Dang nhap Zalo</p>
+<div class="tabs"><button class="on" onclick="st('qr')">QR Code</button><button onclick="st('ck')">Cookie</button></div>
+<div id="tqr"><div class="qr-box" id="qrBox"><div class="loading">Dang tao QR code...</div></div><div id="qrSt" class="status"></div></div>
+<div id="tck" class="hidden"><div class="input-group"><label>Dan cookie tu Zalo Web (F12 -> Application -> Cookies -> chat.zalo.me):</label>
+<textarea id="cki" placeholder="zpsid=...; zpw_sek=..."></textarea></div>
+<button class="btn" onclick="lc()">Dang nhap</button><div id="ckSt" class="status"></div></div></div>
+<script>
+var pt=null;
+function st(t){document.querySelectorAll('#tqr,#tck').forEach(function(e){e.classList.add('hidden')});
+document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('on')});
+if(t==='qr'){document.getElementById('tqr').classList.remove('hidden');document.querySelector('.tabs button:first-child').classList.add('on');if(!pt)cq();}
+else{document.getElementById('tck').classList.remove('hidden');document.querySelector('.tabs button:last-child').classList.add('on');if(pt){clearInterval(pt);pt=null;}}}
+async function cq(){try{var r=await fetch('/api/qr/create');var d=await r.json();
+if(d.ok){document.getElementById('qrBox').innerHTML='<img src="data:image/png;base64,'+d.data.image+'" alt="QR">';
+document.getElementById('qrSt').className='status info';document.getElementById('qrSt').textContent='Quet QR bang Zalo tren dien thoai';
+pt=setInterval(async function(){try{var p=await fetch('/api/qr/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.data.token})});var p2=await p.json();
+if(p2.ok){clearInterval(pt);document.getElementById('qrSt').className='status success';document.getElementById('qrSt').textContent='Dang nhap thanh cong!';setTimeout(function(){window.location.href='/chat'},1000);}
+}catch(e){}},2000);}else{document.getElementById('qrBox').innerHTML='<div class="loading">Loi: '+d.error+'</div>';}
+}catch(e){document.getElementById('qrBox').innerHTML='<div class="loading">Loi ket noi</div>';}}
+async function lc(){var s=document.getElementById('ckSt');var c=document.getElementById('cki').value.trim();
+if(!c){s.textContent='Nhap cookie';s.className='status error';return}
+s.textContent='Dang dang nhap...';s.className='status info';
+try{var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:c})});var d=await r.json();
+if(d.ok){s.textContent='Dang nhap thanh cong!';s.className='status success';setTimeout(function(){window.location.href='/chat'},1000);}
+else{s.textContent='Loi: '+d.error;s.className='status error';}
+}catch(e){s.textContent='Loi ket noi';s.className='status error';}}
+cq();
+</script></body></html>`)
+}
+
+// ====================================
+// Chat Page (HTML)
 // ====================================
 
 func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
-	accounts, err := s.Store.ListAccounts(1) // Zalo User
-	if err != nil {
-		accounts = nil
+	accounts, _ := s.Store.ListAccounts(1)
+	accountOptions := ""
+	for _, a := range accounts {
+		sel := ""
+		if len(accounts) == 1 { sel = "selected" }
+		name := a.DisplayName
+		if name == "" { name = a.ID }
+		accountOptions += fmt.Sprintf(`<option value="%s" %s>%s</option>`, a.ID, sel, name)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	accountOptions := ""
-	if len(accounts) > 0 {
-		for _, a := range accounts {
-			sel := ""
-			if len(accounts) == 1 {
-				sel = "selected"
-			}
-			displayName := a.DisplayName
-			if displayName == "" {
-				displayName = a.ID
-			}
-			accountOptions += fmt.Sprintf(`<option value="%s" %s>%s</option>`, a.ID, sel, displayName)
-		}
-	}
-
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>ZCloud Chat</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-direction:column}
-.header{background:#0068ff;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px}
-.header h1{font-size:18px;flex:1}
-.header select{background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:13px}
-.header select option{color:#333}
-.container{display:flex;flex:1;overflow:hidden}
-.sidebar{width:300px;background:#fff;border-right:1px solid #e0e0e0;overflow-y:auto}
-.sidebar .search{padding:12px;border-bottom:1px solid #e0e0e0}
-.sidebar .search input{width:100%%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px}
-.conv{padding:12px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0}
-.conv:hover{background:#f5f8ff}
-.conv.active{background:#e8f0ff}
-.conv-name{font-size:14px;font-weight:500;color:#333}
-.conv-preview{font-size:12px;color:#999;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat-area{flex:1;display:flex;flex-direction:column}
-.chat-header{padding:12px 16px;background:#fff;border-bottom:1px solid #e0e0e0}
-.chat-header h2{font-size:16px;color:#333}
-.messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.hdr{background:#0068ff;color:#fff;padding:12px 16px;display:flex;align-items:center;gap:12px}
+.hdr h1{font-size:18px;flex:1}
+.hdr select{background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:13px}
+.hdr select option{color:#333}.hdr button{background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer}
+.ct{display:flex;flex:1;overflow:hidden}
+.sb{width:300px;background:#fff;border-right:1px solid #e0e0e0;overflow-y:auto}
+.sb .sr{padding:12px;border-bottom:1px solid #e0e0e0}
+.sb .sr input{width:100%%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px}
+.cv{padding:12px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+.cv:hover{background:#f5f8ff}.cv.on{background:#e8f0ff}
+.cv-n{font-size:14px;font-weight:500;color:#333}
+.cv-p{font-size:12px;color:#999;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ca{flex:1;display:flex;flex-direction:column}
+.ch{padding:12px 16px;background:#fff;border-bottom:1px solid #e0e0e0}
+.ch h2{font-size:16px;color:#333}
+.ms{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
 .msg{max-width:70%%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.4}
 .msg.in{background:#fff;align-self:flex-start;border-bottom-left-radius:4px}
 .msg.out{background:#0068ff;color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
-.msg .time{font-size:10px;color:inherit;opacity:.6;margin-top:4px;text-align:right}
-.msg.out .time{color:rgba(255,255,255,.7)}
-.input-area{display:flex;padding:12px 16px;background:#fff;border-top:1px solid #e0e0e0;gap:8px}
-.input-area input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:20px;font-size:14px;outline:none}
-.input-area input:focus{border-color:#0068ff}
-.input-area button{padding:10px 20px;background:#0068ff;color:#fff;border:none;border-radius:20px;font-size:14px;cursor:pointer}
-.input-area button:hover{background:#0052cc}
-.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#999;gap:8px}
-.empty-state .icon{font-size:48px}
-.load-more{text-align:center;padding:8px;color:#0068ff;cursor:pointer;font-size:13px}
-.hidden{display:none}
-@media(max-width:768px){.sidebar{width:100%%}.sidebar.hide{display:none}}
-</style>
-</head><body>
-<div class="header">
-<h1>ZCloud</h1>
-<select id="accountSelect" onchange="switchAccount()">%s</select>
-<button onclick="window.location.href='/'" style="background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer">Logout</button>
-</div>
-<div class="container">
-<div class="sidebar" id="sidebar">
-<div class="search"><input type="text" placeholder="Tìm kiếm..." oninput="filterConvs(this.value)"></div>
-<div id="convList"></div>
-</div>
-<div class="chat-area">
-<div class="chat-header"><h2 id="chatTitle">Chọn hội thoại</h2></div>
-<div class="messages" id="msgList">
-<div class="empty-state"><div class="icon">💬</div><div>Chọn một hội thoại để bắt đầu</div></div>
-</div>
-<div class="input-area hidden" id="inputArea">
-<input type="text" id="msgInput" placeholder="Nhập tin nhắn..." onkeydown="if(event.key==='Enter')sendMsg()">
-<button onclick="sendMsg()">Gửi</button>
-</div>
-</div>
-</div>
-
+.msg .tm{font-size:10px;opacity:.6;margin-top:4px;text-align:right}
+.msg.out .tm{color:rgba(255,255,255,.7)}
+.ia{display:flex;padding:12px 16px;background:#fff;border-top:1px solid #e0e0e0;gap:8px}
+.ia input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:20px;font-size:14px;outline:none}
+.ia input:focus{border-color:#0068ff}
+.ia button{padding:10px 20px;background:#0068ff;color:#fff;border:none;border-radius:20px;font-size:14px;cursor:pointer}
+.em{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#999;gap:8px;font-size:48px}
+.lm{text-align:center;padding:8px;color:#0068ff;cursor:pointer;font-size:13px}
+.hd{display:none}
+@media(max-width:768px){.sb{width:100%%}.sb.hide{display:none}}
+</style></head><body>
+<div class="hdr"><h1>ZCloud</h1><select id="ac" onchange="sa()">%s</select><button onclick="window.location.href='/'">Thoat</button></div>
+<div class="ct"><div class="sb"><div class="sr"><input type="text" placeholder="Tim kiem..." oninput="fc(this.value)"></div><div id="cl"></div></div>
+<div class="ca"><div class="ch"><h2 id="ctt">Chon hoi thoai</h2></div>
+<div class="ms" id="ml"><div class="em">Chon mot hoi thoai de bat dau</div></div>
+<div class="ia hd" id="ia"><input type="text" id="mi" placeholder="Nhap tin nhan..." onkeydown="if(event.key==='Enter')sm()"><button onclick="sm()">Gui</button></div></div></div>
 <script>
-let currentConv = '';
-let currentAccount = document.getElementById('accountSelect').value;
-let cursor = 0;
-let loading = false;
-let ws = null;
-
-document.addEventListener('DOMContentLoaded',()=>{if(currentAccount)loadConvs()});
-
-function switchAccount(){
-currentAccount=document.getElementById('accountSelect').value;
-if(currentAccount){loadConvs()}
-}
-
-async function loadConvs(){
-if(!currentAccount)return;
-try{
-const r=await fetch('/api/conversations?accountId='+currentAccount);
-const d=await r.json();
-if(d.ok){
-const list=document.getElementById('convList');
-list.innerHTML='';
-d.data.forEach(c=>{
-const div=document.createElement('div');
-div.className='conv';
-div.dataset.id=c.id;
-div.innerHTML='<div class="conv-name">'+escapeHtml(c.name||c.id)+'</div>'+
-'<div class="conv-preview">'+escapeHtml(c.lastMsgId||'')+'</div>';
-div.onclick=()=>selectConv(c.id);
-list.appendChild(div);
-});
-}
-}catch(e){console.error(e)}
-}
-
-function selectConv(id){
-currentConv=id;
-cursor=Date.now()*1000;
-document.querySelectorAll('.conv').forEach(c=>c.classList.toggle('active',c.dataset.id===id));
-document.getElementById('chatTitle').textContent=id;
-document.getElementById('inputArea').classList.remove('hidden');
-document.getElementById('msgList').innerHTML='<div class="load-more" onclick="loadMsgs()">Tải tin nhắn cũ</div>';
-loadMsgs();
-}
-
-async function loadMsgs(){
-if(!currentConv||loading||!currentAccount)return;
-loading=true;
-try{
-const r=await fetch('/api/messages?accountId='+currentAccount+'&convId='+currentConv+'&cursor='+cursor+'&limit=30');
-const d=await r.json();
-if(d.ok){
-const list=document.getElementById('msgList');
-if(cursor>Date.now()*1000)list.innerHTML='';
-d.data.forEach(m=>{
-const div=document.createElement('div');
-div.className='msg '+(m.fromId===currentAccount?'out':'in');
-const t=new Date(m.timestamp);
-const timeStr=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0');
-div.innerHTML='<div>'+escapeHtml(m.content)+'</div><div class="time">'+timeStr+'</div>';
-list.appendChild(div);
-});
-if(d.data.length>0){cursor=d.data[0].timestamp}
-list.scrollTop=list.scrollHeight;
-}
-}catch(e){console.error(e)}
-finally{loading=false}
-}
-
-async function sendMsg(){
-const input=document.getElementById('msgInput');
-const content=input.value.trim();
-if(!content||!currentConv||!currentAccount)return;
-input.value='';
-try{
-const r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({accountId:currentAccount,to:currentConv,content})});
-const d=await r.json();
-if(d.ok){
-const list=document.getElementById('msgList');
-const div=document.createElement('div');
-div.className='msg out';
-const t=new Date();
-div.innerHTML='<div>'+escapeHtml(content)+'</div><div class="time">'+t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0')+'</div>';
-list.appendChild(div);
-list.scrollTop=list.scrollHeight;
-}
-}catch(e){console.error(e)}
-}
-
-function filterConvs(q){
-document.querySelectorAll('.conv').forEach(c=>{
-c.style.display=c.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';
-});
-}
-
-function escapeHtml(s){
-const d=document.createElement('div');
-d.textContent=s;
-return d.innerHTML;
-}
-</script>
-</body></html>`, accountOptions)
-}
-
-// HandleLoginPage is an alias for HandleQRPage for compatibility
-func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
-	// Sử dụng QR form page
-	s.serveQRForm(w, "")
+var cc='',ca=document.getElementById('ac').value,cu=0,ld=false;
+document.addEventListener('DOMContentLoaded',function(){if(ca)lc()});
+function sa(){ca=document.getElementById('ac').value;if(ca)lc()}
+async function lc(){if(!ca)return;try{var r=await fetch('/api/conversations?accountId='+ca);var d=await r.json();
+if(d.ok){var el=document.getElementById('cl');el.innerHTML='';
+d.data.forEach(function(c){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
+dv.innerHTML='<div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div>';
+dv.onclick=function(){sc(c.id)};el.appendChild(dv)});}}catch(e){}}
+function sc(id){cc=id;cu=Date.now()*1000;
+document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
+document.getElementById('ctt').textContent=id;document.getElementById('ia').classList.remove('hd');
+document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tai tin nhan cu</div>';lm()}
+async function lm(){if(!cc||ld||!ca)return;ld=true;
+try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
+if(d.ok){var el=document.getElementById('ml');if(cu>Date.now()*1000)el.innerHTML='';
+d.data.forEach(function(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');
+var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+dv.innerHTML='<div>'+m.content+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv)});
+if(d.data.length>0)cu=d.data[0].timestamp;el.scrollTop=el.scrollHeight;}}catch(e){}finally{ld=false}}
+async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
+try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
+if(d.ok){var el=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg out';
+var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv);el.scrollTop=el.scrollHeight;}}catch(e){}}
+function fc(q){document.querySelectorAll('.cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
+</script></body></html>`, accountOptions)
 }

@@ -131,6 +131,12 @@ type OldMessages struct {
 	ThreadType  ThreadType
 }
 
+// LoginResult kết quả đăng nhập
+type LoginResult struct {
+	Session *Session
+	Cookies map[string]string
+}
+
 // ====================================
 // SessionContext — interface cho encrypt.go
 // ====================================
