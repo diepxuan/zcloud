@@ -27,4 +27,19 @@ Thumbs.db
 # Coverage
 coverage/
 
-# Mở rộng khi tech stack được xác định (xem IDENTITY.md §3 Project Specs).
+# Go
+src/zcloud/bin/
+*.exe
+*.test
+*.out
+coverage.out
+*.prof
+
+# References — cloned source code tham khảo
+docs/references/zca-js/
+docs/references/zcago/
+docs/references/za-go/
+docs/references/*/.git/
+
+# RE scripts
+scripts/re/node_modules/

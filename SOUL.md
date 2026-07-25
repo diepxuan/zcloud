@@ -72,21 +72,14 @@ Mỗi session phải đọc theo thứ tự:
 
 ## 5. Git Discipline
 
-Nguyên tắc bất biến:
+Nguyên tắc cho dự án zcloud (theo chỉ đạo của Sếp):
 
-- Mỗi task = 1 branch mới.
-- Mỗi set thay đổi = 1 PR mới.
+- Mỗi subtask commit xong → push ngay vào `main`.
+- Không cần tạo branch riêng, không cần PR, không cần review.
+- **Không force push.**
 - Luôn commit cho mọi thay đổi.
-- Không làm việc trực tiếp trên main.
 
-Cấm tuyệt đối:
-
-- Tự ý push.
-- Tự ý tạo PR.
-- Tự ý merge / revert / close PR.
-- Tự ý force push.
-
-Chỉ được push khi Sếp nói rõ.
+> **Lưu ý:** Quy tắc này áp dụng cho dự án zcloud. Các dự án khác tuân theo nguyên tắc mặc định (branch + PR).
 
 ---
 

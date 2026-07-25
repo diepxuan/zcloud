@@ -1,50 +1,82 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# CLAUDE.md — Hướng dẫn cho Claude Code trong dự án zcloud
 
 ## Repository
 
 | Thuộc tính | Giá trị |
 |------------|---------|
 | Tên | zcloud |
-| Loại | Cloud service liên quan Zalo |
-| License | MIT — `LICENSE` (Copyright 2026 DXVN) |
-| Workspace full | `/root/.openclaw/workspace/projects/zcloud/` |
+| Mô tả | Cloud service Zalo (chat.zalo.me) |
+| License | MIT — `LICENSE` (Bản quyền 2026 DXVN) |
+| Workspace | `/root/.openclaw/workspace/projects/zcloud/` |
 
-> Trước khi sửa, push, hay bất cứ hành động outward-facing nào: **xác nhận Sếp**.
+## Công nghệ sử dụng
 
-## Identity & Conventions
+| Thành phần | Công nghệ | Vị trí |
+|-----------|-----------|--------|
+| Thư viện core | Go 1.22+ | `src/zcloud/internal/core/` |
+| HTTP server | Go net/http | `src/zcloud/internal/api/` |
+| WebSocket | `github.com/coder/websocket` | `src/zcloud/internal/core/` |
+| Web UI | Vanilla JS (ES6+ modules) | `src/zcloud/web/` |
+| Lưu session | File JSON mã hóa / DB | `src/zcloud/internal/store/` |
 
-Theo `SOUL.md §4` (là chuẩn), thứ tự boot order: `SOUL.md` → `USER.md` → `IDENTITY.md` → `TOOLS.md` → `memory/<hôm-nay>.md` → `memory/<hôm-qua>.md` → `MEMORY.md` (main session).
+## Nhận dạng & Quy ước
 
-| File | Vai trò | Mức |
-|------|---------|-----|
-| `SOUL.md` | Bản sắc, nguyên tắc vận hành, voice, git discipline | **Cao nhất** — xung đột ưu tiên SOUL.md |
-| `IDENTITY.md` | Tên Bột, workspace, server, DB, project specs | Chuẩn identity |
-| `AGENTS.md` | Memory, red lines, heartbeat, group-chat etiquette | Chuẩn hành vi |
-| `USER.md` | Thông tin Sếp Duc Tran, timezone Asia/Saigon | Chuẩn user |
-| `TOOLS.md` | Local environment notes | Mở rộng |
+Theo `SOUL.md §4` thứ tự boot:
+`SOUL.md` → `USER.md` → `IDENTITY.md` → `TOOLS.md` → `docs/master-plan.md` → `docs/tasks.md` → `docs/tasks/<công-việc>.md`
 
-## Quy tắc cốt lõi (tóm tắt từ `SOUL.md`)
+| File | Vai trò |
+|------|---------|
+| `docs/master-plan.md` | Master plan tổng thể — đọc trước khi làm bất kỳ công việc nào |
+| `docs/tasks.md` | Danh sách công việc + trạng thái |
+| `docs/tasks/<id>-<tên>.md` | Chi tiết công việc — sub-plan, kiểm tra |
+| `docs/protocol/` | Đặc tả API Zalo |
+| `docs/design/` | Tài liệu thiết kế Go |
+| `docs/database/` | Schema DB cho production |
+| `docs/references/` | Source tham khảo (zca-js, zcago, Za-go) |
 
-- Ngôn ngữ: **chỉ tiếng Việt**. Xưng hô Sếp / em / đệ.
-- Phong cách: nhanh, gọn, chính xác — không emoji, không filler.
-- **Không bịa** thông tin — phải từ nguồn chính thức.
-- **Không tạo/sửa schema** nếu không được yêu cầu.
-- Báo cáo phải kèm **bằng chứng**: file đổi, test/PR status.
+## Nguyên tắc làm việc
 
-## Git Discipline
+1. **Mỗi công việc** = đọc master plan → đọc chi tiết công việc → code → kiểm tra → commit → push
+2. **Go là source chính thức** — toàn bộ logic reverse (mã hóa, đăng nhập, chat, websocket)
+3. **Node.js** chỉ dùng tạm ở `scripts/re/` — không đưa vào production
+4. **Chính sách push:** nhánh `main`, push trực tiếp sau mỗi subtask. Không tạo PR.
+5. **CSDL:** File local mặc định. Nếu Sếp set env DB → dùng SQLite. Schema tại `docs/database/schema.sql`
+6. **Kiểm tra liên kết:** Mỗi công việc xong → xem output có đúng spec không → cập nhật công việc kế tiếp
 
-- Mỗi task = 1 branch. Mỗi set thay đổi = 1 PR. Luôn commit.
-- **Cấm:** tự push, tự tạo PR, tự merge/revert/close PR, tự force push.
-- Push chỉ khi Sếp nói rõ.
+## Quy tắc cốt lõi (SOUL.md §2-3)
 
-## Tài liệu
+- Ngôn ngữ: **chỉ tiếng Việt**. Xưng hô Sếp / em / đệ
+- Phong cách: nhanh, gọn, chính xác — không emoji, không rườm rà
+- **Không bịa thông tin** — phải từ nguồn chính thức
+- **Không tạo/sửa schema** nếu không được yêu cầu
+- Báo cáo phải kèm **bằng chứng**: file đổi, kết quả test
 
-Mỗi package/script mới phải có README.md đủ 5 mục theo `SOUL.md §6`: mục đích, cách dùng, cấu trúc file, dependencies, troubleshooting. Versioned projects thêm CHANGELOG.md.
+## Mã hóa Zalo (đã xác nhận)
 
-## Red Lines (từ `AGENTS.md`)
+- AES-128-CBC (IV zero) — **không phải AES-ECB** như tài liệu cũ
+- Khóa: Base64-giải mã `zpw_enk` từ đăng nhập
+- Chữ ký: MD5("zsecure" + loại + các tham số đã sắp xếp)
+- WebSocket event: AES-GCM + giải nén gzip
 
-- Không exfiltrate. Không lệnh hủy diệt khi chưa hỏi.
-- Trước đổi config (crontab, systemd, nginx, shell rc) → đọc state hiện tại, merge chứ không overwrite.
-- `trash` > `rm`. Khi nghi ngờ → hỏi.
+## Tham khảo (clone sẵn tại `docs/references/`)
+
+| Thư viện | Ngôn ngữ | Sao |
+|----------|:--------:|:---:|
+| zca-js | TypeScript | 567★ |
+| zcago | Go | 8★ |
+| Za-go | Go | 64★ |
+
+## Giới hạn đỏ (từ AGENTS.md)
+
+- Không tự ý push/tạo PR/merge/phục hồi — chỉ push khi Sếp nói rõ
+- Không sửa config hệ thống (crontab, systemd, nginx) khi chưa hỏi
+- `trash > rm`. Khi nghi ngờ → hỏi Sếp
+
+## Kỷ luật Git
+
+- Mỗi subtask = 1 commit. **Push ngay vào `main`**, không cần review.
+- **Không force push.**
+- Định dạng commit: `<loại>(<phạm vi>): <mô tả>`
+  - `feat(core): thêm mã hóa AES-128-CBC`
+  - `docs(protocol): thêm đặc tả WebSocket`
+  - `fix(api): xử lý session hết hạn`
