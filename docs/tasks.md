@@ -1,51 +1,21 @@
 # Tasks — Reverse Zalo & Build zcloud
 
-> Master plan tại [master-plan.md](master-plan.md).
-> File này là task list tổng quan, chi tiết từng task tại `tasks/<id>-*.md`.
+| ID | Tên | Trạng thái | Ghi chú |
+|----|-----|:----------:|---------|
+| 00 | Thiết lập môi trường + Go project | 🟢 Xong | Go 1.22, module, thư mục |
+| 01 | Reverse Zalo Web API | 🟢 Xong | AES-128-CBC, login, REST, WS (từ source tham khảo) |
+| 02 | Reverse Android Sync | 🕐 Tạm hoãn | Web API WS cmd 510/511 là đủ, không cần Android |
+| 03 | Thiết kế Core Protocol | 🟢 Xong | types, errors, interfaces |
+| 04 | Xây dựng Core Library (Go) | 🟢 Xong | encrypt, auth, chat, websocket |
+| 05 | Xây dựng Server Daemon | 🟢 Xong | REST API + WS trên 8080 |
+| 06 | Xây dựng Web UI | 🟢 Xong | Login page QR/cookie, Chat page |
+| 07 | Multi-user Manager | 🟢 Xong | accounts + sessions trong DB |
+| 08 | Zalo OA Integration | 🕐 Tạm hoãn | Schema DB sẵn, logic chưa cần |
+| 09 | Database & Media Store | 🟢 Xong | SQLite + disk cho media |
 
----
+## Mục tiêu dự án (master-plan.md)
 
-## Task List
-
-| ID | Tên | Phụ thuộc | Plan | Status | Ghi chú |
-|----|-----|:---------:|:----:|:------:|---------|
-| **00** | Setup môi trường + Go project | — | ✅ | 🔴 Pending | Toolchain, go.mod, thư mục |
-| **01** | Reverse Zalo Web API | 00 | 🔴 Cần viết | 🔴 Pending | Capture login, encryption, endpoints, WS |
-| **02** | Reverse Android Sync | *01-06 xong* | ❌ | 🟡 Deferred | Optional — chỉ làm khi Web API thiếu history |
-| **03** | Design Core Protocol | 01 | 🔴 Cần viết | 🔴 Pending | Go interfaces design |
-| **04** | Build Core Library (Go) | 01, 03 | 🔴 Cần viết | 🔴 Pending | encrypt → auth → chat → websocket |
-| **05** | Build Server Daemon | 04 | 🔴 Cần viết | 🔴 Pending | REST API + WebSocket |
-| **06** | Build Web UI | 05 | 🔴 Cần viết | 🔴 Pending | SPA vanilla JS |
-
----
-
-## Luồng thực thi
-
-```
-00 ──► 01 ──► 03 ──► 04 ──► 05 ──► 06
-                                         └──► 02 (optional)
-```
-
-## Legend
-
-| Ký hiệu | Ý nghĩa |
-|:-------:|---------|
-| 🔴 Pending | Chưa bắt đầu |
-| 🟡 In Progress | Đang làm |
-| 🟢 Done | Hoàn thành |
-| 🟡 Deferred | Tạm hoãn — làm sau |
-| ❌ | Chưa có |
-
----
-
-## Task outputs (liên kết giữa các task)
-
-| Task | Output | Input cho task |
-|------|--------|:--------------:|
-| 00 | Thư mục + go.mod + .gitignore | 01 |
-| 01 | `docs/protocol/*.md` | 03, 04 |
-| 03 | `docs/design/*.md` | 04 |
-| 04 | `src/zcloud/internal/core/*.go` | 05 |
-| 05 | `src/zcloud/internal/api/*.go` + server binary | 06 |
-| 06 | `src/zcloud/web/*` | — |
-| 02 | `docs/protocol/android-*.md` | — |
+1. ✅ **URL login QR** — `http://zcloud.diepxuan.corp:8080`
+2. ✅ **Chat real-time** — Gửi/nhận qua core API + WebSocket push
+3. ✅ **Lưu lịch sử + media** — SQLite messages + disk media
+4. ✅ **Đồng bộ lịch sử Zalo** — WebSocket listener nền, lưu real-time
