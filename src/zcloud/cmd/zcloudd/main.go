@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/diepxuan/zcloud/internal/api"
 	"github.com/diepxuan/zcloud/internal/config"
 	"github.com/diepxuan/zcloud/internal/store"
 )
@@ -41,16 +42,14 @@ func main() {
 	logger.Printf("Database sẵn sàng — %s", db.Path())
 
 	// ====================================
-	// HTTP server
+	// Setup HTTP server
 	// ====================================
 
 	mux := http.NewServeMux()
 
-	// Health check
-	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ok":true,"service":"zcloud"}`))
-	})
+	// Tạo server handler và gắn tất cả routes
+	s := api.NewServer(db, logger)
+	api.SetupRouter(mux, s, db)
 
 	// CORS middleware (dev mode)
 	var handler http.Handler = mux
