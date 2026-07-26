@@ -9,162 +9,159 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
 )
 
-// ====================================
-// Zalo Authentication — QR + Cookie
-// ====================================
+const defaultUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-const (
-	defaultUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
-
-// QRLoginSession lưu trạng thái QR login
 type QRLoginSession struct {
-	Cookies   map[string]string
-	Token     string
-	IMEI      string
-	UserAgent string
-	ImageB64  string // QR code image (base64 PNG)
-	ExpiresAt time.Time
+	Code     string
+	ImageB64 string
+	IMEI     string
+	client   *http.Client
+	jar      *cookiejar.Jar
 }
 
-// ====================================
-// IMEI generation
-// ====================================
+type LoginResult struct {
+	Session *Session
+	Cookies map[string]string
+}
 
 func generateIMEI(ua string) string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	uuid := hex.EncodeToString(b)
 	uuid = uuid[:8] + "-" + uuid[8:12] + "-" + uuid[12:16] + "-" + uuid[16:20] + "-" + uuid[20:]
-
 	sum := md5.Sum([]byte(ua))
 	return strings.ToUpper(uuid) + "-" + hex.EncodeToString(sum[:])[:12]
 }
 
-// ====================================
-// Step 1: Create QR code
-// ====================================
+// newZaloClient tạo HTTP client với cookie jar chuẩn
+func newZaloClient() (*http.Client, *cookiejar.Jar) {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Jar: jar, Timeout: 30 * time.Second}, jar
+}
 
-// CreateQRLogin thực hiện các bước tạo QR code:
-// 1. Load login page → lấy version
-// 2. Get login info + verify client
-// 3. Generate QR
-// Trả về QRLoginSession (chứa image QR + token + cookies)
-func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
-	imei := generateIMEI(defaultUA)
-	jar := newCookieJar()
-	client := &http.Client{Timeout: 30 * time.Second}
+func get(ctx context.Context, client *http.Client, urlStr string, headers http.Header) (*http.Response, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
+	req.Header = headers
+	return client.Do(req)
+}
 
-	// ====================================
-	// Bước 1: Load login page
-	// ====================================
-	req1, _ := http.NewRequestWithContext(ctx, "GET", "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me", nil)
-	req1.Header.Set("User-Agent", defaultUA)
-	resp1, err := client.Do(req1)
-	if err != nil {
-		return nil, fmt.Errorf("load page: %w", err)
+func postForm(ctx context.Context, client *http.Client, urlStr string, headers http.Header, data url.Values) (*http.Response, error) {
+	body := strings.NewReader(data.Encode())
+	req, _ := http.NewRequestWithContext(ctx, "POST", urlStr, body)
+	if headers != nil {
+		for k, v := range headers {
+			req.Header[k] = v
+		}
 	}
-	bodyBytes, _ := io.ReadAll(resp1.Body)
-	resp1.Body.Close()
-	jar.SetFromHeader(resp1.Header)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return client.Do(req)
+}
 
-	// Tìm version từ JS bundle
-	version := extractVersion(string(bodyBytes))
-	_ = version
-
-	// ====================================
-	// Bước 2: Get login info
-	// ====================================
-	infoData := url.Values{"imei": {imei}, "type": {"30"}, "version": {version}}
-	req2, _ := http.NewRequestWithContext(ctx, "POST", "https://id.zalo.me/account/logininfo", strings.NewReader(infoData.Encode()))
-	setQRHeaders(req2, defaultUA, jar)
-	resp2, err := client.Do(req2)
-	if err != nil {
-		return nil, fmt.Errorf("login info: %w", err)
-	}
-	resp2.Body.Close()
-	jar.SetFromHeader(resp2.Header)
-
-	// ====================================
-	// Bước 3: Verify client
-	// ====================================
-	verifyData := url.Values{"imei": {imei}, "type": {"30"}}
-	req3, _ := http.NewRequestWithContext(ctx, "POST", "https://id.zalo.me/account/verify-client", strings.NewReader(verifyData.Encode()))
-	setQRHeaders(req3, defaultUA, jar)
-	resp3, err := client.Do(req3)
-	if err != nil {
-		return nil, fmt.Errorf("verify client: %w", err)
-	}
-	resp3.Body.Close()
-	jar.SetFromHeader(resp3.Header)
-
-	// ====================================
-	// Bước 4: Generate QR
-	// ====================================
-	qrData := url.Values{"imei": {imei}, "type": {"30"}}
-	req4, _ := http.NewRequestWithContext(ctx, "POST", "https://id.zalo.me/account/authen/qr/generate", strings.NewReader(qrData.Encode()))
-	setQRHeaders(req4, defaultUA, jar)
-	resp4, err := client.Do(req4)
-	if err != nil {
-		return nil, fmt.Errorf("generate qr: %w", err)
-	}
-	defer resp4.Body.Close()
-	jar.SetFromHeader(resp4.Header)
-
-	var qrResp struct {
-		Data struct {
-			Code  interface{} `json:"code"` // có thể là int hoặc string
-			Token string      `json:"token"`
-			Image string      `json:"image"`
-		} `json:"data"`
-		ErrorCode int `json:"error_code"`
-	}
-	if err := json.NewDecoder(resp4.Body).Decode(&qrResp); err != nil {
-		return nil, fmt.Errorf("parse qr: %w", err)
-	}
-	if qrResp.ErrorCode != 0 {
-		return nil, fmt.Errorf("qr generate error %d", qrResp.ErrorCode)
-	}
-
-	session := &QRLoginSession{
-		Cookies:   jar.cookies,
-		Token:     qrResp.Data.Token,
-		IMEI:      imei,
-		UserAgent: defaultUA,
-		ImageB64:  qrResp.Data.Image,
-		ExpiresAt: time.Now().Add(3 * time.Minute),
-	}
-
-	return session, nil
+func readBody(resp *http.Response) ([]byte, error) {
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
 
 // ====================================
-// Step 2: Poll QR + Login
+// Bước 1: Tạo QR code
 // ====================================
 
-// PollQRLogin poll QR status và hoàn thành login khi user scan
-// Trả về LoginResult khi thành công
-func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, error) {
-	jar := newCookieJar()
-	jar.Set(session.Cookies)
-	client := &http.Client{Timeout: 30 * time.Second}
-	ua := session.UserAgent
+func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
+	client, jar := newZaloClient()
+	imei := generateIMEI(defaultUA)
 
-	pollData := url.Values{
-		"token": {session.Token},
-		"imei":  {session.IMEI},
-		"type":  {"30"},
+	// Headers giống browser cho GET login page
+	bh := http.Header{}
+	bh.Set("User-Agent", defaultUA)
+	bh.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	bh.Set("Accept-Language", "vi-VN,vi;q=0.9")
+	bh.Set("Sec-CH-UA", `"Chromium";v="130"`)
+	bh.Set("Sec-CH-UA-Mobile", "?0")
+	bh.Set("Sec-CH-UA-Platform", `"Windows"`)
+
+	get(ctx, client, "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F", bh)
+
+	// Headers cho AJAX requests (QR generate, poll)
+	ah := http.Header{}
+	ah.Set("User-Agent", defaultUA)
+	ah.Set("Accept", "*/*")
+	ah.Set("Accept-Language", "vi-VN,vi;q=0.9")
+	ah.Set("Sec-CH-UA", `"Chromium";v="130"`)
+	ah.Set("Sec-CH-UA-Mobile", "?0")
+	ah.Set("Sec-CH-UA-Platform", `"Windows"`)
+	ah.Set("Sec-Fetch-Dest", "empty")
+	ah.Set("Sec-Fetch-Mode", "cors")
+	ah.Set("Sec-Fetch-Site", "same-origin")
+	ah.Set("Referer", "https://id.zalo.me/account?continue=https%3A%2F%2Fzalo.me%2Fpc")
+
+	postForm(ctx, client, "https://id.zalo.me/account/logininfo", ah,
+		url.Values{"v": {"665"}, "continue": {"https://zalo.me/pc"}})
+	postForm(ctx, client, "https://id.zalo.me/account/verify-client", ah,
+		url.Values{"v": {"665"}, "type": {"device"}, "continue": {"https://zalo.me/pc"}})
+
+	resp4, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/generate", ah,
+		url.Values{"v": {"665"}, "continue": {"https://zalo.me/pc"}})
+	if err != nil {
+		return nil, fmt.Errorf("generate qr: %w", err)
 	}
 
-	// ====================================
-	// Poll waiting-scan (tối đa 120 lần = 4 phút)
-	// ====================================
-	scanned := false
+	body4, _ := readBody(resp4)
+	var qrResp struct {
+		Data struct {
+			Code  string `json:"code"`
+			Image string `json:"image"`
+		} `json:"data"`
+		ErrorCode int    `json:"error_code"`
+		ErrorMsg  string `json:"error_message"`
+	}
+	if err := json.Unmarshal(body4, &qrResp); err != nil {
+		return nil, fmt.Errorf("parse qr: %w — body: %s", err, string(body4))
+	}
+	if qrResp.ErrorCode != 0 {
+		return nil, fmt.Errorf("qr error %d: %s", qrResp.ErrorCode, qrResp.ErrorMsg)
+	}
+
+	image := strings.TrimPrefix(qrResp.Data.Image, "data:image/png;base64,")
+
+	return &QRLoginSession{
+		Code:     qrResp.Data.Code,
+		ImageB64: image,
+		IMEI:     imei,
+		client:   client,
+		jar:      jar,
+	}, nil
+}
+
+// ====================================
+// Bước 2: Poll QR + Cookie login (dùng chung client/jar)
+// ====================================
+
+func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, error) {
+	client := session.client
+	code := session.Code
+	imei := session.IMEI
+
+	// Headers cho QR poll (giống zcago)
+	ph := http.Header{}
+	ph.Set("User-Agent", defaultUA)
+	ph.Set("Accept", "*/*")
+	ph.Set("Accept-Language", "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5")
+	ph.Set("Content-Type", "application/x-www-form-urlencoded")
+	ph.Set("Sec-CH-UA", `"Chromium";v="130"`)
+	ph.Set("Sec-CH-UA-Mobile", "?0")
+	ph.Set("Sec-CH-UA-Platform", `"Windows"`)
+	ph.Set("Sec-Fetch-Dest", "empty")
+	ph.Set("Sec-Fetch-Mode", "cors")
+	ph.Set("Sec-Fetch-Site", "same-origin")
+	ph.Set("Referer", "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F")
+
+	// Poll waiting-scan
 	for i := 0; i < 120; i++ {
 		select {
 		case <-ctx.Done():
@@ -172,36 +169,28 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 		default:
 		}
 
-		req, _ := http.NewRequestWithContext(ctx, "POST", "https://id.zalo.me/account/authen/qr/waiting-scan", strings.NewReader(pollData.Encode()))
-		setQRHeaders(req, ua, jar)
-		resp, err := client.Do(req)
+		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-scan", ph,
+			url.Values{"v": {"665"}, "code": {code}, "continue": {"https://zalo.me/pc"}})
 		if err != nil {
-			return nil, fmt.Errorf("poll scan: %w", err)
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 
+		body, _ := readBody(resp)
 		var result struct {
 			ErrorCode int `json:"error_code"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
-		jar.SetFromHeader(resp.Header)
+		json.Unmarshal(body, &result)
 
-		if result.ErrorCode == 0 || result.ErrorCode == 1 {
-			scanned = true
+		if result.ErrorCode == 0 {
 			break
 		}
-		// ErrorCode 8 = chưa scan
+		if i%10 == 0 {
+			fmt.Printf("[zcloud] scan poll %d code=%d\n", i+1, result.ErrorCode)
+		}
 		time.Sleep(2 * time.Second)
 	}
 
-	if !scanned {
-		return nil, fmt.Errorf("qr scan timeout — không thấy quét QR")
-	}
-
-	// ====================================
-	// Poll waiting-confirm (tối đa 60 lần = 2 phút)
-	// ====================================
-	confirmed := false
+	// Poll waiting-confirm
 	for i := 0; i < 60; i++ {
 		select {
 		case <-ctx.Done():
@@ -209,80 +198,72 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 		default:
 		}
 
-		req, _ := http.NewRequestWithContext(ctx, "POST", "https://id.zalo.me/account/authen/qr/waiting-confirm", strings.NewReader(pollData.Encode()))
-		setQRHeaders(req, ua, jar)
-		resp, err := client.Do(req)
+		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-confirm", ph,
+			url.Values{"v": {"665"}, "code": {code}, "gToken": {""}, "gAction": {"CONFIRM_QR"}, "continue": {"https://zalo.me/pc"}})
 		if err != nil {
-			return nil, fmt.Errorf("poll confirm: %w", err)
+			return nil, fmt.Errorf("confirm: %w", err)
 		}
 
+		body, _ := readBody(resp)
 		var result struct {
-			ErrorCode int `json:"error_code"`
+			ErrorCode int    `json:"error_code"`
+			ErrorMsg  string `json:"error_message"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
-		jar.SetFromHeader(resp.Header)
+		json.Unmarshal(body, &result)
 
 		if result.ErrorCode == 0 {
-			confirmed = true
 			break
 		}
 		if result.ErrorCode == -13 {
-			return nil, fmt.Errorf("qr declined — từ chối trên điện thoại")
+			return nil, fmt.Errorf("từ chối trên điện thoại")
 		}
-		if result.ErrorCode == -14 {
-			return nil, fmt.Errorf("qr expired — QR hết hạn")
+		if i%5 == 0 {
+			fmt.Printf("[zcloud] confirm poll %d code=%d msg=%s\n", i+1, result.ErrorCode, result.ErrorMsg)
 		}
 		time.Sleep(2 * time.Second)
 	}
 
-	if !confirmed {
-		return nil, fmt.Errorf("qr confirm timeout — không xác nhận trên điện thoại")
-	}
+	// Check session — dùng browser-like headers
+	ch := http.Header{}
+	ch.Set("User-Agent", defaultUA)
+	ch.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	ch.Set("Accept-Language", "vi-VN,vi;q=0.9")
+	ch.Set("Sec-CH-UA", `"Chromium";v="130"`)
+	ch.Set("Sec-CH-UA-Mobile", "?0")
+	ch.Set("Sec-CH-UA-Platform", `"Windows"`)
+	ch.Set("Sec-Fetch-Dest", "document")
+	ch.Set("Sec-Fetch-Mode", "navigate")
+	ch.Set("Sec-Fetch-Site", "same-origin")
 
-	// ====================================
-	// Check session + get user info
-	// ====================================
-	req7, _ := http.NewRequestWithContext(ctx, "GET", "https://id.zalo.me/account/checksession", nil)
-	setQRHeaders(req7, ua, jar)
-	resp7, err := client.Do(req7)
-	if err != nil {
-		return nil, fmt.Errorf("check session: %w", err)
-	}
-	resp7.Body.Close()
-	jar.SetFromHeader(resp7.Header)
+	get(ctx, client, "https://id.zalo.me/account/checksession?continue=https%3A%2F%2Fchat.zalo.me%2Findex.html", ch)
 
-	// ====================================
-	// Cookie login → getLoginInfo + getServerInfo
-	// ====================================
-	return CookieLogin(ctx, jar.cookies, session.IMEI, ua)
+	// User info
+	uiHeaders := http.Header{}
+	uiHeaders.Set("User-Agent", defaultUA)
+	uiHeaders.Set("Accept", "*/*")
+	uiHeaders.Set("Referer", "https://chat.zalo.me/")
+	get(ctx, client, "https://jr.chat.zalo.me/jr/userinfo", uiHeaders)
+
+	// Cookie login — dùng CHUNG client + jar
+	return doCookieLogin(ctx, client, session.jar, imei)
 }
 
 // ====================================
-// Cookie-based login
+// Cookie login — dùng client/jar có sẵn
 // ====================================
 
-func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string) (*LoginResult, error) {
-	if ua == "" {
-		ua = defaultUA
-	}
-	if imei == "" {
-		imei = generateIMEI(ua)
-	}
-
+func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar, imei string) (*LoginResult, error) {
 	sess := &Session{
 		IMEI:       imei,
-		UserAgent:  ua,
+		UserAgent:  defaultUA,
 		Language:   "vi",
 		APIType:    30,
 		APIVersion: 665,
-		Cookies:    cookies,
 	}
 
-	// GET getLoginInfo
 	encResult, err := encryptParamsForLogin(sess, true, "getlogininfo")
 	if err != nil {
-		return nil, fmt.Errorf("encrypt login params: %w", err)
+		return nil, fmt.Errorf("encrypt: %w", err)
 	}
 
 	query := url.Values{}
@@ -295,63 +276,74 @@ func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string
 
 	loginURL := "https://wpa.chat.zalo.me/api/login/getLoginInfo?" + query.Encode()
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	req, _ := http.NewRequestWithContext(ctx, "GET", loginURL, nil)
-	req.Header.Set("User-Agent", ua)
+	req.Header.Set("User-Agent", defaultUA)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Origin", "https://chat.zalo.me")
 	req.Header.Set("Referer", "https://chat.zalo.me/")
-	req.Header.Set("Cookie", cookiesToString(cookies))
 
+	// Dùng client có jar chứa cookies từ QR flow
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("getLoginInfo request: %w", err)
+		return nil, fmt.Errorf("getLoginInfo: %w", err)
 	}
 	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
 
 	var loginResp struct {
 		ErrorCode    int              `json:"error_code"`
 		ErrorMessage string           `json:"error_message"`
 		Data         *json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return nil, fmt.Errorf("parse login info: %w", err)
+	if err := json.Unmarshal(body, &loginResp); err != nil {
+		return nil, fmt.Errorf("parse login: %w", err)
 	}
 	if loginResp.ErrorCode != 0 {
 		return nil, fmt.Errorf("login error %d: %s", loginResp.ErrorCode, loginResp.ErrorMessage)
 	}
 	if loginResp.Data == nil || encResult.Enk == nil {
-		return nil, fmt.Errorf("no login data returned")
+		return nil, fmt.Errorf("no data")
 	}
 
-	decrypted, err := DecodeAESCBC([]byte(*encResult.Enk), string(*loginResp.Data))
+	// Parse JSON string -> raw string -> URL unescape -> AES CBC decrypt
+	var dataStr string
+	if err := json.Unmarshal(*loginResp.Data, &dataStr); err != nil {
+		return nil, fmt.Errorf("parse data string: %w", err)
+	}
+	decodedData, _ := url.PathUnescape(dataStr)
+	decrypted, err := DecodeAESCBC([]byte(*encResult.Enk), decodedData)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt login data: %w", err)
+		return nil, fmt.Errorf("decrypt: %w — raw: %s", err, decodedData[:min(100, len(decodedData))])
 	}
 
-	type loginDataRaw struct {
-		UID    string `json:"uid"`
-		ZPWEnk string `json:"zpw_enk"`
-		ZPWSEK string `json:"zpw_sek"`
-		ZPWS   string `json:"zpw_ws"`
-	}
 	var innerResp struct {
-		ErrorCode int `json:"error_code"`
+		ErrorCode int             `json:"error_code"`
 		Data      json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(decrypted, &innerResp); err != nil {
-		return nil, fmt.Errorf("parse inner login: %w", err)
+	json.Unmarshal(decrypted, &innerResp)
+
+	type loginDataRaw struct {
+		UID           string `json:"uid"`
+		ZPWEnk        string `json:"zpw_enk"`
+		ZPWS          string `json:"zpw_ws"`
+		ZPWServiceMap string `json:"zpw_service_map_v3"`
 	}
 	var data loginDataRaw
 	if innerResp.Data != nil {
-		if err := json.Unmarshal(innerResp.Data, &data); err != nil {
-			return nil, fmt.Errorf("parse login data: %w", err)
-		}
+		json.Unmarshal(innerResp.Data, &data)
 	}
 
 	sess.SecretKey = data.ZPWEnk
 	sess.UserID = data.UID
 	sess.ExpiresAt = time.Now().Add(24 * time.Hour)
+
+	if data.ZPWServiceMap != "" {
+		var sm map[string][]string
+		if err := json.Unmarshal([]byte(data.ZPWServiceMap), &sm); err == nil {
+			sess.ServiceMap = sm
+		}
+	}
 
 	if data.ZPWS != "" {
 		var wsURLs []string
@@ -362,66 +354,59 @@ func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string
 		}
 	}
 
-	// Get getServerInfo để lấy thêm cấu hình
-	serverInfo, err := getServerInfo(ctx, sess, cookies)
-	if err == nil && serverInfo != nil {
-		_ = serverInfo
+	// Get cookies từ jar
+	domains := []string{"https://id.zalo.me/", "https://chat.zalo.me/", "https://wpa.chat.zalo.me/"}
+	cookies := make(map[string]string)
+	for _, d := range domains {
+		u, _ := url.Parse(d)
+		for _, c := range jar.Cookies(u) {
+			cookies[c.Name] = c.Value
+		}
 	}
+	sess.Cookies = cookies
 
-	return &LoginResult{
-		Session: sess,
-		Cookies: cookies,
-	}, nil
+	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
+	return &LoginResult{Session: sess, Cookies: cookies}, nil
 }
 
 // ====================================
-// getServerInfo
+// CookieLogin — cho trường hợp login bằng cookie có sẵn
 // ====================================
 
-func getServerInfo(ctx context.Context, sess *Session, cookies map[string]string) (map[string]any, error) {
-	encResult, err := encryptParamsForLogin(sess, false, "getserverinfo")
-	if err != nil {
-		return nil, err
+func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string) (*LoginResult, error) {
+	if imei == "" { imei = generateIMEI(ua) }
+	if ua == "" { ua = defaultUA }
+
+	client, jar := newZaloClient()
+
+	// Inject cookies vào jar
+	domains := []string{
+		"https://id.zalo.me/",
+		"https://chat.zalo.me/",
+		"https://wpa.chat.zalo.me/",
+	}
+	for _, d := range domains {
+		u, _ := url.Parse(d)
+		cks := make([]*http.Cookie, 0, len(cookies))
+		for k, v := range cookies {
+			cks = append(cks, &http.Cookie{Name: k, Value: v, Path: "/"})
+		}
+		jar.SetCookies(u, cks)
 	}
 
-	query := url.Values{}
-	for k, v := range encResult.Params {
-		query.Set(k, fmt.Sprintf("%v", v))
-	}
-
-	urlStr := "https://wpa.chat.zalo.me/api/login/getServerInfo?" + query.Encode()
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
-	req.Header.Set("User-Agent", sess.UserAgent)
-	req.Header.Set("Cookie", cookiesToString(cookies))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return doCookieLogin(ctx, client, jar, imei)
 }
 
 // ====================================
-// Helpers
+// Helpers (giữ lại cho tương thích)
 // ====================================
 
-func setQRHeaders(req *http.Request, ua string, jar *cookieJar) {
-	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", "https://id.zalo.me/")
-	req.Header.Set("Origin", "https://id.zalo.me")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Cookie", jar.String())
-}
-
+type cookieJar struct{ cookies map[string]string }
+func newCookieJar() *cookieJar                         { return &cookieJar{cookies: make(map[string]string)} }
+func (j *cookieJar) Set(c map[string]string)            { for k, v := range c { j.cookies[k] = v } }
+func (j *cookieJar) SetFromHeader(h http.Header)        {}
+func (j *cookieJar) String() string                    { return "" }
+func (j *cookieJar) Apply(req *http.Request)            {}
 func cookiesToString(cookies map[string]string) string {
 	parts := make([]string, 0, len(cookies))
 	for k, v := range cookies {
@@ -429,48 +414,11 @@ func cookiesToString(cookies map[string]string) string {
 	}
 	return strings.Join(parts, "; ")
 }
-
-type cookieJar struct {
-	cookies map[string]string
-}
-
-func newCookieJar() *cookieJar {
-	return &cookieJar{cookies: make(map[string]string)}
-}
-
-func (j *cookieJar) Set(cookies map[string]string) {
-	for k, v := range cookies {
-		j.cookies[k] = v
-	}
-}
-
-func (j *cookieJar) SetFromHeader(header http.Header) {
-	for _, c := range header.Values("Set-Cookie") {
-		if parts := strings.SplitN(c, "=", 2); len(parts) == 2 {
-			name := strings.TrimSpace(parts[0])
-			value := strings.SplitN(parts[1], ";", 2)[0]
-			j.cookies[name] = value
-		}
-	}
-}
-
-func (j *cookieJar) String() string {
-	parts := make([]string, 0, len(j.cookies))
-	for k, v := range j.cookies {
-		parts = append(parts, k+"="+v)
-	}
-	return strings.Join(parts, "; ")
-}
-
 func extractVersion(body string) string {
 	idx := strings.Index(body, "main-")
-	if idx < 0 {
-		return "665"
-	}
+	if idx < 0 { return "665" }
 	body = body[idx+5:]
 	end := strings.IndexAny(body, ".\"")
-	if end < 0 {
-		return "665"
-	}
+	if end < 0 { return "665" }
 	return body[:end]
 }

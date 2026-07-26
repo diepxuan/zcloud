@@ -113,7 +113,8 @@ type Session struct {
 	UserAgent   string            `json:"userAgent"`
 	Language    string            `json:"language,omitempty"`
 	ExpiresAt   time.Time         `json:"expiresAt"`
-	WSURLs      []string          `json:"wsUrls"`      // zpw_ws
+	WSURLs      []string            `json:"wsUrls"`      // zpw_ws
+	ServiceMap  map[string][]string `json:"serviceMap,omitempty"` // zpw_service_map_v3
 	APIType     uint              `json:"apiType"`
 	APIVersion  uint              `json:"apiVersion"`
 }
@@ -129,12 +130,6 @@ type Event struct {
 type OldMessages struct {
 	Messages    []Message
 	ThreadType  ThreadType
-}
-
-// LoginResult kết quả đăng nhập
-type LoginResult struct {
-	Session *Session
-	Cookies map[string]string
 }
 
 // ====================================

@@ -103,8 +103,8 @@ func DecodeAESCBC(key []byte, ciphertext string) ([]byte, error) {
 
 const (
 	zcidKey         = "3FC4F0D2AB50057BCE0D90D9187A22B1"
-	defaultEncVer   = "1"
-	defaultCompName = "zcloud"
+	defaultEncVer   = "v2"
+	defaultCompName = "Web"
 )
 
 // EncryptParams generates encrypted parameters for Zalo API login requests

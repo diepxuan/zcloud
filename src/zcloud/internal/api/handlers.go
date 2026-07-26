@@ -82,22 +82,22 @@ func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := qrSession.Token
+	code := qrSession.Code
 	qrMu.Lock()
-	qrSessions[token] = qrSession
+	qrSessions[code] = qrSession
 	qrMu.Unlock()
 
 	go func() {
 		time.Sleep(5 * time.Minute)
 		qrMu.Lock()
-		delete(qrSessions, token)
+		delete(qrSessions, code)
 		qrMu.Unlock()
 	}()
 
 	ok(w, map[string]interface{}{
-		"token":   token,
+		"token":   code,
 		"image":   qrSession.ImageB64,
-		"expires": qrSession.ExpiresAt.Unix(),
+		"expires": time.Now().Add(3 * time.Minute).Unix(),
 	})
 }
 
@@ -127,6 +127,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 
 	result, err := core.PollQRLogin(ctx, qrSession)
 	if err != nil {
+		s.Logger.Printf("poll QR failed: %v", err)
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -431,8 +432,12 @@ else{document.getElementById('tck').classList.remove('hidden');document.querySel
 async function cq(){try{var r=await fetch('/api/qr/create');var d=await r.json();
 if(d.ok){document.getElementById('qrBox').innerHTML='<img src="data:image/png;base64,'+d.data.image+'" alt="QR">';
 document.getElementById('qrSt').className='status info';document.getElementById('qrSt').textContent='Quet QR bang Zalo tren dien thoai';
-pt=setInterval(async function(){try{var p=await fetch('/api/qr/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.data.token})});var p2=await p.json();
+var ex=d.data.expires*1000;
+pt=setInterval(async function(){
+if(Date.now()>ex){clearInterval(pt);pt=null;cq();return;}
+try{var p=await fetch('/api/qr/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.data.token})});var p2=await p.json();
 if(p2.ok){clearInterval(pt);document.getElementById('qrSt').className='status success';document.getElementById('qrSt').textContent='Dang nhap thanh cong!';setTimeout(function(){window.location.href='/chat'},1000);}
+else{document.getElementById('qrSt').className='status error';document.getElementById('qrSt').textContent=p2.error;if(p2.error.indexOf('expired')>=0||p2.error.indexOf('het han')>=0){clearInterval(pt);pt=null;setTimeout(cq,2000);}}
 }catch(e){}},2000);}else{document.getElementById('qrBox').innerHTML='<div class="loading">Loi: '+d.error+'</div>';}
 }catch(e){document.getElementById('qrBox').innerHTML='<div class="loading">Loi ket noi</div>';}}
 async function lc(){var s=document.getElementById('ckSt');var c=document.getElementById('cki').value.trim();
@@ -507,11 +512,13 @@ body{font-family:-apple-system,sans-serif;background:#f5f5f5;height:100vh;displa
 var cc='',ca=document.getElementById('ac').value,cu=0,ld=false;
 document.addEventListener('DOMContentLoaded',function(){if(ca)lc()});
 function sa(){ca=document.getElementById('ac').value;if(ca)lc()}
-async function lc(){if(!ca)return;try{var r=await fetch('/api/conversations?accountId='+ca);var d=await r.json();
-if(d.ok){var el=document.getElementById('cl');el.innerHTML='';
+async function lc(){if(!ca)return;
+try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.json();
+if(d.ok&&d.data){var el=document.getElementById('cl');el.innerHTML='';
 d.data.forEach(function(c){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
-dv.innerHTML='<div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div>';
+dv.innerHTML='<div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsg&&c.lastMsg.content?'Tin cuoi: '+c.lastMsg.content:'')+'</div>';
 dv.onclick=function(){sc(c.id)};el.appendChild(dv)});}}catch(e){}}
+
 function sc(id){cc=id;cu=Date.now()*1000;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=id;document.getElementById('ia').classList.remove('hd');
