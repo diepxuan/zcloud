@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -138,12 +139,44 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 
+	// Build name map từ msgs
+	names := make(map[string]string)
+	if dataObj, ok := rawData["data"].(map[string]any); ok {
+		for _, key := range []string{"msgs", "groupMsgs", "pageMsgs"} {
+			if msgs, ok := dataObj[key].([]any); ok {
+				for _, msg := range msgs {
+					if m, ok := msg.(map[string]any); ok {
+						uid := toString(m["uidFrom"])
+						dName := toString(m["dName"])
+						if uid != "" && dName != "" {
+							if _, exists := names[uid]; !exists {
+								names[uid] = dName
+							}
+						}
+						// Group name from group msgs
+						gid := toString(m["grid"])
+						gName := toString(m["dName"])
+						if gid != "" && gName != "" {
+							if _, exists := names[gid]; !exists {
+								names[gid] = gName
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	convs := make([]Conversation, 0)
 	if dataObj, ok := rawData["data"].(map[string]any); ok {
 		if unreads, ok := dataObj["clearUnreads"].([]any); ok {
 			for _, item := range unreads {
 				if m, ok := item.(map[string]any); ok {
-					conv := Conversation{ID: toString(m["idTo"]), Name: toString(m["idTo"])}
+					idTo := toString(m["idTo"])
+					name := toString(m["userName"])
+					if name == "" { name = idTo }
+					if n, ok := names[idTo]; ok { name = n }
+					conv := Conversation{ID: idTo, Name: name}
 					if g, ok := m["isGroup"].(float64); ok && g == 1 {
 						conv.Type = ConvGroup
 					}
@@ -152,7 +185,75 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 			}
 		}
 	}
+	// Resolve names từ API
+	resolveNames(c, convs)
+
 	return convs, nil
+}
+
+func resolveNames(c *Client, convs []Conversation) {
+	ids := make([]string, 0, len(convs))
+	for _, cc := range convs {
+		if cc.Type == ConvIndividual { ids = append(ids, cc.ID) }
+	}
+	if len(ids) == 0 { return }
+
+	fpm := make([]string, len(ids))
+	for i, uid := range ids {
+		if !strings.Contains(uid, "_") { fpm[i] = uid + "_0" } else { fpm[i] = uid }
+	}
+
+	ctx := context.Background()
+
+	rawKey, _ := base64.StdEncoding.DecodeString(c.Session.SecretKey)
+	payload := map[string]any{
+		"friend_pversion_map": fpm, "avatar_size": 120,
+		"language": "vi", "show_online_status": 1, "imei": c.Session.IMEI,
+	}
+	jsonP, _ := json.Marshal(payload)
+	enc, err := EncodeAESCBC(rawKey, string(jsonP))
+	if err != nil { return }
+
+	baseURL := "https://tt-profile-wpa.chat.zalo.me"
+	if c.Session.ServiceMap != nil {
+		if p, ok := c.Session.ServiceMap["profile"]; ok && len(p) > 0 { baseURL = p[0] }
+	}
+	serviceURL := baseURL + "/api/social/friend/getprofiles/v2"
+	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, strings.NewReader("params="+url.QueryEscape(enc)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil { return }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var result struct {
+		ErrorCode int              `json:"error_code"`
+		Data      *json.RawMessage `json:"data"`
+	}
+	json.Unmarshal(body, &result)
+	if result.ErrorCode != 0 || result.Data == nil { return }
+
+	var dataStr string
+	json.Unmarshal(*result.Data, &dataStr)
+	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	if err != nil { return }
+
+	var profiles struct {
+		ChangedProfiles map[string]struct {
+			ZaloName    string `json:"zaloName"`
+			DisplayName string `json:"displayName"`
+		} `json:"changed_profiles"`
+	}
+	json.Unmarshal(decrypted, &profiles)
+
+	for _, conv := range convs {
+		if p, ok := profiles.ChangedProfiles[conv.ID]; ok {
+			n := p.ZaloName; if n == "" { n = p.DisplayName }
+			if n != "" { conv.Name = n }
+		}
+	}
 }
 
 func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
