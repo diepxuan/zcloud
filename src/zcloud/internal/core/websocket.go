@@ -225,31 +225,32 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 		msg := Event{
 			Type: EventNewMessage,
 		}
-		// Parse message content
-		var msgs []struct {
-			MsgID     string          `json:"msgId"`
-			Content   string          `json:"content"`
-			FromUID   string          `json:"fromUid"`
-			ConvID    string          `json:"convId"`
-			Timestamp int64           `json:"timestamp"`
-			Type      int             `json:"type"`
-		}
-		if err := json.Unmarshal(rawData.Msgs, &msgs); err == nil && len(msgs) > 0 {
-			for _, m := range msgs {
-				msg.Message = &Message{
-					ID:        m.MsgID,
-					FromID:    m.FromUID,
-					Content:   m.Content,
-					Timestamp: m.Timestamp,
-					Type:      MsgType(m.Type),
-				}
-				// Emit message
-				select {
-				case w.msgChan <- msg:
-				default:
+			var msgs []struct {
+				MsgID     string          `json:"msgId"`
+				Content   string          `json:"content"`
+				FromUID   string          `json:"fromUid"`
+				ConvID    string          `json:"convId"`
+				Timestamp int64           `json:"timestamp"`
+				Type      int             `json:"type"`
+				DName     string          `json:"dName"`
+			}
+			if err := json.Unmarshal(rawData.Msgs, &msgs); err == nil && len(msgs) > 0 {
+				for _, m := range msgs {
+					msg.Message = &Message{
+						ID:        m.MsgID,
+						FromID:    m.FromUID,
+						FromName:  m.DName,
+						Content:   m.Content,
+						Timestamp: m.Timestamp,
+						Type:      MsgType(m.Type),
+					}
+					// Emit message
+					select {
+					case w.msgChan <- msg:
+					default:
+					}
 				}
 			}
-		}
 	}
 }
 

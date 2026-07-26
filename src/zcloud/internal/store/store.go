@@ -26,10 +26,10 @@ type MediaConfig struct {
 // New mở hoặc tạo database
 func New(dbPath string, mediaPath string) (*Store, error) {
 	if dbPath == "" {
-		dbPath = filepath.Join(".", "zcloud.db")
+		dbPath = filepath.Join(".", "storages", "database", "zcloud.db")
 	}
 	if mediaPath == "" {
-		mediaPath = filepath.Join(".", "zcloud-media")
+		mediaPath = filepath.Join(".", "storages", "media")
 	}
 
 	// Tạo thư mục nếu chưa có
@@ -246,6 +246,15 @@ func (s *Store) CreateAccount(id, displayName string, accountType int) error {
 	_, err := s.db.Exec(
 		"INSERT OR IGNORE INTO accounts (id, display_name, account_type) VALUES (?, ?, ?)",
 		id, displayName, accountType,
+	)
+	return err
+}
+
+// UpdateAccount cập nhật thông tin tài khoản
+func (s *Store) UpdateAccount(id, displayName, avatar string) error {
+	_, err := s.db.Exec(
+		"UPDATE accounts SET display_name = ?, avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		displayName, avatar, id,
 	)
 	return err
 }

@@ -278,6 +278,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 				"id":        msg.ID,
 				"convId":    msg.ConvID,
 				"fromId":    msg.FromID,
+				"fromName":  msg.FromName,
 				"content":   msg.Content,
 				"timestamp": msg.Timestamp,
 				"type":      msg.Type,

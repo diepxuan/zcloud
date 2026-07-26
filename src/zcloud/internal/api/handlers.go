@@ -84,7 +84,19 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 
 	session := result.Session
 	accountID := "acc_" + session.UserID
-	s.Store.CreateAccount(accountID, "Zalo User "+session.UserID[:8], 1)
+
+	// Láº¥y tÃªn tháº­t tá»« Zalo API
+	friendClient := core.NewClient(session)
+	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	displayName, avatar := "", ""
+	if n, a, err := friendClient.GetMyProfile(innerCtx); err == nil && n != "" {
+		displayName, avatar = n, a
+	}
+	innerCancel()
+	if displayName == "" { displayName = "Zalo User " + session.UserID[:8] }
+
+	s.Store.CreateAccount(accountID, displayName, 1)
+	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
 	cookiesJSON, _ := json.Marshal(session.Cookies)
 	wsURLsJSON, _ := json.Marshal(session.WSURLs)
 	s.Store.SaveSession(&store.Session{
@@ -117,6 +129,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
 		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
+	UserID: sessRec.UserID,
 	}
 	client := core.NewClient(session)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
@@ -127,9 +140,30 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	// Lưu vào DB
 	for _, c := range convs {
 		s.Store.SaveConversation(&store.Conversation{
-			ID: c.ID, AccountID: accountID, Name: c.Name, ConvType: int(c.Type), UpdatedAt: time.Now(),
+			ID: c.ID, AccountID: accountID, Name: c.Name, Avatar: c.Avatar, ConvType: int(c.Type), UpdatedAt: time.Now(),
 		})
 	}
+
+	// Cập nhật tên + avatar cho account (đồng bộ)
+	if n, a, err := client.GetMyProfile(ctx); err == nil && n != "" {
+		s.Store.UpdateAccount(accountID, n, a)
+	}
+
+	// Resolve group names
+	var groupIDs []string
+	for _, c := range convs { if c.Type == core.ConvGroup { groupIDs = append(groupIDs, c.ID) } }
+	if len(groupIDs) > 0 {
+		if gm, err := client.GetGroupInfo(ctx, groupIDs); err == nil {
+			for _, c := range convs {
+				if g, ok := gm[c.ID]; ok {
+					s.Store.SaveConversation(&store.Conversation{
+						ID: c.ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar, ConvType: int(c.Type), UpdatedAt: time.Now(),
+					})
+				}
+			}
+		}
+	}
+
 	ok(w, convs)
 }
 
@@ -184,7 +218,19 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil { fail(w, 500, "login failed: "+err.Error()); return }
 	session := result.Session
 	accountID := "acc_" + session.UserID
-	s.Store.CreateAccount(accountID, "Zalo User "+session.UserID[:8], 1)
+
+	// Lấy tên thật từ Zalo API
+	friendClient := core.NewClient(session)
+	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	displayName, avatar := "", ""
+	if n, a, err := friendClient.GetMyProfile(innerCtx); err == nil && n != "" {
+		displayName, avatar = n, a
+	}
+	innerCancel()
+	if displayName == "" { displayName = "Zalo User " + session.UserID[:8] }
+
+	s.Store.CreateAccount(accountID, displayName, 1)
+	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
 	cj, _ := json.Marshal(session.Cookies); wj, _ := json.Marshal(session.WSURLs)
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
@@ -268,6 +314,10 @@ cq();
 
 func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
 	accounts, _ := s.Store.ListAccounts(1)
+	if len(accounts) == 0 {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	accOpts := ""
 	for _, a := range accounts {
 		sel := ""; if len(accounts) == 1 { sel = "selected" }
@@ -296,10 +346,13 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .sbp.on{display:block}
 .sr{padding:12px;border-bottom:1px solid #e0e0e0}
 .sr input{width:100%%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px}
-.cv{padding:12px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0}
+.cv{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0}
 .cv:hover{background:#f5f8ff}.cv.on{background:#e8f0ff}
+.cv-a{width:36px;height:36px;border-radius:50%%;overflow:hidden;flex-shrink:0;background:#e0e0e0}
+.cv-a img{width:100%%;height:100%%;object-fit:cover}
+.cv-b{flex:1;min-width:0}
 .cv-n{font-size:14px;font-weight:500;color:#333}
-.cv-p{font-size:12px;color:#999;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cv-p{font-size:12px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ca{flex:1;display:flex;flex-direction:column}
 .ch{padding:12px 16px;background:#fff;border-bottom:1px solid #e0e0e0}
 .ch h2{font-size:16px;color:#333}
@@ -340,7 +393,7 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 </div>
 </div>
 <script>
-var cc='',ca=document.getElementById('ac').value,cu=0,ld=false,pt=null;
+var cc='',ca=document.getElementById('ac').value,cu=0,ld=false,pt=null,cvCache={};
 document.addEventListener('DOMContentLoaded',function(){if(ca)sy()});
 function sa(){ca=document.getElementById('ac').value;if(ca)sy();}
 function stp(t){document.querySelectorAll('.sbp').forEach(function(e){e.classList.remove('on')});
@@ -351,28 +404,30 @@ if(t=='co'&&ca)loadFriends();}
 async function sy(){if(!ca)return;
 try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.json();
 if(d.ok&&d.data){var el=document.getElementById('cl');el.innerHTML='';
-d.data.forEach(function(c){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
-dv.innerHTML='<div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div>';
-dv.onclick=function(){sc(c.id)};el.appendChild(dv)});}}catch(e){}}
-async function loadFriends(){var el=document.getElementById('fl');
-el.innerHTML='<div class="em" style="font-size:14px">Đang tải...</div>';}
-function sc(id){cc=id;cu=Date.now()*1000;
+d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
+var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
+dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
+dv.onclick=function(){sc(c.id,c.name,c.avatar)};el.appendChild(dv)});}}catch(e){}}
+async function loadFriends(){var el=document.getElementById('fl');el.innerHTML='<div class="em" style="font-size:14px">Đang tải...</div>';}
+function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=Date.now()*1000;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
-document.getElementById('ctt').textContent=id;document.getElementById('ia').classList.remove('hd');
+document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
 document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>';lm()}
 async function lm(){if(!cc||ld||!ca)return;ld=true;
 try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
 if(d.ok){var el=document.getElementById('ml');if(cu>Date.now()*1000)el.innerHTML='';
 d.data.forEach(function(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');
 var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-dv.innerHTML=(m.fromName&&m.fromId!==ca?'<div class="nm">'+m.fromName+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv)});
+var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
+dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv)});
 if(d.data.length>0)cu=d.data[0].timestamp;el.scrollTop=el.scrollHeight;}}catch(e){}finally{ld=false}}
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
 if(d.ok){var el=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg out';
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv);el.scrollTop=el.scrollHeight;}}catch(e){}}
-function fc(q){document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
+function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
+function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
 </script></body></html>`, accOpts)
 }

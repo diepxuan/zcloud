@@ -20,6 +20,7 @@ build() {
     cd "$SOURCE"
     go build -o "$BINARY" ./cmd/zcloudd/
     chmod +x "$BINARY"
+    cd "$PROJECT_ROOT"
 }
 
 stop_binary() {

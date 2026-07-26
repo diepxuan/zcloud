@@ -40,13 +40,15 @@ func Parse() *Config {
 	cfg.Domain = "zcloud.diepxuan.corp"
 	cfg.SessionDir = defaultSessionDir()
 	cfg.LogLevel = 0
+	cfg.DBPath = filepath.Join(".", "storages", "database", "zcloud.db")
+	cfg.MediaDir = filepath.Join(".", "storages", "media")
 
 	// CLI flags
 	flag.IntVar(&cfg.Port, "port", envInt("ZCLOUD_PORT", cfg.Port), "HTTP server port")
 	flag.StringVar(&cfg.Domain, "domain", envStr("ZCLOUD_DOMAIN", cfg.Domain), "Domain name")
 	flag.StringVar(&cfg.SessionDir, "session-dir", envStr("ZCLOUD_SESSION_DIR", cfg.SessionDir), "Session storage directory")
-	flag.StringVar(&cfg.DBPath, "db-path", envStr("ZCLOUD_DB_PATH", ""), "Database path (default: zcloud.db)")
-	flag.StringVar(&cfg.MediaDir, "media-dir", envStr("ZCLOUD_MEDIA_DIR", "./zcloud-media"), "Media storage directory")
+	flag.StringVar(&cfg.DBPath, "db-path", envStr("ZCLOUD_DB_PATH", cfg.DBPath), "Database path ")
+	flag.StringVar(&cfg.MediaDir, "media-dir", envStr("ZCLOUD_MEDIA_DIR", cfg.MediaDir), "Media storage directory")
 	flag.IntVar(&cfg.LogLevel, "log-level", envInt("ZCLOUD_LOG_LEVEL", cfg.LogLevel), "Log level: 0=info, 1=debug, 2=verbose")
 	flag.BoolVar(&cfg.DevMode, "dev", envBool("ZCLOUD_DEV", false), "Development mode")
 	flag.Parse()
