@@ -12,6 +12,10 @@
 | 07 | Multi-user Manager | 🟢 Xong | accounts + sessions trong DB |
 | 08 | Zalo OA Integration | 🕐 Tạm hoãn | Schema DB sẵn, logic chưa cần |
 | 09 | Database & Media Store | 🟢 Xong | SQLite + disk cho media |
+| 10 | **Hoàn thiện UI/UX Chat** | 🟡 Đang làm | Fix load message, hiển thị avatar/tên, search |
+| 11 | **Media download** | 🔴 Chờ | Download file từ Zalo về local |
+| 12 | **Logout / quản lý session** | 🔴 Chờ | Xoá session, chuyển tài khoản |
+| 13 | **Lịch sử tin nhắn cũ (pull API)** | 🔴 Chờ | REST API sync messages lịch sử |
 
 ## Mục tiêu dự án (master-plan.md)
 
