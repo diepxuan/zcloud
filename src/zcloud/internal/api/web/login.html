@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>ZCloud Login</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.card{background:#fff;border-radius:12px;padding:32px;width:90%;max-width:420px;box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center}
+h1{font-size:22px;margin-bottom:16px;color:#333}p{color:#666;margin-bottom:16px;font-size:14px}
+.qr-box{border:2px dashed #ddd;border-radius:8px;margin:16px auto;padding:16px;min-height:200px;display:flex;align-items:center;justify-content:center}
+.qr-box img{max-width:220px}.qr-box .loading{color:#999;font-size:14px}
+.st{padding:12px;border-radius:6px;margin-top:12px;display:none}
+.st.i{background:#e8f4fd;color:#0068ff;display:block}.st.s{background:#d4edda;color:#155724;display:block}.st.e{background:#f8d7da;color:#721c24;display:block}
+.btn{padding:10px 24px;background:#0068ff;color:#fff;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:12px}
+.btn:hover{background:#0052cc}.btn.g{background:#6c757d}.hd{display:none}
+.tabs{display:flex;gap:8px;margin-bottom:16px}
+.tabs button{flex:1;padding:8px;background:#eee;color:#333;border-radius:6px;border:none;cursor:pointer;font-size:13px}
+.tabs button.on{background:#0068ff;color:#fff}
+.tc textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;min-height:80px;font-family:monospace;margin-top:8px}
+</style></head><body>
+<div class="card">
+<h1>ZCloud</h1><p>Đăng nhập Zalo</p>
+<div class="tabs"><button class="on" onclick="st('qr')">QR Code</button><button onclick="st('ck')">Cookie</button></div>
+<div id="tqr"><div class="qr-box" id="qb"><div class="loading">Đang tạo QR...</div></div><div id="qs" class="st"></div></div>
+<div id="tck" class="hd"><p style="font-size:13px;color:#666;margin-bottom:8px">Dán cookie từ Zalo Web (F12 > Cookies > chat.zalo.me)</p>
+<div class="tc"><textarea id="cki" placeholder="zpsid=...; zpw_sek=..."></textarea></div>
+<button class="btn" onclick="lc()">Đăng nhập</button><div id="cs" class="st"></div></div>
+</div>
+<script>
+var pt=null;
+function st(t){document.getElementById('tqr').classList.add('hd');document.getElementById('tck').classList.add('hd');
+document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('on')});
+if(t=='qr'){document.getElementById('tqr').classList.remove('hd');document.querySelector('.tabs button:first-child').classList.add('on');if(!pt)cq();}
+else{document.getElementById('tck').classList.remove('hd');document.querySelector('.tabs button:last-child').classList.add('on');if(pt){clearInterval(pt);pt=null;}}}
+async function cq(){try{var r=await fetch('/api/qr/create');var d=await r.json();
+if(d.ok){document.getElementById('qb').innerHTML='<img src="data:image/png;base64,'+d.data.image+'" alt="QR">';
+document.getElementById('qs').className='st i';document.getElementById('qs').textContent='Quét QR bằng Zalo trên điện thoại';
+var ex=d.data.expires*1000;
+pt=setInterval(async function(){
+if(Date.now()>ex){clearInterval(pt);pt=null;document.getElementById('qs').className='st e';document.getElementById('qs').textContent='QR hết hạn, tạo mã mới...';setTimeout(cq,2000);return;}
+try{var p=await fetch('/api/qr/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.data.token})});var p2=await p.json();
+if(p2.ok){clearInterval(pt);document.getElementById('qs').className='st s';document.getElementById('qs').textContent='Đăng nhập thành công!';setTimeout(function(){window.location.href='/chat'},1000);}
+else{document.getElementById('qs').className='st e';document.getElementById('qs').textContent='Lỗi: '+p2.error;if(p2.error.indexOf('hết hạn')>=0||p2.error.indexOf('expired')>=0){clearInterval(pt);pt=null;setTimeout(cq,2000);}}
+}catch(e){}},2000);}
+else{document.getElementById('qb').innerHTML='<div class="loading">Lỗi: '+d.error+'</div>';}
+}catch(e){document.getElementById('qb').innerHTML='<div class="loading">Lỗi kết nối</div>';}}
+async function lc(){var s=document.getElementById('cs');var c=document.getElementById('cki').value.trim();
+if(!c){s.textContent='Nhập cookie';s.className='st e';return}
+s.textContent='Đang đăng nhập...';s.className='st i';
+try{var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:c})});var d=await r.json();
+if(d.ok){s.textContent='Đăng nhập thành công!';s.className='st s';setTimeout(function(){window.location.href='/chat'},1000);}
+else{s.textContent='Lỗi: '+d.error;s.className='st e';}
+}catch(e){s.textContent='Lỗi kết nối';s.className='st e';}}
+cq();
+</script></body></html>

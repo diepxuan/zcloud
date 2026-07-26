@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +46,55 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	// API — Media serving
 	// ====================================
 	mux.Handle("GET /media/", http.StripPrefix("/media/", http.HandlerFunc(s.HandleMedia)))
+	mux.HandleFunc("POST /api/media/download", s.HandleMediaDownload)
+}
+
+// HandleMediaDownload tải media từ Zalo URL về local
+func (s *Server) HandleMediaDownload(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"accountId"`
+		ConvID    string `json:"convId"`
+		URL       string `json:"url"`
+		FileName  string `json:"fileName"`
+		FileExt   string `json:"fileExt"`
+		MsgID     string `json:"msgId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
+	if req.AccountID == "" || req.URL == "" { fail(w, 400, "missing fields"); return }
+	if req.FileExt == "" { req.FileExt = "bin" }
+
+	// Tải file từ Zalo
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	httpReq, _ := http.NewRequestWithContext(ctx, "GET", req.URL, nil)
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil { fail(w, 500, "download: "+err.Error()); return }
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil { fail(w, 500, "read: "+err.Error()); return }
+
+	// Lưu file và metadata
+	mediaDir := s.Store.MediaDir(req.AccountID, req.ConvID)
+	fileID := req.MsgID
+	if fileID == "" { fileID = fmt.Sprintf("%d", time.Now().UnixMilli()) }
+	filePath := filepath.Join(mediaDir, fileID+"."+req.FileExt)
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		fail(w, 500, "save: "+err.Error()); return
+	}
+
+	// Save metadata vào DB
+	fileInfo, _ := os.Stat(filePath)
+	savedPath, err := s.Store.SaveMedia(&store.MediaFile{
+		ID: fileID, AccountID: req.AccountID, ConvID: req.ConvID, MsgID: req.MsgID,
+		FileName: req.FileName, FileExt: req.FileExt, FileSize: fileInfo.Size(),
+		SourceURL: req.URL, IsDownloaded: 1,
+	})
+	if err != nil { s.Logger.Printf("media save meta: %v", err) }
+
+	ok(w, map[string]interface{}{
+		"path": savedPath, "fileId": fileID,
+		"url": "/media/" + req.AccountID + "/" + req.ConvID + "/" + fileID + "." + req.FileExt,
+	})
 }
 
 // HandleMedia phục vụ file media từ disk
