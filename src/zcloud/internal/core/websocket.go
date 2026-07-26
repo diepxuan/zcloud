@@ -195,6 +195,14 @@ func (w *WSClient) handleFrame(data []byte) {
 		// New group messages
 		w.handleNewMessages(payload, ThreadGroup)
 
+	case cmd == 510 && subCmd == 1:
+		// Old user messages
+		w.handleOldMessages(payload, ThreadUser)
+
+	case cmd == 511 && subCmd == 1:
+		// Old group messages
+		w.handleOldMessages(payload, ThreadGroup)
+
 	case cmd == 2 && subCmd == 1:
 		// Ping — send pong
 		w.SendWS(w.connCtx, 2, 2, map[string]any{
@@ -211,6 +219,18 @@ func (w *WSClient) handleFrame(data []byte) {
 }
 
 // handleNewMessages parse và emit new message events
+// RequestOldMessages gửi yêu cầu lấy tin nhắn cũ qua WebSocket
+func (w *WSClient) RequestOldMessages(ctx context.Context, tt ThreadType, lastMsgID string) error {
+	cmd := uint16(510)
+	if tt == ThreadGroup { cmd = 511 }
+	data := map[string]any{
+		"first":  true,
+		"lastId": lastMsgID,
+		"preIds": []string{},
+	}
+	return w.SendWS(ctx, cmd, 1, data)
+}
+
 func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 	// Zalo WebSocket messages có thể là plain JSON hoặc encrypted
 	// Try parse như JSON trước
@@ -225,15 +245,15 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 		msg := Event{
 			Type: EventNewMessage,
 		}
-			var msgs []struct {
-				MsgID     string          `json:"msgId"`
-				Content   string          `json:"content"`
-				FromUID   string          `json:"fromUid"`
-				ConvID    string          `json:"convId"`
-				Timestamp int64           `json:"timestamp"`
-				Type      int             `json:"type"`
-				DName     string          `json:"dName"`
-			}
+		var msgs []struct {
+			MsgID     string          `json:"msgId"`
+			Content   string          `json:"content"`
+			FromUID   string          `json:"fromUid"`
+			ConvID    string          `json:"convId"`
+			Timestamp int64           `json:"timestamp"`
+			Type      int             `json:"type"`
+			DName     string          `json:"dName"`
+		}
 			if err := json.Unmarshal(rawData.Msgs, &msgs); err == nil && len(msgs) > 0 {
 				for _, m := range msgs {
 					msg.Message = &Message{
@@ -251,6 +271,38 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 					}
 				}
 			}
+	}
+}
+
+// handleOldMessages xử lý cmd 510/511 (old messages response)
+func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
+	var rawData struct {
+		Msgs      json.RawMessage `json:"msgs"`
+		GroupMsgs json.RawMessage `json:"groupMsgs"`
+	}
+	if err := json.Unmarshal(payload, &rawData); err != nil { return }
+	msgsRaw := rawData.Msgs
+	if tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
+		msgsRaw = rawData.GroupMsgs
+	}
+	if len(msgsRaw) == 0 { return }
+	var msgs []struct {
+		MsgID     string `json:"msgId"`
+		Content   string `json:"content"`
+		FromUID   string `json:"fromUid"`
+		ConvID    string `json:"convId"`
+		Timestamp int64  `json:"timestamp"`
+		Type      int    `json:"type"`
+		DName     string `json:"dName"`
+	}
+	if err := json.Unmarshal(msgsRaw, &msgs); err != nil || len(msgs) == 0 { return }
+	evt := Event{Type: EventOldMessages}
+	for _, m := range msgs {
+		evt.Message = &Message{
+			ID: m.MsgID, FromID: m.FromUID, FromName: m.DName,
+			Content: m.Content, Timestamp: m.Timestamp, Type: MsgType(m.Type),
+		}
+		select { case w.msgChan <- evt: default: }
 	}
 }
 

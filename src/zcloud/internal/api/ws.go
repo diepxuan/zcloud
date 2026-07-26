@@ -287,6 +287,25 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 
 		logger.Printf("zalo-ws: new msg from %s in %s", msg.FromID, msg.ConvID)
 
+	case core.EventOldMessages:
+		if event.Message == nil { return }
+		om := event.Message
+		oaJSON, _ := json.Marshal(om.Attachments)
+		st.SaveMessage(&store.Message{
+			ID: om.ID, AccountID: accountID, ConvID: om.ConvID,
+			FromID: om.FromID, FromName: om.FromName,
+			Content: om.Content, MsgType: int(om.Type),
+			Timestamp: om.Timestamp, Attachments: string(oaJSON),
+		})
+		globalWS.Broadcast(accountID, BrowserMessage{
+			Type: "old_message",
+			Data: map[string]interface{}{
+				"id": om.ID, "convId": om.ConvID, "fromId": om.FromID,
+				"fromName": om.FromName, "content": om.Content,
+				"timestamp": om.Timestamp, "type": om.Type,
+			},
+		})
+
 	case core.EventReconnect:
 		logger.Printf("zalo-ws: reconnected %s", accountID)
 	}

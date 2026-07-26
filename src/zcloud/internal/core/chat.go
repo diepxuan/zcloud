@@ -350,37 +350,81 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 }
 
 func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
-	if c.Session == nil {
+	if c.Session == nil || c.Session.SecretKey == "" {
 		return nil, ErrNotLoggedIn
 	}
-	encResult, err := encryptParamsForLogin(c.Session, true, "getfriends")
-	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
+	if err != nil || len(rawKey) == 0 { return nil, err }
+
+	payload := map[string]any{
+		"incInvalid":  0,
+		"page":        1,
+		"count":       20000,
+		"avatar_size": 120,
+		"actiontime":  0,
 	}
-	query := url.Values{}
-	for k, v := range encResult.Params {
-		query.Set(k, fmt.Sprintf("%v", v))
+	jsonP, _ := json.Marshal(payload)
+	enc, err := EncodeAESCBC(rawKey, string(jsonP))
+	if err != nil { return nil, err }
+
+	baseURL := "https://profile-wpa.chat.zalo.me"
+	if c.Session.ServiceMap != nil {
+		if p, ok := c.Session.ServiceMap["profile"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
-	apiURL := "https://wpa.chat.zalo.me/api/friend/getfriends?" + query.Encode()
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	serviceURL := fmt.Sprintf("%s/api/social/friend/getfriends?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
+		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
 	c.setHeaders(req)
+
 	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("friends: %w", err)
-	}
+	if err != nil { return nil, fmt.Errorf("friends: %w", err) }
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("[zcloud] GetFriends: raw=%s\n", string(body[:min(300, len(body))]))
 
 	var friendResp struct {
 		ErrorCode int              `json:"error_code"`
 		Data      *json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&friendResp); err != nil {
+	if err := json.Unmarshal(body, &friendResp); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 	if friendResp.ErrorCode != 0 {
 		return nil, fmt.Errorf("friends error %d", friendResp.ErrorCode)
 	}
-	return []User{}, nil
+	if friendResp.Data == nil {
+		return []User{}, nil
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(*friendResp.Data, &dataStr); err != nil {
+		return nil, fmt.Errorf("data str: %w", err)
+	}
+
+	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	if err != nil {
+		fmt.Printf("[zcloud] GetFriends: decrypt err=%v len=%d\n", err, len(dataStr))
+		return []User{}, nil
+	}
+
+	var items []any
+	if err := json.Unmarshal(decrypted, &items); err != nil {
+		return nil, fmt.Errorf("parse items: %w", err)
+	}
+
+	users := make([]User, 0, len(items))
+	for _, item := range items {
+		if m, ok := item.(map[string]any); ok {
+			u := User{
+				ID:     toString(m["userId"]),
+				Name:   toString(m["zaloName"]),
+				Avatar: toString(m["avatar"]),
+			}
+			if u.Name == "" { u.Name = toString(m["displayName"]) }
+			if u.ID != "" { users = append(users, u) }
+		}
+	}
+	return users, nil
 }
 
 // GetGroupInfo lấy thông tin nhóm (tên, avatar)

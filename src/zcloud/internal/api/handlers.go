@@ -205,6 +205,65 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]interface{}{"sent": true, "msgId": msg.ID, "content": msg.Content, "timestamp": msg.Timestamp})
 }
 
+// ========== SYNC MESSAGES ==========
+
+func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
+	var req struct{ AccountID string `json:"accountId"`; ConvID string `json:"convId"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
+	if req.AccountID == "" || req.ConvID == "" { fail(w, 400, "missing fields"); return }
+	sessRec, err := s.Store.GetActiveSession(req.AccountID)
+	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+	var wsURLs []string; json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
+	session := &core.Session{
+		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
+		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
+		WSURLs: wsURLs, UserID: sessRec.UserID,
+	}
+	client := core.NewClient(session)
+	if err := client.ConnectWS(r.Context()); err != nil {
+		fail(w, 500, "ws connect: "+err.Error()); return
+	}
+	defer client.WS.Close()
+	conv, _ := s.Store.GetConversation(req.AccountID, req.ConvID)
+	tt := core.ThreadUser
+	if conv != nil && conv.ConvType == 1 { tt = core.ThreadGroup }
+	if err := client.WS.RequestOldMessages(r.Context(), tt, ""); err != nil {
+		fail(w, 500, "request old msgs: "+err.Error()); return
+	}
+	ok(w, map[string]interface{}{"syncing": true})
+}
+
+// ========== FRIENDS ==========
+
+func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	sessRec, err := s.Store.GetActiveSession(accountID)
+	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+	session := &core.Session{
+		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
+		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
+	}
+	client := core.NewClient(session)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	users, err := client.GetFriends(ctx)
+	if err != nil { fail(w, 500, "get friends: "+err.Error()); return }
+	ok(w, users)
+}
+
+// ========== LOGOUT ==========
+
+func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	var req struct{ AccountID string `json:"accountId"` }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
+	if req.AccountID == "" { fail(w, 400, "missing accountId"); return }
+	StopZaloListener(req.AccountID)
+	s.Store.DeleteAccount(req.AccountID)
+	ok(w, map[string]interface{}{"loggedOut": true})
+}
+
 // ========== COOKIE LOGIN ==========
 
 func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +432,7 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 @media(max-width:768px){.sb{width:100%%}.sb.hide{display:none}}
 </style>
 </head><body>
-<div class="hdr"><h1>ZCloud</h1><select id="ac" onchange="sa()">%s</select><button onclick="window.location.href='/'">Thoát</button></div>
+<div class="hdr"><h1>ZCloud</h1><select id="ac" onchange="sa()">%s</select><button onclick="lo()">Đổi TK</button></div>
 <div class="ct">
 <div class="sb">
 <div class="sbn"><button class="on" onclick="stp('ch')">Trò chuyện</button><button onclick="stp('co')">Liên hệ</button></div>
@@ -401,6 +460,15 @@ document.querySelectorAll('.sbn button').forEach(function(b){b.classList.remove(
 document.getElementById('pn-'+t).classList.add('on');
 document.querySelector('.sbn button'+(t=='ch'?':first-child':':last-child')).classList.add('on');
 if(t=='co'&&ca)loadFriends();}
+async function loadFriends(){if(!ca)return;var el=document.getElementById('fl');
+el.innerHTML='<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>';
+try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
+if(d.ok&&d.data&&d.data.length>0){el.innerHTML='';
+d.data.forEach(function(u){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;
+dv.innerHTML='<div class="cv-a"><img src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(u.name||u.id)+'</div></div>';
+dv.onclick=function(){sc(u.id,u.name,u.avatar)};el.appendChild(dv)})}
+else{el.innerHTML='<div style="padding:20px;text-align:center;color:#999">'+((d.error)||'Không có bạn bè')+'</div>'}}
+catch(e){el.innerHTML='<div style="padding:20px;text-align:center;color:#999">Lỗi tải bạn bè</div>'}}
 async function sy(){if(!ca)return;
 try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.json();
 if(d.ok&&d.data){var el=document.getElementById('cl');el.innerHTML='';
@@ -408,11 +476,11 @@ d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
 var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
 dv.onclick=function(){sc(c.id,c.name,c.avatar)};el.appendChild(dv)});}}catch(e){}}
-async function loadFriends(){var el=document.getElementById('fl');el.innerHTML='<div class="em" style="font-size:14px">Đang tải...</div>';}
 function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
-document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>';lm()}
+document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>';
+fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,convId:id})}).catch(function(){});lm()}
 async function lm(){if(!cc||ld||!ca)return;ld=true;
 try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
 if(d.ok){var el=document.getElementById('ml');if(cu===0)el.innerHTML='';
@@ -426,7 +494,10 @@ try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type
 if(d.ok){var el=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg out';
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv);el.scrollTop=el.scrollHeight;}}catch(e){}}
-function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
+async function lo(){if(!confirm('Đổi tài khoản?'))return;
+try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca})});}catch(e){}
+window.location.href='/';}
+function rd(s){return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
 </script></body></html>`, accOpts)

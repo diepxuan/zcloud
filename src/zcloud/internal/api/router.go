@@ -33,6 +33,9 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/conversations/sync", s.HandleSyncConversations)
 	mux.HandleFunc("GET /api/messages", s.HandleMessages)
 	mux.HandleFunc("POST /api/messages/send", s.HandleSendMessage)
+	mux.HandleFunc("POST /api/messages/sync", s.HandleSyncMessages)
+	mux.HandleFunc("GET /api/friends", s.HandleFriends)
+	mux.HandleFunc("POST /api/logout", s.HandleLogout)
 	mux.HandleFunc("GET /ws", s.HandleWS)
 
 	// ====================================

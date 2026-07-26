@@ -357,6 +357,24 @@ func (s *Store) SaveConversation(c *Conversation) error {
 	return err
 }
 
+func (s *Store) GetConversation(accountID, convID string) (*Conversation, error) {
+	c := &Conversation{}
+	err := s.db.QueryRow(
+		`SELECT id, account_id, name, avatar, conv_type, last_msg_id, last_msg_at, unread_count, updated_at
+		FROM conversations WHERE account_id = ? AND id = ?`, accountID, convID,
+	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Avatar, &c.ConvType, &c.LastMsgID, &c.LastMsgAt, &c.Unread, &c.UpdatedAt)
+	if err == sql.ErrNoRows { return nil, nil }
+	return c, err
+}
+
+func (s *Store) DeleteAccount(id string) error {
+	s.db.Exec("DELETE FROM sessions WHERE account_id = ?", id)
+	s.db.Exec("DELETE FROM conversations WHERE account_id = ?", id)
+	s.db.Exec("DELETE FROM messages WHERE account_id = ?", id)
+	_, err := s.db.Exec("DELETE FROM accounts WHERE id = ?", id)
+	return err
+}
+
 func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
 	rows, err := s.db.Query(
 		`SELECT id, account_id, name, avatar, conv_type, last_msg_id, last_msg_at, unread_count, updated_at
