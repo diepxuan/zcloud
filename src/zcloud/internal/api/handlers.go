@@ -93,7 +93,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		displayName, avatar = n, a
 	}
 	innerCancel()
-	if displayName == "" { displayName = "Zalo User " + session.UserID[:8] }
+	if displayName == "" { displayName = safeDisplayName(session.UserID) }
 
 	s.Store.CreateAccount(accountID, displayName, 1)
 	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
@@ -227,7 +227,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		displayName, avatar = n, a
 	}
 	innerCancel()
-	if displayName == "" { displayName = "Zalo User " + session.UserID[:8] }
+	if displayName == "" { displayName = safeDisplayName(session.UserID) }
 
 	s.Store.CreateAccount(accountID, displayName, 1)
 	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
@@ -409,18 +409,18 @@ var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
 dv.onclick=function(){sc(c.id,c.name,c.avatar)};el.appendChild(dv)});}}catch(e){}}
 async function loadFriends(){var el=document.getElementById('fl');el.innerHTML='<div class="em" style="font-size:14px">Đang tải...</div>';}
-function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=Date.now()*1000;
+function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
 document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>';lm()}
 async function lm(){if(!cc||ld||!ca)return;ld=true;
 try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
-if(d.ok){var el=document.getElementById('ml');if(cu>Date.now()*1000)el.innerHTML='';
+if(d.ok){var el=document.getElementById('ml');if(cu===0)el.innerHTML='';
 d.data.forEach(function(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');
 var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
 dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv)});
-if(d.data.length>0)cu=d.data[0].timestamp;el.scrollTop=el.scrollHeight;}}catch(e){}finally{ld=false}}
+if(d.data.length>0)cu=d.data[d.data.length-1].timestamp;el.scrollTop=el.scrollHeight;}}catch(e){}finally{ld=false}}
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
 if(d.ok){var el=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg out';
@@ -430,6 +430,13 @@ function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
 </script></body></html>`, accOpts)
+}
+
+func safeDisplayName(userID string) string {
+	if userID == "" { return "Zalo User" }
+	short := userID
+	if len(short) > 8 { short = short[:8] }
+	return "Zalo User " + short
 }
 
 func min(a, b int) int { if a < b { return a }; return b }
