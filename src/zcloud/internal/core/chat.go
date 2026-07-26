@@ -236,9 +236,11 @@ func resolveNames(c *Client, convs []Conversation) {
 	if result.ErrorCode != 0 || result.Data == nil { return }
 
 	var dataStr string
-	json.Unmarshal(*result.Data, &dataStr)
+	if err := json.Unmarshal(*result.Data, &dataStr); err != nil { return }
+
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil { return }
+	fmt.Printf("[zcloud] resolveNames decrypted: %s\n", string(decrypted[:min(300, len(decrypted))]))
 
 	var profiles struct {
 		ChangedProfiles map[string]struct {
