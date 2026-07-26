@@ -87,15 +87,15 @@
 | ID | Tên | Phụ thuộc | Trạng thái |
 |----|-----|:---------:|:----------:|
 | 00 | Thiết lập môi trường + Go project | — | 🟢 Xong |
-| 01 | Reverse Zalo Web API | 00 | 🔴 Chờ |
+| 01 | Reverse Zalo Web API | 00 | 🟢 Xong |
 | 02 | Reverse Android Đồng bộ | *01-06 xong* | 🟡 Tạm hoãn |
-| 03 | Thiết kế Core Protocol | 01 | 🔴 Chờ |
-| 04 | Xây dựng Core Library (Go) | 01, 03 | 🟡 Đang làm |
-| 05 | Xây dựng Server Daemon | 04 | 🔴 Chờ |
-| 06 | Xây dựng Web UI | 05 | 🔴 Chờ |
-| 07 | Multi-user Manager | 04 | 🔴 Chờ |
+| 03 | Thiết kế Core Protocol | 01 | 🟢 Xong |
+| 04 | Xây dựng Core Library (Go) | 01, 03 | 🟢 Xong |
+| 05 | Xây dựng Server Daemon | 04 | 🟢 Xong |
+| 06 | Xây dựng Web UI | 05 | 🟡 Đang làm |
+| 07 | Multi-user Manager | 04 | 🟢 Xong |
 | 08 | Zalo OA Integration | 04 | 🔴 Chờ |
-| 09 | Database & Media Store | 04 | 🟡 Đang làm |
+| 09 | Database & Media Store | 04 | 🟢 Xong |
 
 ## Luồng thực thi
 
