@@ -319,9 +319,17 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 
 	var innerResp struct {
 		ErrorCode int             `json:"error_code"`
+		Message   string          `json:"error_message"`
 		Data      json.RawMessage `json:"data"`
 	}
 	json.Unmarshal(decrypted, &innerResp)
+
+	if innerResp.ErrorCode != 0 {
+		return nil, fmt.Errorf("login inner error %d: %s", innerResp.ErrorCode, innerResp.Message)
+	}
+	if innerResp.Data == nil {
+		return nil, fmt.Errorf("login: no data in inner response")
+	}
 
 	type loginDataRaw struct {
 		UID           string `json:"uid"`
@@ -330,18 +338,12 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 		ZPWServiceMap string `json:"zpw_service_map_v3"`
 	}
 	var data loginDataRaw
-	if innerResp.Data != nil {
-		json.Unmarshal(innerResp.Data, &data)
-	}
+	json.Unmarshal(innerResp.Data, &data)
+	// Fallback: thử parse data dạng flat (nếu data là object chứa không phải nested)
 	if data.UID == "" {
-		// Try flat structure where fields are at top level
-		var flat struct {
-			UID    string `json:"uid"`
-			ZPWEnk string `json:"zpw_enk"`
-		}
+		var flat loginDataRaw
 		json.Unmarshal(decrypted, &flat)
-		data.UID = flat.UID
-		if data.ZPWEnk == "" { data.ZPWEnk = flat.ZPWEnk }
+		if flat.UID != "" { data = flat }
 	}
 
 	sess.SecretKey = data.ZPWEnk

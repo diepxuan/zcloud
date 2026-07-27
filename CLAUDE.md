@@ -81,6 +81,14 @@ Hoàn thành 4 mục tiêu = dự án hoàn tất. Xem chi tiết tại `docs/ma
 - Không sửa config hệ thống (crontab, systemd, nginx) khi chưa hỏi
 - `trash > rm`. Khi nghi ngờ → hỏi Sếp
 
+## Quy tắc vận hành (NGHIÊM TÚC)
+
+- **KHÔNG BAO GIỜ start daemon thủ công.** Dự án dùng systemd service (`zcloud.service`) + `scripts/zcloudd.sh` watch mode. Khi code thay đổi, service tự rebuild + restart. Chạy tay gây conflict port, crash service, làm Sếp không vào được web.
+- **Khi cần restart:** chỉ dùng `systemctl restart zcloud` hoặc `./scripts/zcloud.sh restart`. Không kill process tay, không start binary trực tiếp.
+- **Trước khi động vào hệ thống:** kiểm tra process tree (`ps aux | grep zcloud`), port (`ss -tlnp | grep 8080`), service status (`systemctl status zcloud`). Nếu service đang chạy, DÙNG NÓ.
+- **Khi có lỗi:** báo cáo Sếp nguyên nhân + bằng chứng (log, code). Không tự ý kill process, xoá DB, rename script để "fix nhanh".
+- **Không xoá DB** trừ khi Sếp yêu cầu cụ thể.
+
 ## Kỷ luật Git
 
 - Mỗi subtask = 1 commit. **Push ngay vào `main`**, không cần review.

@@ -213,8 +213,13 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	if req.AccountID == "" || req.ConvID == "" { fail(w, 400, "missing fields"); return }
 	sessRec, err := s.Store.GetActiveSession(req.AccountID)
 	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	if sessRec.SecretKey == "" { fail(w, 400, "session expired — đăng nhập lại"); return }
+	// Nếu không có WS URLs thì dùng mặc định
+	var wsURLs []string
+	if sessRec.WSURLs != "" && sessRec.WSURLs != "null" {
+		json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
+	}
 	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
-	var wsURLs []string; json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
 		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
@@ -222,7 +227,9 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	client := core.NewClient(session)
 	if err := client.ConnectWS(r.Context()); err != nil {
-		fail(w, 500, "ws connect: "+err.Error()); return
+		// Nếu WS connect fail, vẫn trả về OK — tin nhắn đã có trong DB từ listener
+		ok(w, map[string]interface{}{"syncing": false, "note": "ws unavailable"})
+		return
 	}
 	defer client.WS.Close()
 	conv, _ := s.Store.GetConversation(req.AccountID, req.ConvID)
