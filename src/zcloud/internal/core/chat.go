@@ -322,16 +322,42 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	if result.Data == nil { return "", "", nil }
 
 	var dataStr string
-	json.Unmarshal(*result.Data, &dataStr)
+	if err := json.Unmarshal(*result.Data, &dataStr); err != nil {
+		fmt.Printf("[zcloud] GetMyProfile: data string err=%v\n", err)
+		return "", "", nil
+	}
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
-	if err != nil { return "", "", err }
+	if err != nil {
+		fmt.Printf("[zcloud] GetMyProfile: decrypt err=%v\n", err)
+		return "", "", err
+	}
+	fmt.Printf("[zcloud] GetMyProfile: decrypted=%s\n", string(decrypted[:min(300, len(decrypted))]))
 
 	var wrap struct {
 		Data *json.RawMessage `json:"data"`
 	}
-	json.Unmarshal(decrypted, &wrap)
-	if wrap.Data == nil { return "", "", nil }
+	if err := json.Unmarshal(decrypted, &wrap); err != nil {
+		fmt.Printf("[zcloud] GetMyProfile: wrap err=%v\n", err)
+		return "", "", nil
+	}
+	if wrap.Data == nil {
+		// Thử parse trực tiếp — response đôi khi là flat JSON không có wrapper
+		var flat struct {
+			ChangedProfiles map[string]struct {
+				ZaloName    string `json:"zaloName"`
+				DisplayName string `json:"displayName"`
+				Avatar      string `json:"avatar"`
+			} `json:"changed_profiles"`
+		}
+		if err := json.Unmarshal(decrypted, &flat); err == nil {
+			if p, ok := flat.ChangedProfiles[c.Session.UserID+"_0"]; ok {
+				n := p.ZaloName; if n == "" { n = p.DisplayName }; return n, p.Avatar, nil
+			}
+		}
+		fmt.Printf("[zcloud] GetMyProfile: no data in wrapper, raw decrypted=%s\n", string(decrypted[:min(200, len(decrypted))]))
+		return "", "", nil
+	}
 
 	var profiles struct {
 		ChangedProfiles map[string]struct {
@@ -340,12 +366,23 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 			Avatar      string `json:"avatar"`
 		} `json:"changed_profiles"`
 	}
-	json.Unmarshal(*wrap.Data, &profiles)
-
-	if p, ok := profiles.ChangedProfiles[c.Session.UserID+"_0"]; ok {
-		n := p.ZaloName; if n == "" { n = p.DisplayName }
-		return n, p.Avatar, nil
+	if err := json.Unmarshal(*wrap.Data, &profiles); err != nil {
+		fmt.Printf("[zcloud] GetMyProfile: profiles err=%v\n", err)
+		return "", "", nil
 	}
+
+	// Thử key có _0 và không có _0
+	for _, key := range []string{c.Session.UserID + "_0", c.Session.UserID} {
+		if p, ok := profiles.ChangedProfiles[key]; ok {
+			n := p.ZaloName; if n == "" { n = p.DisplayName }
+			fmt.Printf("[zcloud] GetMyProfile: found key=%s name=%s avatar=%s\n", key, n, p.Avatar[:min(40, len(p.Avatar))])
+			return n, p.Avatar, nil
+		}
+	}
+	fmt.Printf("[zcloud] GetMyProfile: uid not found in changed_profiles (available keys: %v)\n", func() []string {
+		keys := make([]string, 0, len(profiles.ChangedProfiles))
+		for k := range profiles.ChangedProfiles { keys = append(keys, k) }; return keys
+	}())
 	return "", "", nil
 }
 
