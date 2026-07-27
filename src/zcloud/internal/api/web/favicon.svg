@@ -1,11 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect x="8" y="8" width="496" height="496" rx="80" ry="80" fill="#ffffff"/>
+  <rect x="8" y="8" width="496" height="496" rx="80" ry="80" fill="#0068ff"/>
   <clipPath id="c">
     <rect x="8" y="8" width="496" height="496" rx="80" ry="80"/>
   </clipPath>
   <g clip-path="url(#c)">
-    <rect x="8" y="8" width="40" height="496" rx="80" ry="80" fill="#0068ff"/>
-    <rect x="8" y="464" width="496" height="40" rx="80" ry="80" fill="#0068ff"/>
+    <rect x="54" y="8" width="450" height="450" r="60" ry="60" fill="#ffffff"/>
   </g>
   <text x="290" y="348" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif" font-size="374" font-weight="700" fill="#0068ff" text-anchor="middle" letter-spacing="-8">Z</text>
 </svg>
