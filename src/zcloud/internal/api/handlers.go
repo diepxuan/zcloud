@@ -120,7 +120,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wsURLsJSON), APIType: 30, APIVersion: 665, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wsURLsJSON), APIType: 30, APIVersion: 688, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	qrMu.Lock(); delete(qrSessions, token); qrMu.Unlock()
 	// Start Zalo WS listener ngay sau login — không cần browser WebSocket
@@ -321,7 +321,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: 30, APIVersion: 665, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wj), APIType: 30, APIVersion: 688, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
@@ -412,7 +412,7 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 		AccountID: accountID, UserID: session.UserID,
 		Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: 30, APIVersion: 665,
+		WSURLs: string(wj), APIType: 30, APIVersion: 688,
 		IsActive: 1, ExpiresAt: session.ExpiresAt,
 	}
 	s.Store.SaveSession(newSession)

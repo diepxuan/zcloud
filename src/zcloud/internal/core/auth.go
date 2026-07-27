@@ -101,12 +101,12 @@ func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 	ah.Set("Referer", "https://id.zalo.me/account?continue=https%3A%2F%2Fzalo.me%2Fpc")
 
 	postForm(ctx, client, "https://id.zalo.me/account/logininfo", ah,
-		url.Values{"v": {"665"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {"688"}, "continue": {"https://zalo.me/pc"}})
 	postForm(ctx, client, "https://id.zalo.me/account/verify-client", ah,
-		url.Values{"v": {"665"}, "type": {"device"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {"688"}, "type": {"device"}, "continue": {"https://zalo.me/pc"}})
 
 	resp4, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/generate", ah,
-		url.Values{"v": {"665"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {"688"}, "continue": {"https://zalo.me/pc"}})
 	if err != nil {
 		return nil, fmt.Errorf("generate qr: %w", err)
 	}
@@ -170,7 +170,7 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 		}
 
 		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-scan", ph,
-			url.Values{"v": {"665"}, "code": {code}, "continue": {"https://zalo.me/pc"}})
+			url.Values{"v": {"688"}, "code": {code}, "continue": {"https://zalo.me/pc"}})
 		if err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -199,7 +199,7 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 		}
 
 		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-confirm", ph,
-			url.Values{"v": {"665"}, "code": {code}, "gToken": {""}, "gAction": {"CONFIRM_QR"}, "continue": {"https://zalo.me/pc"}})
+			url.Values{"v": {"688"}, "code": {code}, "gToken": {""}, "gAction": {"CONFIRM_QR"}, "continue": {"https://zalo.me/pc"}})
 		if err != nil {
 			return nil, fmt.Errorf("confirm: %w", err)
 		}
@@ -258,7 +258,7 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 		UserAgent:  defaultUA,
 		Language:   "vi",
 		APIType:    30,
-		APIVersion: 665,
+		APIVersion: 688,
 	}
 
 	encResult, err := encryptParamsForLogin(sess, true, "getlogininfo")
@@ -432,9 +432,9 @@ func cookiesToString(cookies map[string]string) string {
 }
 func extractVersion(body string) string {
 	idx := strings.Index(body, "main-")
-	if idx < 0 { return "665" }
+	if idx < 0 { return "688" }
 	body = body[idx+5:]
 	end := strings.IndexAny(body, ".\"")
-	if end < 0 { return "665" }
+	if end < 0 { return "688" }
 	return body[:end]
 }
