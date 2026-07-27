@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -65,10 +66,14 @@ func (w *WSClient) Connect(ctx context.Context) error {
 
 	// Tạo header với cookies
 	header := make(map[string]string)
-	header["User-Agent"] = w.session.UserAgent
-	if w.session.UserAgent == "" {
-		header["User-Agent"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+	ua := w.session.UserAgent
+	if ua == "" {
+		ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	}
+	header["User-Agent"] = ua
+	header["Origin"] = "https://chat.zalo.me"
+	header["Accept"] = "*/*"
+	header["Accept-Language"] = "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
 	header["Cookie"] = cookiesToString(w.session.Cookies)
 
 	// Build query params
@@ -183,7 +188,12 @@ func (w *WSClient) handleFrame(data []byte) {
 		}
 		if err := json.Unmarshal(payload, &keyMsg); err == nil && keyMsg.Key != "" {
 			w.mu.Lock()
-			w.cipherKey = []byte(keyMsg.Key)
+			decoded, decErr := base64.StdEncoding.DecodeString(keyMsg.Key)
+			if decErr == nil && len(decoded) > 0 {
+				w.cipherKey = decoded
+			} else {
+				w.cipherKey = []byte(keyMsg.Key)
+			}
 			w.mu.Unlock()
 		}
 
@@ -244,7 +254,11 @@ func (w *WSClient) decryptPayload(payload []byte) []byte {
 		if dec, err := DecodeWSEvent(payload, ck); err == nil && len(dec) > 0 {
 			fmt.Printf("[zcloud] ws: decrypted %d bytes (cipherKey=%d)\n", len(dec), len(ck))
 			return dec
+		} else if err != nil {
+			fmt.Printf("[zcloud] ws: decrypt err=%v (keylen=%d)\n", err, len(ck))
 		}
+	} else {
+		fmt.Printf("[zcloud] ws: no cipherKey, using raw payload\n")
 	}
 	return payload
 }
@@ -294,12 +308,25 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 // handleOldMessages xử lý cmd 510/511 (old messages response)
 func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
 	data := w.decryptPayload(payload)
+	fmt.Printf("[zcloud] ws: handleOldMessages raw=%s data=%s\n", string(payload[:min(200, len(payload))]), string(data[:min(400, len(data))]))
 	var rawData struct {
 		Msgs      json.RawMessage `json:"msgs"`
 		GroupMsgs json.RawMessage `json:"groupMsgs"`
+		Data      json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(data, &rawData); err != nil { return }
+	if err := json.Unmarshal(data, &rawData); err != nil {
+		fmt.Printf("[zcloud] ws: 510/1 parse err=%v\n", err)
+		return
+	}
 	msgsRaw := rawData.Msgs
+	if len(msgsRaw) == 0 && len(rawData.Data) > 0 {
+		// Thử parse từ wrapper {data: {msgs: ...}}
+		var inner struct { Msgs json.RawMessage `json:"msgs"` }
+		if json.Unmarshal(rawData.Data, &inner) == nil { msgsRaw = inner.Msgs }
+	}
+	if len(msgsRaw) == 0 && tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
+		msgsRaw = rawData.GroupMsgs
+	}
 	if tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
 		msgsRaw = rawData.GroupMsgs
 	}
