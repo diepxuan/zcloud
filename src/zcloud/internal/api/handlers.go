@@ -172,22 +172,27 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 		s.Logger.Printf("sync: updated account profile name=%s avatar_len=%d", n[:min(30, len(n))], len(a))
 	}
 
-	// Resolve group names
+	// Resolve group names — cập nhật tên + avatar cho group vào cả convs và DB
 	var groupIDs []string
 	for _, c := range convs { if c.Type == core.ConvGroup { groupIDs = append(groupIDs, c.ID) } }
 	if len(groupIDs) > 0 {
 		if gm, err := client.GetGroupInfo(ctx, groupIDs); err == nil {
-			for _, c := range convs {
-				if g, ok := gm[c.ID]; ok {
+			for i := range convs {
+				if g, ok := gm[convs[i].ID]; ok {
+					convs[i].Name = g.Name
+					convs[i].Avatar = g.Avatar
 					s.Store.SaveConversation(&store.Conversation{
-						ID: c.ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar, ConvType: int(c.Type), UpdatedAt: time.Now(),
+						ID: convs[i].ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar, ConvType: int(convs[i].Type), UpdatedAt: time.Now(),
 					})
 				}
 			}
 		}
 	}
 
-	ok(w, convs)
+	// Trả về từ DB để có đầy đủ tên + avatar
+	dbConvs, _ := s.Store.GetConversations(accountID)
+	if dbConvs == nil { dbConvs = []store.Conversation{} }
+	ok(w, dbConvs)
 }
 
 // ========== MESSAGES ==========
