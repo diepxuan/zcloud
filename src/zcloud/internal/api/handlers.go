@@ -47,6 +47,15 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]interface{}{"service": "zcloud", "time": time.Now().Unix()})
 }
 
+func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	a, err := s.Store.GetAccount(accountID)
+	if err != nil { fail(w, 500, err.Error()); return }
+	if a == nil { fail(w, 404, "not found"); return }
+	ok(w, a)
+}
+
 // ========== QR LOGIN ==========
 
 var qrSessions = make(map[string]*core.QRLoginSession)
@@ -158,8 +167,9 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Cập nhật tên + avatar cho account (đồng bộ)
-	if n, a, err := client.GetMyProfile(ctx); err == nil && n != "" {
+	if n, a, err := client.GetMyProfile(context.Background()); err == nil && n != "" {
 		s.Store.UpdateAccount(accountID, n, a)
+		s.Logger.Printf("sync: updated account profile name=%s avatar_len=%d", n[:min(30, len(n))], len(a))
 	}
 
 	// Resolve group names
