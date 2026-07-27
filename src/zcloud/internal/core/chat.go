@@ -533,6 +533,80 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 	return resultMap, nil
 }
 
+// GetGroupHistory lấy lịch sử tin nhắn group từ REST API
+func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int) ([]Message, error) {
+	if c.Session == nil || c.Session.SecretKey == "" {
+		return nil, ErrNotLoggedIn
+	}
+	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
+	if err != nil || len(rawKey) == 0 { return nil, err }
+
+	type historyItem struct {
+		MsgID     string `json:"msgId"`
+		Content   string `json:"content"`
+		FromUID   string `json:"fromUid"`
+		ConvID    string `json:"cliMsgId"`
+		Timestamp int64  `json:"ts"`
+		Type      int    `json:"msgType"`
+		DName     string `json:"dName"`
+	}
+
+	payload := map[string]any{"grid": groupID, "count": count}
+	jsonP, _ := json.Marshal(payload)
+	enc, err := EncodeAESCBC(rawKey, string(jsonP))
+	if err != nil { return nil, err }
+
+	baseURL := "https://group-wpa.chat.zalo.me"
+	if c.Session.ServiceMap != nil {
+		if p, ok := c.Session.ServiceMap["group"]; ok && len(p) > 0 { baseURL = p[0] }
+	}
+	serviceURL := fmt.Sprintf("%s/api/group/history?params=%s&zpw_ver=%d&zpw_type=%d",
+		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil { return nil, fmt.Errorf("history: %w", err) }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Printf("[zcloud] GetGroupHistory: raw=%s\n", string(body[:min(300, len(body))]))
+
+	var apiResp struct {
+		Data *json.RawMessage `json:"data"`
+	}
+	json.Unmarshal(body, &apiResp)
+	if apiResp.Data == nil { return nil, nil }
+
+	var dataStr string
+	json.Unmarshal(*apiResp.Data, &dataStr)
+
+	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	if err != nil { fmt.Printf("[zcloud] GetGroupHistory: decrypt err=%v\n", err); return nil, nil }
+
+	fmt.Printf("[zcloud] GetGroupHistory: decrypted=%s\n", string(decrypted[:min(500, len(decrypted))]))
+
+	var wrap struct {
+		Data *json.RawMessage `json:"data"`
+	}
+	json.Unmarshal(decrypted, &wrap)
+	if wrap.Data == nil { return nil, nil }
+
+	var history struct {
+		GroupMsgs []historyItem `json:"groupMsgs"`
+	}
+	json.Unmarshal(*wrap.Data, &history)
+
+	msgs := make([]Message, 0, len(history.GroupMsgs))
+	for _, item := range history.GroupMsgs {
+		msgs = append(msgs, Message{
+			ID: item.MsgID, ConvID: groupID, FromID: item.FromUID,
+			FromName: item.DName, Content: item.Content,
+			Timestamp: item.Timestamp, Type: MsgType(item.Type),
+		})
+	}
+	return msgs, nil
+}
+
 func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", c.Session.UserAgent)
 	if c.Session.UserAgent == "" {

@@ -255,19 +255,36 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 		WSURLs: wsURLs, UserID: sessRec.UserID,
 	}
 	client := core.NewClient(session)
-	if err := client.ConnectWS(r.Context()); err != nil {
-		// Nếu WS connect fail, vẫn trả về OK — tin nhắn đã có trong DB từ listener
-		ok(w, map[string]interface{}{"syncing": false, "note": "ws unavailable"})
-		return
-	}
-	defer client.WS.Close()
 	conv, _ := s.Store.GetConversation(req.AccountID, req.ConvID)
-	tt := core.ThreadUser
-	if conv != nil && conv.ConvType == 1 { tt = core.ThreadGroup }
-	if err := client.WS.RequestOldMessages(r.Context(), tt, ""); err != nil {
-		fail(w, 500, "request old msgs: "+err.Error()); return
+	synced := 0
+
+	// Cách 1: WS old messages (nếu connect được)
+	if err := client.ConnectWS(r.Context()); err == nil {
+		defer client.WS.Close()
+		tt := core.ThreadUser
+		if conv != nil && conv.ConvType == 1 { tt = core.ThreadGroup }
+		if err := client.WS.RequestOldMessages(r.Context(), tt, ""); err == nil {
+			synced++
+		}
 	}
-	ok(w, map[string]interface{}{"syncing": true})
+
+	// Cách 2: REST group history (chỉ cho group)
+	if conv != nil && conv.ConvType == 1 {
+		ctx2, cancel2 := context.WithTimeout(r.Context(), 15*time.Second)
+		msgs, err := client.GetGroupHistory(ctx2, req.ConvID, 50)
+		cancel2()
+		if err == nil && len(msgs) > 0 {
+			for _, m := range msgs {
+				s.Store.SaveMessage(&store.Message{
+					ID: m.ID, AccountID: req.AccountID, ConvID: req.ConvID,
+					FromID: m.FromID, FromName: m.FromName,
+					Content: m.Content, MsgType: int(m.Type), Timestamp: m.Timestamp,
+				})
+			}
+			synced += len(msgs)
+		}
+	}
+	ok(w, map[string]interface{}{"syncing": synced > 0, "synced": synced})
 }
 
 // ========== FRIENDS ==========

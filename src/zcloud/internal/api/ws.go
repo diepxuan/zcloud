@@ -288,8 +288,9 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		logger.Printf("zalo-ws: new msg from %s in %s", msg.FromID, msg.ConvID)
 
 	case core.EventOldMessages:
-		if event.Message == nil { return }
+		if event.Message == nil { logger.Printf("zalo-ws: old msg nil"); return }
 		om := event.Message
+		logger.Printf("zalo-ws: old msg from %s in %s", om.FromID, om.ConvID)
 		oaJSON, _ := json.Marshal(om.Attachments)
 		st.SaveMessage(&store.Message{
 			ID: om.ID, AccountID: accountID, ConvID: om.ConvID,
