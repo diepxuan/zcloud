@@ -125,6 +125,9 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
 
+	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
+	sessRec = s.autoRefresh(sessRec)
+
 	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
@@ -134,6 +137,16 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	client := core.NewClient(session)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
 	convs, err := client.GetConversations(ctx)
+	if err != nil {
+		if sessRec2 := s.autoRefresh(sessRec); sessRec2.ID != sessRec.ID {
+			// Refresh thành công, thử lại
+			sessRec = sessRec2
+			json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+			session.Cookies = cookies; session.SecretKey = sessRec.SecretKey
+			client = core.NewClient(session)
+			convs, err = client.GetConversations(ctx)
+		}
+	}
 	if err != nil { fail(w, 500, err.Error()); return }
 	if convs == nil { convs = []core.Conversation{} }
 
@@ -355,3 +368,57 @@ func safeDisplayName(userID string) string {
 }
 
 func min(a, b int) int { if a < b { return a }; return b }
+
+// autoRefresh kiểm tra và refresh session nếu sắp hết hạn hoặc token hết hạn
+func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
+	if sessRec == nil { return nil }
+	now := time.Now()
+	// Refresh nếu còn dưới 1 tiếng hoặc đã hết hạn
+	if now.Before(sessRec.ExpiresAt.Add(-1 * time.Hour)) && now.Before(sessRec.ExpiresAt) {
+		return sessRec // Còn hạn, không cần refresh
+	}
+	// Thử refresh bằng cookie login
+	var cookies map[string]string
+	if err := json.Unmarshal([]byte(sessRec.Cookies), &cookies); err != nil || len(cookies) == 0 {
+		return sessRec
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	result, err := core.CookieLogin(ctx, cookies, sessRec.IMEI, sessRec.UserAgent)
+	if err != nil {
+		s.Logger.Printf("autoRefresh: cookie login failed: %v", err)
+		return sessRec
+	}
+	// Lưu session mới
+	session := result.Session
+	accountID := sessRec.AccountID
+	cj, _ := json.Marshal(session.Cookies)
+	wj, _ := json.Marshal(session.WSURLs)
+	newSession := &store.Session{
+		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
+		AccountID: accountID, UserID: session.UserID,
+		Cookies: string(cj), SecretKey: session.SecretKey,
+		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
+		WSURLs: string(wj), APIType: 30, APIVersion: 665,
+		IsActive: 1, ExpiresAt: session.ExpiresAt,
+	}
+	s.Store.SaveSession(newSession)
+	// Vô hiệu hoá session cũ
+	s.Store.DeleteSession(sessRec.ID)
+	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
+	return newSession
+}
+// RefreshAllSessions refresh tat ca session sap het han (goi tu background goroutine)
+func (s *Server) RefreshAllSessions() {
+	accounts, err := s.Store.ListAccounts(1)
+	if err != nil { return }
+	for _, a := range accounts {
+		sessRec, err := s.Store.GetActiveSession(a.ID)
+		if err != nil || sessRec == nil { continue }
+		if time.Now().After(sessRec.ExpiresAt.Add(-30 * time.Minute)) {
+			s.Logger.Printf("autoRefresh: background refreshing %s", a.ID)
+			s.autoRefresh(sessRec)
+		}
+	}
+}
+

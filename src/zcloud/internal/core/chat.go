@@ -407,9 +407,14 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 		return []User{}, nil
 	}
 
+	// Zalo trả về dạng {"data": [...]} hoặc [...] trực tiếp
 	var items []any
 	if err := json.Unmarshal(decrypted, &items); err != nil {
-		return nil, fmt.Errorf("parse items: %w", err)
+		var wrapped struct { Data json.RawMessage `json:"data"` }
+		if err2 := json.Unmarshal(decrypted, &wrapped); err2 != nil || wrapped.Data == nil {
+			return nil, fmt.Errorf("parse items: %w (raw: %s)", err, string(decrypted[:min(200, len(decrypted))]))
+		}
+		json.Unmarshal(wrapped.Data, &items)
 	}
 
 	users := make([]User, 0, len(items))

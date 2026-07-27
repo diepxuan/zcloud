@@ -349,6 +349,7 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	sess.SecretKey = data.ZPWEnk
 	sess.UserID = data.UID
 	sess.ExpiresAt = time.Now().Add(24 * time.Hour)
+	fmt.Printf("[zcloud] login OK — uid=%s expires=%s\n", data.UID, sess.ExpiresAt.Format(time.RFC3339))
 
 	if data.ZPWServiceMap != "" {
 		var sm map[string][]string

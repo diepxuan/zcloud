@@ -82,6 +82,15 @@ func main() {
 		}
 	}()
 
+	// Background session refresh — mỗi 30 phút
+	go func() {
+		for {
+			time.Sleep(30 * time.Minute)
+			logger.Println("autoRefresh: background refresh start")
+			s.RefreshAllSessions()
+		}
+	}()
+
 	<-done
 	logger.Println("Đang tắt server...")
 
