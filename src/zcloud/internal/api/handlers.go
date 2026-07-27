@@ -171,7 +171,6 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	// Cập nhật tên + avatar cho account (đồng bộ)
 	if n, a, err := client.GetMyProfile(context.Background()); err == nil && n != "" {
 		s.Store.UpdateAccount(accountID, n, a)
-		s.Logger.Printf("sync: updated account profile name=%s avatar_len=%d", n[:min(30, len(n))], len(a))
 	}
 
 	// Resolve group names — cập nhật tên + avatar cho group vào cả convs và DB

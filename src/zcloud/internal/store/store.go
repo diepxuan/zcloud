@@ -252,14 +252,10 @@ func (s *Store) CreateAccount(id, displayName string, accountType int) error {
 
 // UpdateAccount cập nhật thông tin tài khoản
 func (s *Store) UpdateAccount(id, displayName, avatar string) error {
-	result, err := s.db.Exec(
+	_, err := s.db.Exec(
 		"UPDATE accounts SET display_name = ?, avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		displayName, avatar, id,
 	)
-	if err == nil {
-		n, _ := result.RowsAffected()
-		fmt.Printf("[zcloud] UpdateAccount: id=%s name=%s avatar_len=%d rows=%d\n", id, displayName[:min(30, len(displayName))], len(avatar), n)
-	}
 	return err
 }
 
