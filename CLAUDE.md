@@ -89,6 +89,23 @@ Hoàn thành 4 mục tiêu = dự án hoàn tất. Xem chi tiết tại `docs/ma
 - **Khi có lỗi:** báo cáo Sếp nguyên nhân + bằng chứng (log, code). Không tự ý kill process, xoá DB, rename script để "fix nhanh".
 - **Không xoá DB** trừ khi Sếp yêu cầu cụ thể.
 
+## Debug workflow — tuân thủ NGHIÊM NGẶT
+
+Khi Sếp báo lỗi, em phải làm theo thứ tự sau, KHÔNG ĐƯỢC LỆCH BƯỚC:
+
+1. **XÁC ĐỊNH lỗi trước** — dùng `curl` gọi thẳng API endpoint đó, xem response có gì. Không suy luận, không đoán.
+2. **XEM LOG service** — `journalctl -u zcloud.service -n 50 --output=cat`. Lỗi luôn có log. Nếu không thấy thì do:
+   - Request không tới được service (port/sai endpoint)
+   - Hoặc code không log lỗi (cần thêm log)
+3. **So sánh rendered output từ `curl` với source code** — nếu HTML sai thì lỗi ở file template hoặc cách render.
+4. **KHÔNG BAO GIỜ đổ lỗi cho cache, service restart, build, browser** khi chưa chứng minh được. 9/10 lỗi là do code sai. Chỉ nói "do cache" khi đã `curl` thấy response đúng mà trình duyệt hiển thị sai, và đã thử incognito.
+5. **KHÔNG commit khi chưa test response.** Trước khi commit phải:
+   - Build thành công (`go build ./cmd/zcloudd/`)
+   - Dùng `curl` gọi API/trang vừa sửa, verify response đúng
+   - Đợi service restart (2-3s), verify lại lần nữa
+6. **Khi Sếp nói "vẫn lỗi"** — không commit tiếp, không fix tiếp. Dừng lại, đọc lại code, phân tích nguyên nhân gốc. Nếu không tìm được, hỏi Sếp cho em xem console log (F12).
+7. **Rollback nếu cần** — `git revert` commit gây lỗi, rồi làm lại từ đầu, KHÔNG fix chồng fix.
+
 ## Kỷ luật Git
 
 - Mỗi subtask = 1 commit. **Push ngay vào `main`**, không cần review.
