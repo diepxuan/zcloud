@@ -367,7 +367,8 @@ func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html, err := webFS.ReadFile("web/chat.html")
 	if err != nil { http.Error(w, "template error", 500); return }
-	fmt.Fprintf(w, string(html), accOpts)
+	// Dùng strings.Replace thay vì fmt.Fprintf — tránh lỗi %! trong CSS
+	w.Write([]byte(strings.Replace(string(html), "%s", accOpts, 1)))
 }
 
 func safeDisplayName(userID string) string {
