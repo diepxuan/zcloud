@@ -44,39 +44,54 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	if c.Session == nil || c.Session.SecretKey == "" {
 		return nil, ErrNotLoggedIn
 	}
+	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
+	if err != nil || len(rawKey) == 0 { return nil, err }
+
+	clientID := generateClientID()
 	params := map[string]any{
-		"message": content, "clientId": generateClientID(), "imei": c.Session.IMEI,
-		"msgType": int(msgType), "to": to, "ts": time.Now().UnixMilli(),
+		"message":  content,
+		"clientId": clientID,
+		"imei":     c.Session.IMEI,
+		"ttl":      0,
+		"visibility": 0,
+		"toid":     to,
 	}
-	encResult, err := encryptParamsForLogin(c.Session, true, "sendreq")
-	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+	jsonP, _ := json.Marshal(params)
+	enc, err := EncodeAESCBC(rawKey, string(jsonP))
+	if err != nil { return nil, err }
+
+	baseURL := "https://wpa.chat.zalo.me"
+	if c.Session.ServiceMap != nil {
+		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
-	query := url.Values{}
-	for k, v := range encResult.Params {
-		query.Set(k, fmt.Sprintf("%v", v))
-	}
-	apiURL := "https://wpa.chat.zalo.me/api/message/sendreq?" + query.Encode()
-	req, _ := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	serviceURL := fmt.Sprintf("%s/api/message/sms?params=%s", baseURL, url.QueryEscape(enc))
+	bodyStr := url.Values{"params": {enc}}.Encode()
+	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, strings.NewReader(bodyStr))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setHeaders(req)
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("send: %w", err)
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) > 0 && body[0] == '<' {
+		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
+	}
 
 	var sendResp struct {
 		ErrorCode int             `json:"error_code"`
-		Data      json.RawMessage `json:"data"`
+		Data      *json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+	if err := json.Unmarshal(body, &sendResp); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
 	if sendResp.ErrorCode != 0 {
 		return nil, fmt.Errorf("send error %d", sendResp.ErrorCode)
 	}
 	return &Message{
-		ID: params["clientId"].(string), Content: content,
+		ID: clientID, Content: content,
 		Type: msgType, Timestamp: time.Now().UnixMilli(),
 	}, nil
 }
