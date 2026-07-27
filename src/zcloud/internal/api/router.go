@@ -20,6 +20,7 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	// Static pages
 	// ====================================
 	mux.HandleFunc("GET /", s.HandleLoginPage)
+	mux.HandleFunc("GET /favicon.svg", s.HandleFavicon)
 	mux.HandleFunc("GET /chat", s.HandleChatPage)
 
 	// ====================================

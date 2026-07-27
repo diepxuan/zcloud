@@ -347,6 +347,12 @@ func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 // ========== CHAT PAGE ==========
 // ========== CHAT PAGE ==========
 
+func (s *Server) HandleFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	fav, _ := webFS.ReadFile("web/favicon.svg")
+	if fav != nil { w.Write(fav) }
+}
+
 func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
 	accounts, _ := s.Store.ListAccounts(1)
 	if len(accounts) == 0 {
