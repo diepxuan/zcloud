@@ -333,6 +333,16 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	if innerResp.Data != nil {
 		json.Unmarshal(innerResp.Data, &data)
 	}
+	if data.UID == "" {
+		// Try flat structure where fields are at top level
+		var flat struct {
+			UID    string `json:"uid"`
+			ZPWEnk string `json:"zpw_enk"`
+		}
+		json.Unmarshal(decrypted, &flat)
+		data.UID = flat.UID
+		if data.ZPWEnk == "" { data.ZPWEnk = flat.ZPWEnk }
+	}
 
 	sess.SecretKey = data.ZPWEnk
 	sess.UserID = data.UID
