@@ -206,15 +206,12 @@ func (w *WSClient) handleFrame(data []byte) {
 		w.handleNewMessages(payload, ThreadGroup)
 
 	case cmd == 510 && subCmd == 1:
-		fmt.Printf("[zcloud] ws: 510/1 old user msgs (%d bytes)\n", len(payload))
 		w.handleOldMessages(payload, ThreadUser)
 
 	case cmd == 511 && subCmd == 1:
-		fmt.Printf("[zcloud] ws: 511/1 old group msgs (%d bytes)\n", len(payload))
 		w.handleOldMessages(payload, ThreadGroup)
 
 	case (cmd == 510 || cmd == 511) && subCmd == 0:
-		fmt.Printf("[zcloud] ws: %d/0 old msgs (enc=%s)\n", cmd, string(payload[:min(200, len(payload))]))
 		w.handleOldMessages(payload, ThreadUser)
 		if cmd == 511 { w.handleOldMessages(payload, ThreadGroup) }
 
@@ -254,13 +251,11 @@ func (w *WSClient) decryptPayload(payload []byte) []byte {
 	w.mu.Unlock()
 	if len(ck) > 0 {
 		if dec, err := DecodeWSEvent(payload, ck); err == nil && len(dec) > 0 {
-			fmt.Printf("[zcloud] ws: decrypted %d bytes (cipherKey=%d)\n", len(dec), len(ck))
 			return dec
 		} else if err != nil {
 			fmt.Printf("[zcloud] ws: decrypt err=%v (keylen=%d)\n", err, len(ck))
 		}
 	} else {
-		fmt.Printf("[zcloud] ws: no cipherKey, using raw payload\n")
 	}
 	return payload
 }
@@ -310,7 +305,6 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 // handleOldMessages xử lý cmd 510/511 (old messages response)
 func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
 	data := w.decryptPayload(payload)
-	fmt.Printf("[zcloud] ws: handleOldMessages raw=%s data=%s\n", string(payload[:min(200, len(payload))]), string(data[:min(400, len(data))]))
 	var rawData struct {
 		Msgs      json.RawMessage `json:"msgs"`
 		GroupMsgs json.RawMessage `json:"groupMsgs"`
