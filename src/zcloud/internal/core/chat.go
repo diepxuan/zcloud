@@ -233,7 +233,6 @@ func resolveNames(c *Client, convs []Conversation) {
 	if err != nil { fmt.Printf("[zcloud] resolveNames: req err=%v\n", err); return }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[zcloud] resolveNames: raw=%s\n", string(body)[:min(300, len(body))])
 
 	var result struct {
 		ErrorCode int              `json:"error_code"`
@@ -252,12 +251,6 @@ func resolveNames(c *Client, convs []Conversation) {
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil { fmt.Printf("[zcloud] resolveNames: decrypt err=%v len=%d\n", err, len(dataStr)); return }
 
-	var profilesWrap struct {
-		Data *json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(decrypted, &profilesWrap); err != nil { fmt.Printf("[zcloud] resolveNames: wrap parse err=%v\n", err); return }
-	if profilesWrap.Data == nil { fmt.Printf("[zcloud] resolveNames: no data in wrapper\n"); return }
-
 	var profiles struct {
 		ChangedProfiles map[string]struct {
 			ZaloName    string `json:"zaloName"`
@@ -265,7 +258,15 @@ func resolveNames(c *Client, convs []Conversation) {
 			Avatar      string `json:"avatar"`
 		} `json:"changed_profiles"`
 	}
-	if err := json.Unmarshal(*profilesWrap.Data, &profiles); err != nil { fmt.Printf("[zcloud] resolveNames: parse err=%v\n", err); return }
+	// Try parse từ wrapper {data: ...} hoặc flat JSON trực tiếp
+	if err := json.Unmarshal(decrypted, &profiles); err == nil && len(profiles.ChangedProfiles) > 0 {
+		// flat JSON — dùng luôn
+	} else {
+		var wrap struct { Data json.RawMessage `json:"data"` }
+		if json.Unmarshal(decrypted, &wrap) == nil && len(wrap.Data) > 0 {
+			json.Unmarshal(wrap.Data, &profiles)
+		}
+	}
 
 	for i := range convs {
 		if p, ok := profiles.ChangedProfiles[convs[i].ID]; ok {
@@ -308,7 +309,6 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	if err != nil { return "", "", err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[zcloud] GetMyProfile: raw=%s\n", string(body[:min(300, len(body))]))
 
 	var result struct {
 		ErrorCode int              `json:"error_code"`
@@ -323,7 +323,6 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 
 	var dataStr string
 	if err := json.Unmarshal(*result.Data, &dataStr); err != nil {
-		fmt.Printf("[zcloud] GetMyProfile: data string err=%v\n", err)
 		return "", "", nil
 	}
 
@@ -332,7 +331,6 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		fmt.Printf("[zcloud] GetMyProfile: decrypt err=%v\n", err)
 		return "", "", err
 	}
-	fmt.Printf("[zcloud] GetMyProfile: decrypted=%s\n", string(decrypted[:min(300, len(decrypted))]))
 
 	var wrap struct {
 		Data *json.RawMessage `json:"data"`
@@ -355,7 +353,6 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 				n := p.ZaloName; if n == "" { n = p.DisplayName }; return n, p.Avatar, nil
 			}
 		}
-		fmt.Printf("[zcloud] GetMyProfile: no data in wrapper, raw decrypted=%s\n", string(decrypted[:min(200, len(decrypted))]))
 		return "", "", nil
 	}
 
@@ -375,14 +372,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	for _, key := range []string{c.Session.UserID + "_0", c.Session.UserID} {
 		if p, ok := profiles.ChangedProfiles[key]; ok {
 			n := p.ZaloName; if n == "" { n = p.DisplayName }
-			fmt.Printf("[zcloud] GetMyProfile: found key=%s name=%s avatar=%s\n", key, n, p.Avatar[:min(40, len(p.Avatar))])
 			return n, p.Avatar, nil
 		}
 	}
-	fmt.Printf("[zcloud] GetMyProfile: uid not found in changed_profiles (available keys: %v)\n", func() []string {
-		keys := make([]string, 0, len(profiles.ChangedProfiles))
-		for k := range profiles.ChangedProfiles { keys = append(keys, k) }; return keys
-	}())
 	return "", "", nil
 }
 
@@ -417,7 +409,6 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 	if err != nil { return nil, fmt.Errorf("friends: %w", err) }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[zcloud] GetFriends: raw=%s\n", string(body[:min(300, len(body))]))
 
 	var friendResp struct {
 		ErrorCode int              `json:"error_code"`
@@ -505,7 +496,6 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[zcloud] GetGroupInfo: raw=%s\n", string(body)[:min(300, len(body))])
 
 	type resultType struct {
 		Data *json.RawMessage `json:"data"`
@@ -519,7 +509,6 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil { return nil, err }
-	fmt.Printf("[zcloud] GetGroupInfo: decrypted=%s\n", string(decrypted)[:min(500, len(decrypted))])
 
 	var wrap struct {
 		Data *json.RawMessage `json:"data"`

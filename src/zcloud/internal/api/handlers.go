@@ -107,7 +107,9 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 	s.Store.CreateAccount(accountID, displayName, 1)
 	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
 	cookiesJSON, _ := json.Marshal(session.Cookies)
-	wsURLsJSON, _ := json.Marshal(session.WSURLs)
+	wsList := session.WSURLs
+	if wsList == nil { wsList = []string{} }
+	wsURLsJSON, _ := json.Marshal(wsList)
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
