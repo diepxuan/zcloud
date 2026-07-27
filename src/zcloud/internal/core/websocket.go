@@ -238,9 +238,11 @@ func (w *WSClient) handleFrame(data []byte) {
 func (w *WSClient) RequestOldMessages(ctx context.Context, tt ThreadType, lastMsgID string) error {
 	cmd := uint16(510)
 	if tt == ThreadGroup { cmd = 511 }
+	lastId := lastMsgID
+	if lastId == "" { lastId = "10000000000000000" } // Giá trị lớn để lấy tin mới nhất
 	data := map[string]any{
 		"first":  true,
-		"lastId": lastMsgID,
+		"lastId": lastId,
 		"preIds": []string{},
 	}
 	return w.SendWS(ctx, cmd, 1, data)
