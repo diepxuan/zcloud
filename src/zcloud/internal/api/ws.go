@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -132,10 +133,30 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 var (
 	zaloListeners   = make(map[string]context.CancelFunc)
+	zaloClients     = make(map[string]*core.Client)
 	zaloListenerMu  sync.Mutex
 )
 
 // StartZaloListener khởi động Zalo WebSocket listener cho account
+// RequestOldMessagesViaListener gửi yêu cầu old messages qua WS listener nền
+func RequestOldMessagesViaListener(accountID, convID string, convType int) bool {
+	zaloListenerMu.Lock()
+	client, ok := zaloClients[accountID]
+	zaloListenerMu.Unlock()
+	fmt.Printf("[zcloud] ws-sync: account=%s conv=%s type=%d client_ok=%v ws_nil=%v\n",
+		accountID, convID, convType, ok, !ok || client == nil || client.WS == nil)
+	if !ok || client.WS == nil { return false }
+	tt := core.ThreadUser
+	if convType == 1 { tt = core.ThreadGroup }
+	fmt.Printf("[zcloud] ws-sync: sending RequestOldMessages cmd=%d\n", 510 + int(tt))
+	if err := client.WS.RequestOldMessages(context.Background(), tt, ""); err != nil {
+		fmt.Printf("[zcloud] ws-sync: request err=%v\n", err)
+		return false
+	}
+	fmt.Printf("[zcloud] ws-sync: request sent OK\n")
+	return true
+}
+
 func StartZaloListener(st *store.Store, accountID string, logger *log.Logger) {
 	zaloListenerMu.Lock()
 	defer zaloListenerMu.Unlock()
@@ -195,6 +216,16 @@ func runZaloListener(ctx context.Context, st *store.Store, accountID string, log
 	}
 
 	client := core.NewClient(session)
+
+	// Lưu client để handler gửi request old messages qua WS listener nền
+	zaloListenerMu.Lock()
+	zaloClients[accountID] = client
+	zaloListenerMu.Unlock()
+	defer func() {
+		zaloListenerMu.Lock()
+		delete(zaloClients, accountID)
+		zaloListenerMu.Unlock()
+	}()
 
 	// Auto-reconnect loop
 	for attempt := 0; ; attempt++ {

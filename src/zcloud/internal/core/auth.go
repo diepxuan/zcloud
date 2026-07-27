@@ -349,8 +349,8 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	sess.SecretKey = data.ZPWEnk
 	sess.UserID = data.UID
 	sess.ExpiresAt = time.Now().Add(24 * time.Hour)
-	fmt.Printf("[zcloud] login OK — uid=%s expires=%s\n", data.UID, sess.ExpiresAt.Format(time.RFC3339))
 
+	// Parse zpw_service_map_v3 để lấy URL các service
 	if data.ZPWServiceMap != "" {
 		var sm map[string][]string
 		if err := json.Unmarshal([]byte(data.ZPWServiceMap), &sm); err == nil {
@@ -358,14 +358,17 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 		}
 	}
 
+	// Parse zpw_ws — WebSocket URLs
 	if data.ZPWS != "" {
 		var wsURLs []string
 		if err := json.Unmarshal([]byte(data.ZPWS), &wsURLs); err == nil {
 			sess.WSURLs = wsURLs
 		} else {
+			// Nếu parse mảng thất bại, thử dùng trực tiếp chuỗi
 			sess.WSURLs = []string{data.ZPWS}
 		}
 	}
+	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
 
 	// Get cookies từ jar
 	domains := []string{"https://id.zalo.me/", "https://chat.zalo.me/", "https://wpa.chat.zalo.me/"}

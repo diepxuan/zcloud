@@ -117,6 +117,8 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		WSURLs: string(wsURLsJSON), APIType: 30, APIVersion: 665, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	qrMu.Lock(); delete(qrSessions, token); qrMu.Unlock()
+	// Start Zalo WS listener ngay sau login — không cần browser WebSocket
+	go StartZaloListener(s.Store, accountID, s.Logger)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
 
@@ -135,6 +137,9 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	if accountID == "" { fail(w, 400, "missing accountId"); return }
 	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+
+	// Start Zalo WS listener nền (Go server tự làm Zalo client)
+	go StartZaloListener(s.Store, accountID, s.Logger)
 
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
@@ -240,54 +245,16 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	var req struct{ AccountID string `json:"accountId"`; ConvID string `json:"convId"` }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
 	if req.AccountID == "" || req.ConvID == "" { fail(w, 400, "missing fields"); return }
-	sessRec, err := s.Store.GetActiveSession(req.AccountID)
-	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
-	if sessRec.SecretKey == "" { fail(w, 400, "session expired — đăng nhập lại"); return }
-	// Nếu không có WS URLs thì dùng mặc định
-	var wsURLs []string
-	if sessRec.WSURLs != "" && sessRec.WSURLs != "null" {
-		json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
-	}
-	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
-	session := &core.Session{
-		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
-		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
-		WSURLs: wsURLs, UserID: sessRec.UserID,
-	}
-	client := core.NewClient(session)
 	conv, _ := s.Store.GetConversation(req.AccountID, req.ConvID)
 	synced := 0
-
-	// Cách 1: WS old messages (nếu connect được)
-	if err := client.ConnectWS(r.Context()); err == nil {
-		defer client.WS.Close()
-		tt := core.ThreadUser
-		if conv != nil && conv.ConvType == 1 { tt = core.ThreadGroup }
-		if err := client.WS.RequestOldMessages(r.Context(), tt, ""); err == nil {
-			synced++
-		}
-	}
-
-	// Cách 2: REST group history (chỉ cho group)
-	if conv != nil && conv.ConvType == 1 {
-		ctx2, cancel2 := context.WithTimeout(r.Context(), 15*time.Second)
-		msgs, err := client.GetGroupHistory(ctx2, req.ConvID, 50)
-		cancel2()
-		if err == nil && len(msgs) > 0 {
-			for _, m := range msgs {
-				s.Store.SaveMessage(&store.Message{
-					ID: m.ID, AccountID: req.AccountID, ConvID: req.ConvID,
-					FromID: m.FromID, FromName: m.FromName,
-					Content: m.Content, MsgType: int(m.Type), Timestamp: m.Timestamp,
-				})
-			}
-			synced += len(msgs)
-		}
+	// Gửi request old messages qua WS listener nền
+	convType := 0
+	if conv != nil { convType = conv.ConvType }
+	if RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType) {
+		synced++
 	}
 	ok(w, map[string]interface{}{"syncing": synced > 0, "synced": synced})
 }
-
-// ========== FRIENDS ==========
 
 func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")

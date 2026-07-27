@@ -36,7 +36,7 @@ type WSClient struct {
 // NewWSClient tạo WebSocket client mới
 func NewWSClient(session *Session) *WSClient {
 	url := "wss://wpa.chat.zalo.me"
-	if len(session.WSURLs) > 0 {
+	if len(session.WSURLs) > 0 && session.WSURLs[0] != "" {
 		url = session.WSURLs[0]
 	}
 
