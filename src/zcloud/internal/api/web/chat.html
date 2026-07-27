@@ -113,14 +113,4 @@ window.location.href='/';}
 function rd(s){return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
-</script></body></html>`, accOpts)
-}
-
-func safeDisplayName(userID string) string {
-	if userID == "" { return "Zalo User" }
-	short := userID
-	if len(short) > 8 { short = short[:8] }
-	return "Zalo User " + short
-}
-
-func min(a, b int) int { if a < b { return a }; return b }
+</script></body></html>
