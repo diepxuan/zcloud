@@ -409,6 +409,10 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 	if err != nil { return nil, fmt.Errorf("friends: %w", err) }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if len(body) > 0 && body[0] == '<' {
+		fmt.Printf("[zcloud] GetFriends: html response=%s\n", string(body[:min(200, len(body))]))
+		return nil, fmt.Errorf("friends: zalo returned html instead of json")
+	}
 
 	var friendResp struct {
 		ErrorCode int              `json:"error_code"`

@@ -6,17 +6,17 @@
 body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-direction:column}
 .hdr{background:#0068ff;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px}
 .hdr h1{font-size:18px;flex:1}
-.hdr select{background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 10px;border-radius:4px;font-size:13px}
-.hdr select option{color:#333}
 .hdr button{background:rgba(255,255,255,.2);color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer}
 .ct{display:flex;flex:1;overflow:hidden}
-.sb{width:300px;background:#fff;border-right:1px solid #e0e0e0;display:flex;flex-direction:column}
-.sbn{display:flex;border-bottom:1px solid #e0e0e0}
-.sbn button{flex:1;padding:10px;background:none;border:none;cursor:pointer;font-size:13px;color:#666;border-bottom:2px solid transparent}
-.sbn button.on{color:#0068ff;border-bottom-color:#0068ff}
-.sbp{flex:1;overflow-y:auto;display:none}
-.sbp.on{display:block}
-.sr{padding:12px;border-bottom:1px solid #e0e0e0}
+.sb{width:60px;background:#fff;border-right:1px solid #e0e0e0;display:flex;flex-direction:column;align-items:center;padding:8px 0;flex-shrink:0}
+.sb-btn{width:40px;height:40px;border:none;background:none;cursor:pointer;border-radius:8px;font-size:20px;color:#666;display:flex;align-items:center;justify-content:center;margin-bottom:4px}
+.sb-btn.on{background:#0068ff;color:#fff}
+.sb-btn:hover{background:#e8f0ff}
+.sb-bot{margin-top:auto}
+.sb-div{width:32px;height:1px;background:#e0e0e0;margin:8px 0}
+.sp{flex:0 0 280px;display:none;flex-direction:column;overflow-y:auto;background:#fff;border-right:1px solid #e0e0e0}
+.sp.on{display:flex}
+.sr{padding:12px 16px;border-bottom:1px solid #e0e0e0}
 .sr input{width:100%;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px}
 .cv{display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0}
 .cv:hover{background:#f5f8ff}.cv.on{background:#e8f0ff}
@@ -42,22 +42,38 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .em{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#999;gap:8px;font-size:48px}
 .lm{text-align:center;padding:8px;color:#0068ff;cursor:pointer;font-size:13px}
 .hd{display:none}
+.mg{padding:16px}
+.mg h3{font-size:15px;color:#333;margin-bottom:12px}
+.mg-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e0e0e0;border-radius:6px;margin-bottom:8px}
+.mg-item .mg-n{flex:1;font-size:13px;color:#333}
+.mg-item .mg-btn{background:#0068ff;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;margin-right:4px}
+.mg-del{background:#ff4444;color:#fff;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px}
 @media(max-width:768px){.sb{width:100%}.sb.hide{display:none}}
 </style>
 </head><body>
-<div class="hdr"><div class="ha" id="ha" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.2);overflow:hidden;flex-shrink:0"><img id="himg" src="" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover"></div><h1 id="hdn" style="font-size:15px;flex:0;white-space:nowrap;margin-right:4px">ZCloud</h1><select id="ac" onchange="sa()">%s</select><button onclick="lo()">Đổi TK</button></div>
+<div class="hdr"><div class="ha" id="ha" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.2);overflow:hidden;flex-shrink:0"><img id="himg" src="" onerror="this.style.display='none'" style="width:100%;height:100%;object-fit:cover"></div><h1 id="hdn" style="font-size:16px;flex:1">ZCloud</h1></div>
 <div class="ct">
 <div class="sb">
-<div class="sbn"><button class="on" onclick="stp('ch')">Trò chuyện</button><button onclick="stp('co')">Liên hệ</button></div>
-<div id="pn-ch" class="sbp on">
+<button class="sb-btn on" onclick="st('ch')" title="Trò chuyện">💬</button>
+<button class="sb-btn" onclick="st('co')" title="Liên hệ">👥</button>
+<div class="sb-bot"></div>
+<div class="sb-div"></div>
+<button class="sb-btn" onclick="st('mg')" title="Quản lý">⚙️</button>
+</div>
+<div id="pn-ch" class="sp on">
 <div class="sr"><input type="text" placeholder="Tìm kiếm..." oninput="fc(this.value)"></div>
 <div id="cl"></div>
 </div>
-<div id="pn-co" class="sbp">
+<div id="pn-co" class="sp">
 <div class="sr"><input type="text" placeholder="Tìm bạn..." oninput="ff(this.value)"></div>
 <div id="fl"></div>
 </div>
-</div>
+	<div id="pn-mg" class="sp">
+	<div class="mg">
+	<h3>Zalo Users</h3>
+	<div id="ul"></div>
+	</div>
+	</div>
 <div class="ca">
 <div class="ch"><h2 id="ctt">Chọn hội thoại</h2></div>
 <div class="ms" id="ml"><div class="em">Chọn một hội thoại để bắt đầu</div></div>
@@ -65,53 +81,49 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 </div>
 </div>
 <script>
-var cc='',ca=document.getElementById('ac').value,cu=0,ld=false,pt=null,cvCache={};
-document.addEventListener('DOMContentLoaded',function(){if(ca){uh();sy()}});
+var ca='',cu=0,ld=false,pt=null,cvCache={};
+document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy()});
+async function la(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data&&d.data.length>0){ca=d.data[0].id;el('ul','');d.data.forEach(function(a){var dv=document.createElement('div');dv.className='mg-item';dv.innerHTML='<div class="mg-n">'+(a.displayName||a.id)+'</div><button class="mg-btn" onclick="ca=a.id;uh();sy();st(\'ch\')">Switch</button><button class="mg-del" onclick="xd(\''+a.id+'\')">Xoá</button>';el('ul').appendChild(dv)})}return true}catch(e){return false}}
 function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}}).catch(function(){})}
-function sa(){ca=document.getElementById('ac').value;uh();if(ca)sy();}
-function stp(t){document.querySelectorAll('.sbp').forEach(function(e){e.classList.remove('on')});
-document.querySelectorAll('.sbn button').forEach(function(b){b.classList.remove('on')});
-document.getElementById('pn-'+t).classList.add('on');
-document.querySelector('.sbn button'+(t=='ch'?':first-child':':last-child')).classList.add('on');
-if(t=='co'&&ca)loadFriends();}
-async function loadFriends(){if(!ca)return;var el=document.getElementById('fl');
-el.innerHTML='<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>';
+function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
+function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
+async function loadFriends(){if(!ca){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa chọn user</div>');return}
+el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
 try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
-if(d.ok&&d.data&&d.data.length>0){el.innerHTML='';
+if(d.ok&&d.data&&d.data.length>0){el('fl','');
 d.data.forEach(function(u){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(u.name||u.id)+'</div></div>';
-dv.onclick=function(){sc(u.id,u.name,u.avatar)};el.appendChild(dv)})}
-else{el.innerHTML='<div style="padding:20px;text-align:center;color:#999">'+((d.error)||'Không có bạn bè')+'</div>'}}
-catch(e){el.innerHTML='<div style="padding:20px;text-align:center;color:#999">Lỗi tải bạn bè</div>'}}
+dv.onclick=function(){sc(u.id,u.name,u.avatar)};el('fl').appendChild(dv)})}
+else{el('fl','<div style="padding:20px;text-align:center;color:#999">'+((d.error)||'Không có bạn bè')+'</div>')}}
+catch(e){el('fl','<div style="padding:20px;text-align:center;color:#999">Lỗi tải bạn bè</div>')}}
 async function sy(){if(!ca)return;
 try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.json();
-if(d.ok&&d.data){var el=document.getElementById('cl');el.innerHTML='';
+if(d.ok&&d.data){el('cl','');
 d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
 var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
-dv.onclick=function(){sc(c.id,c.name,c.avatar)};el.appendChild(dv)});}}catch(e){}}
+dv.onclick=function(){sc(c.id,c.name,c.avatar)};el('cl').appendChild(dv)});}}catch(e){}}
 function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
-document.getElementById('ml').innerHTML='<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>';
+el('ml','<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>');
 fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
 async function lm(){if(!cc||ld||!ca)return;ld=true;
 try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
-if(d.ok){var el=document.getElementById('ml');if(cu===0)el.innerHTML='';
+if(d.ok){var ml=el('ml');if(cu===0)el('ml','');
 d.data.forEach(function(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');
 var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
-dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv)});
-if(d.data.length>0)cu=d.data[d.data.length-1].timestamp;el.scrollTop=el.scrollHeight;}}catch(e){}finally{ld=false}}
+dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv)});
+if(d.data.length>0)cu=d.data[d.data.length-1].timestamp;ml.scrollTop=ml.scrollHeight;}}catch(e){}finally{ld=false}}
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
-if(d.ok){var el=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg out';
+if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';el.appendChild(dv);el.scrollTop=el.scrollHeight;}}catch(e){}}
-async function lo(){if(!confirm('Đổi tài khoản?'))return;
-try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca})});}catch(e){}
-window.location.href='/';}
-function rd(s){return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()}
+dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);ml.scrollTop=ml.scrollHeight;}}catch(e){}}
+async function xd(id){if(!confirm('Xoá user '+id+'?'))return;
+try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id})});la();if(ca==id){ca='';document.getElementById('hdn').textContent='ZCloud';document.getElementById('himg').style.display='none'}}catch(e){}}
+function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
 </script></body></html>

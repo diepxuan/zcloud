@@ -56,6 +56,12 @@ func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {
 	ok(w, a)
 }
 
+func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
+	accounts, _ := s.Store.ListAccounts(1)
+	if accounts == nil { accounts = []store.Account{} }
+	ok(w, accounts)
+}
+
 // ========== QR LOGIN ==========
 
 var qrSessions = make(map[string]*core.QRLoginSession)
