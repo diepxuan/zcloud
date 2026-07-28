@@ -1,7 +1,7 @@
 # Task 05: Build Server Daemon
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** [04-build-core.md](04-build-core.md) ✅
 - **Kế tiếp:** [06-build-webui.md](06-build-webui.md)

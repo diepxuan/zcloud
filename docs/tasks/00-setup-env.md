@@ -1,7 +1,7 @@
 # Task 00: Setup môi trường + Go project
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Kế tiếp:** [01-reverse-web-api.md](01-reverse-web-api.md)
 

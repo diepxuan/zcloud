@@ -1,7 +1,7 @@
 # Task 01: Reverse Zalo Web API
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** [00-setup-env.md](00-setup-env.md) ✅
 - **Kế tiếp:** [03-design-core.md](03-design-core.md), [04-build-core.md](04-build-core.md)

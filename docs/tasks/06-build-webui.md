@@ -1,7 +1,7 @@
 # Task 06: Build Web UI
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** [05-build-server.md](05-build-server.md) ✅
 - **Kế tiếp:** — (task cuối)

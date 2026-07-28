@@ -1,7 +1,7 @@
 # Task 03: Design Core Protocol Layer
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** [01-reverse-web-api.md](01-reverse-web-api.md) ✅
 - **Kế tiếp:** [04-build-core.md](04-build-core.md)

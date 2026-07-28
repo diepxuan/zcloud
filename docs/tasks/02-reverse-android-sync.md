@@ -1,7 +1,7 @@
 # Task 02: Reverse Android Sync (DEFERRED — Optional)
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** Task 01-06 hoàn thành hết
 - **Trạng thái:** 🟡 Deferred — không làm trong MVP

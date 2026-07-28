@@ -1,7 +1,7 @@
 # Task 04: Build Core Library (Go)
 
 ## Liên kết
-- **Master plan:** [master-plan.md](../master-plan.md)
+- **Master plan:** [tasks.md](../tasks.md)
 - **Task list:** [tasks.md](../tasks.md)
 - **Phụ thuộc:** [01-reverse-web-api.md](01-reverse-web-api.md) ✅, [03-design-core.md](03-design-core.md) ✅
 - **Kế tiếp:** [05-build-server.md](05-build-server.md)
