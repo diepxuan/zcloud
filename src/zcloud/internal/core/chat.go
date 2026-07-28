@@ -60,17 +60,17 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
 	if err != nil { return nil, err }
 
-	baseURL := "https://wpa.chat.zalo.me"
+	baseURL := "https://tt-chat2-wpa.chat.zalo.me"
 	if c.Session.ServiceMap != nil {
 		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
-	// Fallback cho domain mới
-	if !strings.Contains(baseURL, "tt-chat3") {
-		baseURL = "https://tt-chat3-wpa.chat.zalo.me"
-	}
-	serviceURL := fmt.Sprintf("%s/api/message/sms?params=%s&zpw_ver=%d&zpw_type=%d",
-		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
-	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, nil)
+	serviceURL := fmt.Sprintf("%s/api/message/sms", baseURL)
+	form := url.Values{}
+	form.Set("params", enc)
+	form.Set("zpw_ver", fmt.Sprintf("%d", c.Session.APIVersion))
+	form.Set("zpw_type", fmt.Sprintf("%d", c.Session.APIType))
+	form.Set("nretry", "0")
+	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setHeaders(req)
 
