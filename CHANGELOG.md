@@ -8,7 +8,7 @@ dự án tuân thủ [Semantic Versioning](https://semver.org/lang/vi/) khi có 
 ## [Unreleased]
 
 ### Added
-- Source code Go đầy đủ — build pass (`go build ./...`).
+- Source code Go đầy đủ — chạy được trên port 8080.
 - `zcloudd` daemon chạy trên port 8080, expose REST API + WebSocket.
 - Multi-user manager — nhiều tài khoản Zalo trên 1 daemon.
 - Web UI — vanilla JS, file tĩnh embed vào binary.
