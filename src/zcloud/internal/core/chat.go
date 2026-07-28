@@ -64,6 +64,10 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	if c.Session.ServiceMap != nil {
 		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
+	// Fallback cho domain mới
+	if !strings.Contains(baseURL, "tt-chat3") {
+		baseURL = "https://tt-chat3-wpa.chat.zalo.me"
+	}
 	serviceURL := fmt.Sprintf("%s/api/message/sms?params=%s&zpw_ver=%d&zpw_type=%d",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, nil)
