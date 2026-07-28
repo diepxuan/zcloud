@@ -136,7 +136,7 @@ dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);m
 async function xd(id){if(!confirm('Xoá user '+id+'?'))return;
 try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id})})}catch(e){}
 window.location.reload()}
-function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
+function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 function ff(q){var qr=rd(q);document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 </script></body></html>
