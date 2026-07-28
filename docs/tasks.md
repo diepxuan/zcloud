@@ -168,4 +168,4 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 
 - `go build ./...` → PASS
 - `go test ./...` → core PASS, các package khác "no test files"
-- Working tree clean trên `main` @ `24aec13`, đã sync `origin/main`.
+- Working tree clean trên `main` @ `4f9ae0f` (docs sync), HEAD tổng `origin/main` = `4f9ae0f`.
