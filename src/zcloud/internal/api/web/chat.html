@@ -138,5 +138,5 @@ try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'applicatio
 window.location.reload()}
 function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase()}
 function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
-function ff(q){document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=c.textContent.toLowerCase().indexOf(q.toLowerCase())!==-1?'':'none'})}
+function ff(q){var qr=rd(q);document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 </script></body></html>
