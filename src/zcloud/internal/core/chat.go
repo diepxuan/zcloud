@@ -64,9 +64,9 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	if c.Session.ServiceMap != nil {
 		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
-	serviceURL := fmt.Sprintf("%s/api/message/sms?params=%s", baseURL, url.QueryEscape(enc))
-	bodyStr := url.Values{"params": {enc}}.Encode()
-	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, strings.NewReader(bodyStr))
+	serviceURL := fmt.Sprintf("%s/api/message/sms?params=%s&zpw_ver=%d&zpw_type=%d",
+		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setHeaders(req)
 
