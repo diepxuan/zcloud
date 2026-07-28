@@ -300,6 +300,26 @@ func (s *Store) ListAccounts(accountType int) ([]Account, error) {
 // Session operations
 // ====================================
 
+// ListActiveAccountIDs trả về account_id của tất cả account có session active.
+// Dùng cho việc boot Zalo listener khi zcloudd khởi động.
+func (s *Store) ListActiveAccountIDs() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT account_id FROM sessions WHERE is_active = 1 ORDER BY account_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (s *Store) SaveSession(sr *Session) error {
 	q := `INSERT OR REPLACE INTO sessions
 		(id, account_id, user_id, cookies, secret_key, imei, user_agent, language, ws_urls, api_type, api_version, is_active, expires_at)

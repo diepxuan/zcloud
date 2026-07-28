@@ -82,6 +82,33 @@ func main() {
 		}
 	}()
 
+	// Boot Zalo listener cho mọi account đang active — listener chạy độc lập,
+	// luôn kết nối Zalo để nhận tin nhắn real-time và lưu lịch sử.
+	activeIDs, err := db.ListActiveAccountIDs()
+	if err != nil {
+		logger.Printf("zalo-ws: boot list err=%v", err)
+	} else if len(activeIDs) == 0 {
+		logger.Printf("zalo-ws: boot — no active account")
+	} else {
+		logger.Printf("zalo-ws: boot — starting listeners for %d account(s)", len(activeIDs))
+		for _, accID := range activeIDs {
+			api.StartZaloListener(db, accID, logger)
+		}
+	}
+
+	// Watcher quét account active mới (login QR/cookie) — start listener nếu chưa có.
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ids, err := db.ListActiveAccountIDs()
+			if err != nil { continue }
+			for _, accID := range ids {
+				api.StartZaloListener(db, accID, logger)
+			}
+		}
+	}()
+
 	// Background session refresh — mỗi 30 phút
 	go func() {
 		for {
@@ -136,3 +163,4 @@ func init() {
 	fmt.Println("Phiên bản phát triển")
 	fmt.Println()
 }
+

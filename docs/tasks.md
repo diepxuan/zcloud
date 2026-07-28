@@ -151,6 +151,15 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | T4 | Zalo OA webhook (task 08) | 🟢 Optional | Schema sẵn, thiếu handler |
 | T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
+| T7 | Re-login QR cho account hiện tại | 🔴 Block | Session cookies bị Zalo server reject (`zpw_sek không đúng`) — cần Sếp login lại qua QR |
+| T8 | Verify end-to-end sau re-login | 🟡 Medium | Gửi tin qua Zalo client khác → DB có message + browser WS nhận event |
+
+## 5.1. Đã hoàn thành trong đợt này (29/07/2026)
+
+- **Boot listener tự động**: `main.go` quét `sessions.is_active=1` lúc khởi động, gọi `StartZaloListener` cho từng account. Watcher goroutine 30s quét account mới (sau login QR/cookie).
+- **api_version đọc từ session**: bỏ hardcode `688` trong `HandlePollQR`/`HandleCreateAccountFromProfile`/`HandleCookieLogin`, thay bằng `session.APIVersion` (đã được auth.go set = 688 mặc định).
+- **SendMessage debug + autoRefresh**: thêm log `error_message` + raw body khi fail. Thêm `autoRefresh` vào `HandleSendMessage` để session hết hạn được refresh tự động trước khi gửi.
+- **DB session refresh**: phát hiện session cũ (`api_version=665`) đã được refresh nhiều lần qua background, secret_key cập nhật (`bZMgG6RLiSa/DrYbIotXIg==`).
 
 ---
 

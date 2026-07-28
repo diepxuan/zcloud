@@ -120,7 +120,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wsURLsJSON), APIType: 30, APIVersion: 688, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wsURLsJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	qrMu.Lock(); delete(qrSessions, token); qrMu.Unlock()
 	// Start Zalo WS listener ngay sau login — không cần browser WebSocket
@@ -231,6 +231,8 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	sessRec, err := s.Store.GetActiveSession(req.AccountID)
 	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	// Refresh session nếu hết hạn — tránh gửi tin với secret_key cũ (zpw_sek bị thiếu/không đúng)
+	sessRec = s.autoRefresh(sessRec)
 	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
@@ -321,7 +323,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: 30, APIVersion: 688, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
@@ -412,12 +414,14 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 		AccountID: accountID, UserID: session.UserID,
 		Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: 30, APIVersion: 688,
+		WSURLs: string(wj), APIType: session.APIType, APIVersion: session.APIVersion,
 		IsActive: 1, ExpiresAt: session.ExpiresAt,
 	}
-	s.Store.SaveSession(newSession)
+	saveErr := s.Store.SaveSession(newSession)
+	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s sk=%s", saveErr, newSession.ID, newSession.SecretKey[:8])
 	// Vô hiệu hoá session cũ
-	s.Store.DeleteSession(sessRec.ID)
+	delErr := s.Store.DeleteSession(sessRec.ID)
+	s.Logger.Printf("autoRefresh: DeleteSession old=%s err=%v", sessRec.ID, delErr)
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }
@@ -434,4 +438,10 @@ func (s *Server) RefreshAllSessions() {
 		}
 	}
 }
+
+
+
+
+
+
 

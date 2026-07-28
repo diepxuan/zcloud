@@ -83,14 +83,18 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	}
 
 	var sendResp struct {
-		ErrorCode int             `json:"error_code"`
-		Data      *json.RawMessage `json:"data"`
+		ErrorCode  int             `json:"error_code"`
+		ErrorMsg   string          `json:"error_message"`
+		ErrorTitle string          `json:"error_title"`
+		Data       *json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &sendResp); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("parse: %w body=%s", err, string(body[:min(200,len(body))]))
 	}
 	if sendResp.ErrorCode != 0 {
-		return nil, fmt.Errorf("send error %d", sendResp.ErrorCode)
+		return nil, fmt.Errorf("send error %d: %s — %s (raw=%s)",
+			sendResp.ErrorCode, sendResp.ErrorTitle, sendResp.ErrorMsg,
+			string(body[:min(300,len(body))]))
 	}
 	return &Message{
 		ID: clientID, Content: content,
