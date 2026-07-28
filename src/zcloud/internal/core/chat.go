@@ -60,16 +60,14 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
 	if err != nil { return nil, err }
 
-	baseURL := "https://tt-chat2-wpa.chat.zalo.me"
+	baseURL := "https://tt-chat4-wpa.chat.zalo.me"
 	if c.Session.ServiceMap != nil {
 		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
 	}
-	serviceURL := fmt.Sprintf("%s/api/message/sms", baseURL)
+	serviceURL := fmt.Sprintf("%s/api/message/sms?zpw_ver=%d&zpw_type=%d&nretry=0",
+		baseURL, c.Session.APIVersion, c.Session.APIType)
 	form := url.Values{}
 	form.Set("params", enc)
-	form.Set("zpw_ver", fmt.Sprintf("%d", c.Session.APIVersion))
-	form.Set("zpw_type", fmt.Sprintf("%d", c.Session.APIType))
-	form.Set("nretry", "0")
 	req, _ := http.NewRequestWithContext(ctx, "POST", serviceURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	c.setHeaders(req)
