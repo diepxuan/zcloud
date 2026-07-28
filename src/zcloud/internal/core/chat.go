@@ -454,7 +454,6 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil {
-		fmt.Printf("[zcloud] GetFriends: decrypt err=%v len=%d\n", err, len(dataStr))
 		return []User{}, nil
 	}
 
@@ -564,27 +563,20 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
 	if err != nil || len(rawKey) == 0 { return nil, err }
 
-	type historyItem struct {
-		MsgID     string `json:"msgId"`
-		Content   string `json:"content"`
-		FromUID   string `json:"fromUid"`
-		ConvID    string `json:"cliMsgId"`
-		Timestamp int64  `json:"ts"`
-		Type      int    `json:"msgType"`
-		DName     string `json:"dName"`
+	payload := map[string]any{
+		"groupId":     groupID,
+		"globalMsgId": float64(10000000000000000),
+		"count":       count,
+		"msgIds":      []any{},
+		"imei":        c.Session.IMEI,
+		"src":         1,
 	}
-
-	payload := map[string]any{"grid": groupID, "count": count}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
 	if err != nil { return nil, err }
 
-	baseURL := "https://group-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["group"]; ok && len(p) > 0 { baseURL = p[0] }
-	}
-	serviceURL := fmt.Sprintf("%s/api/group/history?params=%s&zpw_ver=%d&zpw_type=%d",
-		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	serviceURL := fmt.Sprintf("https://tt-group-cm.chat.zalo.me/api/cm/getrecentv2?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
+		url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
 	c.setHeaders(req)
 
@@ -592,7 +584,9 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 	if err != nil { return nil, fmt.Errorf("history: %w", err) }
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("[zcloud] GetGroupHistory: raw=%s\n", string(body[:min(300, len(body))]))
+	if len(body) > 0 && body[0] == '<' {
+		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
+	}
 
 	var apiResp struct {
 		Data *json.RawMessage `json:"data"`
@@ -604,28 +598,29 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 	json.Unmarshal(*apiResp.Data, &dataStr)
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
-	if err != nil { fmt.Printf("[zcloud] GetGroupHistory: decrypt err=%v\n", err); return nil, nil }
+	if err != nil { return nil, nil }
 
-	fmt.Printf("[zcloud] GetGroupHistory: decrypted=%s\n", string(decrypted[:min(500, len(decrypted))]))
-
-	var wrap struct {
-		Data *json.RawMessage `json:"data"`
+	// Parse ra mảng messages
+	var msgsData []any
+	if err := json.Unmarshal(decrypted, &msgsData); err != nil {
+		// Thử parse từ wrapper {data: [...]}
+		var wrap struct { Data json.RawMessage `json:"data"` }
+		if err2 := json.Unmarshal(decrypted, &wrap); err2 != nil { return nil, nil }
+		json.Unmarshal(wrap.Data, &msgsData)
 	}
-	json.Unmarshal(decrypted, &wrap)
-	if wrap.Data == nil { return nil, nil }
 
-	var history struct {
-		GroupMsgs []historyItem `json:"groupMsgs"`
-	}
-	json.Unmarshal(*wrap.Data, &history)
-
-	msgs := make([]Message, 0, len(history.GroupMsgs))
-	for _, item := range history.GroupMsgs {
-		msgs = append(msgs, Message{
-			ID: item.MsgID, ConvID: groupID, FromID: item.FromUID,
-			FromName: item.DName, Content: item.Content,
-			Timestamp: item.Timestamp, Type: MsgType(item.Type),
-		})
+	msgs := make([]Message, 0, len(msgsData))
+	for _, item := range msgsData {
+		if m, ok := item.(map[string]any); ok {
+			ts, _ := m["ts"].(float64)
+			msgType, _ := m["msgType"].(float64)
+			msgs = append(msgs, Message{
+				ID: toString(m["msgId"]), ConvID: toString(m["grid"]),
+				FromID: toString(m["uidFrom"]), FromName: toString(m["dName"]),
+				Content: toString(m["content"]),
+				Timestamp: int64(ts), Type: MsgType(msgType),
+			})
+		}
 	}
 	return msgs, nil
 }
