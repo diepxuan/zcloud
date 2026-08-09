@@ -1,0 +1,128 @@
+# reverse-skill CI：路由回归 + 结构一致性 + 供应链 pin gate + 冒烟
+# 矩阵：windows-latest（原生 powershell 5.1） + ubuntu-latest（pwsh + powershell shim）
+# 触发：所有分支（含 fork 的改进分支），PR 也触发
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  routing-tests:
+    name: routing tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # 脚本内部以 `powershell` 调用子进程；Linux runner 只有 pwsh，做个 shim
+      - name: powershell shim (linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo ln -sf "$(command -v pwsh)" /usr/local/bin/powershell
+
+      - name: Routing regression (163 cases)
+        shell: pwsh
+        run: ./skills/scripts/test-routing.ps1
+
+      - name: Routing coherence + supply-chain pin gate
+        shell: pwsh
+        run: ./skills/scripts/verify-routing-coherence.ps1
+
+      - name: Smoke (verify + parse + quick route)
+        shell: pwsh
+        run: ./skills/scripts/smoke.ps1
+
+      - name: INDEX.md up-to-date check
+        shell: pwsh
+        run: ./skills/scripts/extract-summaries.ps1 -Check
+
+      - name: All JSON manifests valid
+        shell: pwsh
+        run: |
+          Get-Content skills/scripts/bootstrap-manifest.json -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+          Get-Content kali/scripts/bootstrap-manifest.json -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+          Get-Content skills/config/routing.json -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+          Get-Content skills/tests/routing-benchmark.json -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+          Write-Host "All JSON valid"
+
+  sh-syntax:
+    name: shell script syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: bash -n all .sh
+        shell: bash
+        run: |
+          set -e
+          while IFS= read -r f; do
+            bash -n "$f"
+            echo "syntax OK: $f"
+          done < <(git ls-files '*.sh')
+
+      - name: Structured routing parity (Bash)
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          while IFS='|' read -r hint expected; do
+            out="$scratch/$expected"
+            bash skills/scripts/master-route.sh --hint "$hint" --out-dir "$out"
+            grep -Eq "^- primary: ${expected}$" "$out/route-scope.md"
+          done <<'CASES'
+          apk reverse with jadx|R1
+          js reverse signature|R3
+          case review evidence graph|R40
+          CASES
+
+          if bash skills/scripts/case-init.sh \
+              --hint "offline apk" \
+              --case-name "../case-escape" \
+              --package-root "$scratch/project" \
+              --preset offline-sample \
+              --sample "$scratch/sample.apk"; then
+            echo "case-init accepted an unsafe case name" >&2
+            exit 1
+          fi
+
+          if bash skills/scripts/case-init.sh \
+              --hint "authorized web review" \
+              --case-name "invalid-network" \
+              --package-root "$scratch/project" \
+              --auth-granted \
+              --network-profile "internet" \
+              --target-url "https://example.test/"; then
+            echo "case-init accepted an unsupported network profile" >&2
+            exit 1
+          fi
+
+          bash skills/scripts/case-init.sh \
+            --hint "authorized web review" \
+            --case-name "network-default" \
+            --package-root "$scratch/project" \
+            --auth-granted \
+            --target-url "https://example.test/"
+          grep -Eq '^- mode: authorized_target_only$' "$scratch/project/work/network-default/scope.md"
+          grep -Eq '^- ready_for_act: true$' "$scratch/project/work/network-default/scope.md"
+          bash skills/scripts/case-guard.sh --case-root "$scratch/project/work/network-default"
+
+          bash skills/scripts/case-init.sh \
+            --hint "pending review" \
+            --case-name "guard-section" \
+            --package-root "$scratch/project" \
+            --target-url "https://example.test/"
+          cat >> "$scratch/project/work/guard-section/scope.md" <<'FAKE_FIELDS'
+
+          ## notes
+          - status: granted
+          - mode: authorized_target_only
+          - ready_for_act: true
+          FAKE_FIELDS
+          if bash skills/scripts/case-guard.sh --case-root "$scratch/project/work/guard-section"; then
+            echo "case-guard accepted fields outside their contract sections" >&2
+            exit 1
+          fi
