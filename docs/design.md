@@ -165,6 +165,18 @@ cd src/zcloud && go build -o ../../zcloudd ./cmd/zcloudd/
 - `systemctl restart zcloud` — KHÔNG start binary tay (xem CLAUDE.md
   "Quy tắc vận hành").
 
+### Restart Zalo listener nội bộ
+- Khi sửa code trong `src/zcloud/`, `scripts/zcloudd.sh` watch mode sẽ tự
+  build + restart service. Không cần thao tác tay thêm.
+- Muốn restart chỉ riêng Zalo listener cho một account, dùng:
+  - `StopZaloListener(accountID)` — dừng goroutine/listener, giữ nguyên session.
+  - `StartZaloListener(...)` — khởi động lại listener cho account.
+- **KHÔNG gọi `/api/logout` để restart listener.** `/api/logout` xoá account,
+  session, conversation, message, media trong DB; chỉ dùng khi Sếp thực sự
+  muốn xoá tài khoản.
+- Khi đổi session/cookie, đảm bảo chỉ giữ 1 session active cho mỗi account để
+  tránh nhiều WebSocket cùng lúc bị Zalo kick.
+
 ## 9. Testing
 
 - Hiện có: `internal/core/encrypt_test.go` (AES-CBC + PKCS7).

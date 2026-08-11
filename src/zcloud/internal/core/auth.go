@@ -30,6 +30,14 @@ type LoginResult struct {
 	Cookies map[string]string
 }
 
+// ServerInfo chứa cấu hình server trả về từ /api/login/getServerInfo.
+// Zalo có thể trả key "settings" hoặc "setttings", nên parse linh hoạt.
+type ServerInfo struct {
+	Settings  json.RawMessage `json:"settings"`
+	Setttings json.RawMessage `json:"setttings"`
+	ExtraVer  json.RawMessage `json:"extra_ver"`
+}
+
 func generateIMEI(ua string) string {
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -332,10 +340,10 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	}
 
 	type loginDataRaw struct {
-		UID           string `json:"uid"`
-		ZPWEnk        string `json:"zpw_enk"`
-		ZPWS          string `json:"zpw_ws"`
-		ZPWServiceMap string `json:"zpw_service_map_v3"`
+		UID           string          `json:"uid"`
+		ZPWEnk        string          `json:"zpw_enk"`
+		ZPWS          json.RawMessage `json:"zpw_ws"`
+		ZPWServiceMap json.RawMessage `json:"zpw_service_map_v3"`
 	}
 	var data loginDataRaw
 	json.Unmarshal(innerResp.Data, &data)
@@ -343,7 +351,9 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	if data.UID == "" {
 		var flat loginDataRaw
 		json.Unmarshal(decrypted, &flat)
-		if flat.UID != "" { data = flat }
+		if flat.UID != "" {
+			data = flat
+		}
 	}
 
 	sess.SecretKey = data.ZPWEnk
@@ -351,21 +361,31 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	sess.ExpiresAt = time.Now().Add(24 * time.Hour)
 
 	// Parse zpw_service_map_v3 để lấy URL các service
-	if data.ZPWServiceMap != "" {
+	if len(data.ZPWServiceMap) > 0 {
 		var sm map[string][]string
-		if err := json.Unmarshal([]byte(data.ZPWServiceMap), &sm); err == nil {
+		if err := json.Unmarshal(data.ZPWServiceMap, &sm); err == nil {
 			sess.ServiceMap = sm
+		} else {
+			var smStr string
+			if json.Unmarshal(data.ZPWServiceMap, &smStr) == nil && smStr != "" {
+				_ = json.Unmarshal([]byte(smStr), &sm)
+				if len(sm) > 0 {
+					sess.ServiceMap = sm
+				}
+			}
 		}
 	}
 
 	// Parse zpw_ws — WebSocket URLs
-	if data.ZPWS != "" {
+	if len(data.ZPWS) > 0 {
 		var wsURLs []string
-		if err := json.Unmarshal([]byte(data.ZPWS), &wsURLs); err == nil {
+		if err := json.Unmarshal(data.ZPWS, &wsURLs); err == nil {
 			sess.WSURLs = wsURLs
 		} else {
-			// Nếu parse mảng thất bại, thử dùng trực tiếp chuỗi
-			sess.WSURLs = []string{data.ZPWS}
+			var wsStr string
+			if json.Unmarshal(data.ZPWS, &wsStr) == nil && wsStr != "" {
+				sess.WSURLs = []string{wsStr}
+			}
 		}
 	}
 	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
@@ -381,8 +401,91 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 	}
 	sess.Cookies = cookies
 
+	// Gọi getServerInfo sau khi có cookies để refresh settings.
+	// Thất bại không chặn login; session vẫn dùng dữ liệu từ getLoginInfo.
+	if si, err := GetServerInfo(ctx, sess, true); err == nil {
+		if len(si.Settings) > 0 {
+			sess.Settings = string(si.Settings)
+		}
+		if len(si.Setttings) > 0 {
+			sess.Settings = string(si.Setttings)
+		}
+		if len(si.ExtraVer) > 0 {
+			sess.ExtraVer = string(si.ExtraVer)
+		}
+	} else {
+		fmt.Printf("[zcloud] getServerInfo failed (continue): %v\n", err)
+	}
+
 	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
 	return &LoginResult{Session: sess, Cookies: cookies}, nil
+}
+
+// GetServerInfo lấy cấu hình server sau login. Params được tạo theo chuẩn
+// Web: imei/type/client_version/computer_name + signkey MD5("zsecure"+type...).
+func GetServerInfo(ctx context.Context, sc SessionContext, encrypt bool) (*ServerInfo, error) {
+	encResult, err := encryptParamsForLogin(sc, encrypt, "getserverinfo")
+	if err != nil {
+		return nil, fmt.Errorf("getServerInfo encrypt: %w", err)
+	}
+
+	query := url.Values{}
+	for k, v := range encResult.Params {
+		query.Set(k, fmt.Sprintf("%v", v))
+	}
+
+	// Dùng client có sẵn (nếu là *Session) để mang cookies từ login flow.
+	var client *http.Client
+	if s, ok := sc.(*Session); ok && s != nil {
+		jar, _ := cookiejar.New(nil)
+		domains := []string{"https://chat.zalo.me/", "https://wpa.chat.zalo.me/", "https://wpa.zaloapp.com/"}
+		for _, d := range domains {
+			u, _ := url.Parse(d)
+			cks := make([]*http.Cookie, 0, len(s.Cookies))
+			for k, v := range s.Cookies {
+				cks = append(cks, &http.Cookie{Name: k, Value: v, Path: "/"})
+			}
+			jar.SetCookies(u, cks)
+		}
+		client = &http.Client{Timeout: 30 * time.Second, Jar: jar}
+	} else {
+		client = http.DefaultClient
+	}
+
+	u := "https://wpa.chat.zalo.me/api/login/getServerInfo?" + query.Encode()
+	req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req.Header.Set("User-Agent", defaultUA)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Origin", "https://chat.zalo.me")
+	req.Header.Set("Referer", "https://chat.zalo.me/")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("getServerInfo request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var raw struct {
+		ErrorCode    int              `json:"error_code"`
+		ErrorMessage string           `json:"error_message"`
+		Data         *json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("getServerInfo parse: %w", err)
+	}
+	if raw.ErrorCode != 0 {
+		return nil, fmt.Errorf("getServerInfo error %d: %s", raw.ErrorCode, raw.ErrorMessage)
+	}
+	if raw.Data == nil {
+		return nil, fmt.Errorf("getServerInfo: empty data")
+	}
+
+	var si ServerInfo
+	if err := json.Unmarshal(*raw.Data, &si); err != nil {
+		return nil, fmt.Errorf("getServerInfo data: %w", err)
+	}
+	return &si, nil
 }
 
 // ====================================
@@ -390,8 +493,12 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 // ====================================
 
 func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string) (*LoginResult, error) {
-	if imei == "" { imei = generateIMEI(ua) }
-	if ua == "" { ua = defaultUA }
+	if imei == "" {
+		imei = generateIMEI(ua)
+	}
+	if ua == "" {
+		ua = defaultUA
+	}
 
 	client, jar := newZaloClient()
 
@@ -418,11 +525,16 @@ func CookieLogin(ctx context.Context, cookies map[string]string, imei, ua string
 // ====================================
 
 type cookieJar struct{ cookies map[string]string }
-func newCookieJar() *cookieJar                         { return &cookieJar{cookies: make(map[string]string)} }
-func (j *cookieJar) Set(c map[string]string)            { for k, v := range c { j.cookies[k] = v } }
-func (j *cookieJar) SetFromHeader(h http.Header)        {}
-func (j *cookieJar) String() string                    { return "" }
-func (j *cookieJar) Apply(req *http.Request)            {}
+
+func newCookieJar() *cookieJar { return &cookieJar{cookies: make(map[string]string)} }
+func (j *cookieJar) Set(c map[string]string) {
+	for k, v := range c {
+		j.cookies[k] = v
+	}
+}
+func (j *cookieJar) SetFromHeader(h http.Header) {}
+func (j *cookieJar) String() string              { return "" }
+func (j *cookieJar) Apply(req *http.Request)     {}
 func cookiesToString(cookies map[string]string) string {
 	parts := make([]string, 0, len(cookies))
 	for k, v := range cookies {
@@ -432,9 +544,13 @@ func cookiesToString(cookies map[string]string) string {
 }
 func extractVersion(body string) string {
 	idx := strings.Index(body, "main-")
-	if idx < 0 { return "688" }
+	if idx < 0 {
+		return "688"
+	}
 	body = body[idx+5:]
 	end := strings.IndexAny(body, ".\"")
-	if end < 0 { return "688" }
+	if end < 0 {
+		return "688"
+	}
 	return body[:end]
 }

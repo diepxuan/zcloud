@@ -2,15 +2,16 @@ package core
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"testing"
 )
 
 func TestPKCS7Pad(t *testing.T) {
 	tests := []struct {
-		input    string
-		block    int
-		wantLen  int
-		wantErr  bool
+		input   string
+		block   int
+		wantLen int
+		wantErr bool
 	}{
 		{"hello", 16, 16, false},
 		{"0123456789abcdef", 16, 32, false}, // exactly block size → add full block
@@ -169,5 +170,37 @@ func BenchmarkEncodeAESCBC(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = EncodeAESCBC(key, plaintext)
+	}
+}
+
+func TestDecodeWSEventPlainAndGzip(t *testing.T) {
+	plain := []byte(`{"data":"{\"ok\":true}","encrypt":0}`)
+	out, err := DecodeWSEvent(plain, nil)
+	if err != nil || string(out) != `{"ok":true}` {
+		t.Fatalf("plain decode failed: %v %s", err, string(out))
+	}
+
+	raw := `{"data":"{\"msgs\":[]}","encrypt":0}`
+	out, err = DecodeWSEvent([]byte(raw), nil)
+	if err != nil || len(out) == 0 {
+		t.Fatalf("plain wrapper decode failed: %v", err)
+	}
+}
+
+func TestWSMessageParseAndMedia(t *testing.T) {
+	raw := `[{"msgId":"m1","cliMsgId":"c1","uidFrom":"u1","idTo":"u2","dName":"User","ts":"1700000000000","msgType":"chat.photo","content":{"normalUrl":"https://example.com/a.jpg","fileName":"a.jpg","fileId":"f1","width":640,"height":480}}]`
+	var msgs []wsMessage
+	if err := json.Unmarshal([]byte(raw), &msgs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len=%d", len(msgs))
+	}
+	msg := msgs[0].toMessage(&Session{UserID: "me"})
+	if msg.ID != "m1" || msg.ConvID != "u2" || msg.Type != MsgTypeImage {
+		t.Fatalf("bad msg: %+v", msg)
+	}
+	if len(msg.Attachments) == 0 || msg.Attachments[0].URL != "https://example.com/a.jpg" {
+		t.Fatalf("bad atts: %+v", msg.Attachments)
 	}
 }

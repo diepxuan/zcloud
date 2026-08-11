@@ -25,13 +25,14 @@ const (
 type EventType int
 
 const (
-	EventNewMessage    EventType = iota + 1
+	EventNewMessage EventType = iota + 1
 	EventOldMessages
 	EventDelivered
 	EventSeen
 	EventTyping
 	EventReaction
 	EventReconnect
+	EventUploadAttachment
 	EventError
 )
 
@@ -86,13 +87,13 @@ type MessageMention struct {
 
 // Conversation represents a Zalo conversation
 type Conversation struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Avatar    string     `json:"avatar,omitempty"`
-	Type      ConvType   `json:"type"`
-	LastMsg   *Message   `json:"lastMsg,omitempty"`
-	Unread    int        `json:"unread"`
-	UpdatedAt int64      `json:"updatedAt"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Avatar    string   `json:"avatar,omitempty"`
+	Type      ConvType `json:"type"`
+	LastMsg   *Message `json:"lastMsg,omitempty"`
+	Unread    int      `json:"unread"`
+	UpdatedAt int64    `json:"updatedAt"`
 }
 
 // User represents a Zalo user
@@ -106,30 +107,33 @@ type User struct {
 
 // Session represents an authenticated Zalo session
 type Session struct {
-	Cookies     map[string]string `json:"cookies"`
-	SecretKey   string            `json:"secretKey"`   // zpw_enk
-	IMEI        string            `json:"imei"`
-	UserID      string            `json:"userId"`
-	UserAgent   string            `json:"userAgent"`
-	Language    string            `json:"language,omitempty"`
-	ExpiresAt   time.Time         `json:"expiresAt"`
-	WSURLs      []string            `json:"wsUrls"`      // zpw_ws
-	ServiceMap  map[string][]string `json:"serviceMap,omitempty"` // zpw_service_map_v3
-	APIType     uint              `json:"apiType"`
-	APIVersion  uint              `json:"apiVersion"`
+	Cookies    map[string]string   `json:"cookies"`
+	SecretKey  string              `json:"secretKey"` // zpw_enk
+	IMEI       string              `json:"imei"`
+	UserID     string              `json:"userId"`
+	UserAgent  string              `json:"userAgent"`
+	Language   string              `json:"language,omitempty"`
+	ExpiresAt  time.Time           `json:"expiresAt"`
+	WSURLs     []string            `json:"wsUrls"`               // zpw_ws
+	ServiceMap map[string][]string `json:"serviceMap,omitempty"` // zpw_service_map_v3
+	Settings   string              `json:"settings,omitempty"`   // raw settings từ getServerInfo
+	ExtraVer   string              `json:"extraVer,omitempty"`
+	APIType    uint                `json:"apiType"`
+	APIVersion uint                `json:"apiVersion"`
 }
 
 // Event represents a WebSocket event from Zalo
 type Event struct {
 	Type    EventType `json:"type"`
 	Message *Message  `json:"message,omitempty"`
+	FileID  string    `json:"fileId,omitempty"`
 	Error   error     `json:"error,omitempty"`
 }
 
 // OldMessages represents a batch of old messages loaded via WebSocket
 type OldMessages struct {
-	Messages    []Message
-	ThreadType  ThreadType
+	Messages   []Message
+	ThreadType ThreadType
 }
 
 // ====================================
@@ -145,7 +149,22 @@ type SessionContext interface {
 }
 
 // Đảm bảo *Session implement SessionContext
-func (s *Session) GetIMEI() string       { return s.IMEI }
-func (s *Session) GetLanguage() string   { if s.Language == "" { return "vi" }; return s.Language }
-func (s *Session) GetAPIType() uint      { if s.APIType == 0 { return 30 }; return s.APIType }
-func (s *Session) GetAPIVersion() uint   { if s.APIVersion == 0 { return 665 }; return s.APIVersion }
+func (s *Session) GetIMEI() string { return s.IMEI }
+func (s *Session) GetLanguage() string {
+	if s.Language == "" {
+		return "vi"
+	}
+	return s.Language
+}
+func (s *Session) GetAPIType() uint {
+	if s.APIType == 0 {
+		return 30
+	}
+	return s.APIType
+}
+func (s *Session) GetAPIVersion() uint {
+	if s.APIVersion == 0 {
+		return 665
+	}
+	return s.APIVersion
+}

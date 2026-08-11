@@ -23,7 +23,7 @@ func NewClient(session *Session) *Client {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 	if session.Cookies != nil {
-		domains := []string{"https://chat.zalo.me/", "https://wpa.chat.zalo.me/", "https://tt-convers-wpa.chat.zalo.me/", "https://profile-wpa.chat.zalo.me/", "https://group-wpa.chat.zalo.me/", "https://tt-profile-wpa.chat.zalo.me/"}
+		domains := defaultCookieDomains()
 		for k, v := range session.Cookies {
 			ck := &http.Cookie{Name: k, Value: v, Path: "/"}
 			for _, d := range domains {
@@ -33,6 +33,34 @@ func NewClient(session *Session) *Client {
 		}
 	}
 	return &Client{Session: session, client: client}
+}
+
+func defaultCookieDomains() []string {
+	return []string{
+		"https://chat.zalo.me/",
+		"https://wpa.chat.zalo.me/",
+		"https://tt-convers-wpa.chat.zalo.me/",
+		"https://profile-wpa.chat.zalo.me/",
+		"https://group-wpa.chat.zalo.me/",
+		"https://tt-profile-wpa.chat.zalo.me/",
+		"https://files-wpa.chat.zalo.me/",
+		"https://media-wpa.chat.zalo.me/",
+		"https://chat-wpa.zaloapp.com/",
+		"https://wpa.zaloapp.com/",
+		"https://profile-wpa.zaloapp.com/",
+		"https://group-wpa.zaloapp.com/",
+		"https://files-wpa.zaloapp.com/",
+	}
+}
+
+// serviceBaseURL chọn host theo service map; fallback khi map/entry rỗng.
+func serviceBaseURL(session *Session, key, fallback string) string {
+	if session != nil && session.ServiceMap != nil {
+		if p, ok := session.ServiceMap[key]; ok && len(p) > 0 && p[0] != "" {
+			return strings.TrimRight(p[0], "/")
+		}
+	}
+	return strings.TrimRight(fallback, "/")
 }
 
 func (c *Client) ConnectWS(ctx context.Context) error {
@@ -45,25 +73,26 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 		return nil, ErrNotLoggedIn
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
-	if err != nil || len(rawKey) == 0 { return nil, err }
+	if err != nil || len(rawKey) == 0 {
+		return nil, err
+	}
 
-	clientID := generateClientID()
+	clientID := fmt.Sprintf("%d", time.Now().UnixMilli())
 	params := map[string]any{
-		"message":  content,
-		"clientId": clientID,
-		"imei":     c.Session.IMEI,
-		"ttl":      0,
+		"message":    content,
+		"clientId":   clientID,
+		"imei":       c.Session.IMEI,
+		"ttl":        0,
 		"visibility": 0,
-		"toid":     to,
+		"toid":       to,
 	}
 	jsonP, _ := json.Marshal(params)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { return nil, err }
-
-	baseURL := "https://tt-chat4-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["chat"]; ok && len(p) > 0 { baseURL = p[0] }
+	if err != nil {
+		return nil, err
 	}
+
+	baseURL := serviceBaseURL(c.Session, "chat", "https://tt-chat4-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/message/sms?zpw_ver=%d&zpw_type=%d&nretry=0",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	form := url.Values{}
@@ -83,18 +112,35 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	}
 
 	var sendResp struct {
-		ErrorCode  int             `json:"error_code"`
-		ErrorMsg   string          `json:"error_message"`
-		ErrorTitle string          `json:"error_title"`
+		ErrorCode  int              `json:"error_code"`
+		ErrorMsg   string           `json:"error_message"`
+		ErrorTitle string           `json:"error_title"`
 		Data       *json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &sendResp); err != nil {
-		return nil, fmt.Errorf("parse: %w body=%s", err, string(body[:min(200,len(body))]))
+		return nil, fmt.Errorf("parse: %w body=%s", err, string(body[:min(200, len(body))]))
 	}
+	fmt.Printf("[zcloud] SendMessage resp: status=%d raw=%s\n", resp.StatusCode, string(body[:min(1000, len(body))]))
 	if sendResp.ErrorCode != 0 {
 		return nil, fmt.Errorf("send error %d: %s — %s (raw=%s)",
 			sendResp.ErrorCode, sendResp.ErrorTitle, sendResp.ErrorMsg,
-			string(body[:min(300,len(body))]))
+			string(body[:min(300, len(body))]))
+	}
+	if sendResp.Data != nil {
+		var dataMap struct {
+			MsgID    string `json:"msgId"`
+			CliMsgID string `json:"cliMsgId"`
+		}
+		rawData := *sendResp.Data
+		var dataStr string
+		if json.Unmarshal(rawData, &dataStr) == nil {
+			if dec, err := DecodeAESCBC(rawKey, dataStr); err == nil {
+				_ = json.Unmarshal(dec, &dataMap)
+			}
+		}
+		if err := json.Unmarshal(rawData, &dataMap); err == nil && dataMap.MsgID != "" {
+			clientID = dataMap.MsgID
+		}
 	}
 	return &Message{
 		ID: clientID, Content: content,
@@ -195,8 +241,12 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 				if m, ok := item.(map[string]any); ok {
 					idTo := toString(m["idTo"])
 					name := toString(m["userName"])
-					if name == "" { name = idTo }
-					if n, ok := names[idTo]; ok { name = n }
+					if name == "" {
+						name = idTo
+					}
+					if n, ok := names[idTo]; ok {
+						name = n
+					}
 					conv := Conversation{ID: idTo, Name: name}
 					if g, ok := m["isGroup"].(float64); ok && g == 1 {
 						conv.Type = ConvGroup
@@ -215,19 +265,30 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 func resolveNames(c *Client, convs []Conversation) {
 	ids := make([]string, 0, len(convs))
 	for _, cc := range convs {
-		if cc.Type == ConvIndividual { ids = append(ids, cc.ID) }
+		if cc.Type == ConvIndividual {
+			ids = append(ids, cc.ID)
+		}
 	}
-	if len(ids) == 0 { return }
+	if len(ids) == 0 {
+		return
+	}
 
 	fpm := make([]string, len(ids))
 	for i, uid := range ids {
-		if !strings.Contains(uid, "_") { fpm[i] = uid + "_0" } else { fpm[i] = uid }
+		if !strings.Contains(uid, "_") {
+			fpm[i] = uid + "_0"
+		} else {
+			fpm[i] = uid
+		}
 	}
 
-	if c.Session.SecretKey == "" { return }
+	if c.Session.SecretKey == "" {
+		return
+	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
 	if err != nil || len(rawKey) == 0 {
-		fmt.Printf("[zcloud] resolveNames: bad key\n"); return
+		fmt.Printf("[zcloud] resolveNames: bad key\n")
+		return
 	}
 
 	payload := map[string]any{
@@ -236,12 +297,12 @@ func resolveNames(c *Client, convs []Conversation) {
 	}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { fmt.Printf("[zcloud] resolveNames: encrypt err=%v\n", err); return }
-
-	baseURL := "https://profile-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["profile"]; ok && len(p) > 0 { baseURL = p[0] }
+	if err != nil {
+		fmt.Printf("[zcloud] resolveNames: encrypt err=%v\n", err)
+		return
 	}
+
+	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getprofiles/v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -251,7 +312,10 @@ func resolveNames(c *Client, convs []Conversation) {
 	c.setHeaders(req)
 
 	resp, err := c.client.Do(req)
-	if err != nil { fmt.Printf("[zcloud] resolveNames: req err=%v\n", err); return }
+	if err != nil {
+		fmt.Printf("[zcloud] resolveNames: req err=%v\n", err)
+		return
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
@@ -264,13 +328,20 @@ func resolveNames(c *Client, convs []Conversation) {
 		fmt.Printf("[zcloud] resolveNames: api error=%d\n", result.ErrorCode)
 		return
 	}
-	if result.Data == nil { return }
+	if result.Data == nil {
+		return
+	}
 
 	var dataStr string
-	if err := json.Unmarshal(*result.Data, &dataStr); err != nil { return }
+	if err := json.Unmarshal(*result.Data, &dataStr); err != nil {
+		return
+	}
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
-	if err != nil { fmt.Printf("[zcloud] resolveNames: decrypt err=%v len=%d\n", err, len(dataStr)); return }
+	if err != nil {
+		fmt.Printf("[zcloud] resolveNames: decrypt err=%v len=%d\n", err, len(dataStr))
+		return
+	}
 
 	var profiles struct {
 		ChangedProfiles map[string]struct {
@@ -283,7 +354,9 @@ func resolveNames(c *Client, convs []Conversation) {
 	if err := json.Unmarshal(decrypted, &profiles); err == nil && len(profiles.ChangedProfiles) > 0 {
 		// flat JSON — dùng luôn
 	} else {
-		var wrap struct { Data json.RawMessage `json:"data"` }
+		var wrap struct {
+			Data json.RawMessage `json:"data"`
+		}
 		if json.Unmarshal(decrypted, &wrap) == nil && len(wrap.Data) > 0 {
 			json.Unmarshal(wrap.Data, &profiles)
 		}
@@ -291,9 +364,16 @@ func resolveNames(c *Client, convs []Conversation) {
 
 	for i := range convs {
 		if p, ok := profiles.ChangedProfiles[convs[i].ID]; ok {
-			n := p.ZaloName; if n == "" { n = p.DisplayName }
-			if n != "" { convs[i].Name = n }
-			if p.Avatar != "" { convs[i].Avatar = p.Avatar }
+			n := p.ZaloName
+			if n == "" {
+				n = p.DisplayName
+			}
+			if n != "" {
+				convs[i].Name = n
+			}
+			if p.Avatar != "" {
+				convs[i].Avatar = p.Avatar
+			}
 		}
 	}
 }
@@ -305,7 +385,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	}
 	ids := []string{c.Session.UserID + "_0"}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
-	if err != nil || len(rawKey) == 0 { return "", "", err }
+	if err != nil || len(rawKey) == 0 {
+		return "", "", err
+	}
 
 	payload := map[string]any{
 		"friend_pversion_map": ids, "avatar_size": 120,
@@ -313,12 +395,11 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { return "", "", err }
-
-	baseURL := "https://profile-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["profile"]; ok && len(p) > 0 { baseURL = p[0] }
+	if err != nil {
+		return "", "", err
 	}
+
+	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getprofiles/v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -327,7 +408,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	c.setHeaders(req)
 
 	resp, err := c.client.Do(req)
-	if err != nil { return "", "", err }
+	if err != nil {
+		return "", "", err
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
@@ -340,7 +423,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		fmt.Printf("[zcloud] GetMyProfile: api error=%d\n", result.ErrorCode)
 		return "", "", nil
 	}
-	if result.Data == nil { return "", "", nil }
+	if result.Data == nil {
+		return "", "", nil
+	}
 
 	var dataStr string
 	if err := json.Unmarshal(*result.Data, &dataStr); err != nil {
@@ -371,7 +456,11 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		}
 		if err := json.Unmarshal(decrypted, &flat); err == nil {
 			if p, ok := flat.ChangedProfiles[c.Session.UserID+"_0"]; ok {
-				n := p.ZaloName; if n == "" { n = p.DisplayName }; return n, p.Avatar, nil
+				n := p.ZaloName
+				if n == "" {
+					n = p.DisplayName
+				}
+				return n, p.Avatar, nil
 			}
 		}
 		return "", "", nil
@@ -392,7 +481,10 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	// Thử key có _0 và không có _0
 	for _, key := range []string{c.Session.UserID + "_0", c.Session.UserID} {
 		if p, ok := profiles.ChangedProfiles[key]; ok {
-			n := p.ZaloName; if n == "" { n = p.DisplayName }
+			n := p.ZaloName
+			if n == "" {
+				n = p.DisplayName
+			}
 			return n, p.Avatar, nil
 		}
 	}
@@ -404,7 +496,9 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 		return nil, ErrNotLoggedIn
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
-	if err != nil || len(rawKey) == 0 { return nil, err }
+	if err != nil || len(rawKey) == 0 {
+		return nil, err
+	}
 
 	payload := map[string]any{
 		"incInvalid":  0,
@@ -415,19 +509,20 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 	}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { return nil, err }
-
-	baseURL := "https://profile-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["profile"]; ok && len(p) > 0 { baseURL = p[0] }
+	if err != nil {
+		return nil, err
 	}
+
+	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getfriends?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
 	c.setHeaders(req)
 
 	resp, err := c.client.Do(req)
-	if err != nil { return nil, fmt.Errorf("friends: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("friends: %w", err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) > 0 && body[0] == '<' {
@@ -462,7 +557,9 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 	// Zalo trả về dạng {"data": [...]} hoặc [...] trực tiếp
 	var items []any
 	if err := json.Unmarshal(decrypted, &items); err != nil {
-		var wrapped struct { Data json.RawMessage `json:"data"` }
+		var wrapped struct {
+			Data json.RawMessage `json:"data"`
+		}
 		if err2 := json.Unmarshal(decrypted, &wrapped); err2 != nil || wrapped.Data == nil {
 			return nil, fmt.Errorf("parse items: %w (raw: %s)", err, string(decrypted[:min(200, len(decrypted))]))
 		}
@@ -477,8 +574,12 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 				Name:   toString(m["zaloName"]),
 				Avatar: toString(m["avatar"]),
 			}
-			if u.Name == "" { u.Name = toString(m["displayName"]) }
-			if u.ID != "" { users = append(users, u) }
+			if u.Name == "" {
+				u.Name = toString(m["displayName"])
+			}
+			if u.ID != "" {
+				users = append(users, u)
+			}
 		}
 	}
 	return users, nil
@@ -490,7 +591,9 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 		return nil, ErrNotLoggedIn
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
-	if err != nil || len(rawKey) == 0 { return nil, err }
+	if err != nil || len(rawKey) == 0 {
+		return nil, err
+	}
 
 	gridVerMap := make(map[string]int)
 	for _, gid := range groupIDs {
@@ -503,12 +606,11 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 	}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { return nil, err }
-
-	baseURL := "https://group-wpa.chat.zalo.me"
-	if c.Session.ServiceMap != nil {
-		if p, ok := c.Session.ServiceMap["group"]; ok && len(p) > 0 { baseURL = p[0] }
+	if err != nil {
+		return nil, err
 	}
+
+	baseURL := serviceBaseURL(c.Session, "group", "https://group-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/group/getmg-v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -517,7 +619,9 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 	c.setHeaders(req)
 
 	resp, err := c.client.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
@@ -526,19 +630,25 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 	}
 	var result resultType
 	json.Unmarshal(body, &result)
-	if result.Data == nil { return nil, nil }
+	if result.Data == nil {
+		return nil, nil
+	}
 
 	var dataStr string
 	json.Unmarshal(*result.Data, &dataStr)
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var wrap struct {
 		Data *json.RawMessage `json:"data"`
 	}
 	json.Unmarshal(decrypted, &wrap)
-	if wrap.Data == nil { return nil, nil }
+	if wrap.Data == nil {
+		return nil, nil
+	}
 
 	var groups struct {
 		GridInfoMap map[string]struct {
@@ -563,7 +673,9 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 		return nil, ErrNotLoggedIn
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
-	if err != nil || len(rawKey) == 0 { return nil, err }
+	if err != nil || len(rawKey) == 0 {
+		return nil, err
+	}
 
 	payload := map[string]any{
 		"groupId":     groupID,
@@ -575,15 +687,20 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 	}
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
-	serviceURL := fmt.Sprintf("https://tt-group-cm.chat.zalo.me/api/cm/getrecentv2?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
-		url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	baseURL := serviceBaseURL(c.Session, "group", "https://tt-group-cm.chat.zalo.me")
+	serviceURL := fmt.Sprintf("%s/api/cm/getrecentv2?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
+		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
 	c.setHeaders(req)
 
 	resp, err := c.client.Do(req)
-	if err != nil { return nil, fmt.Errorf("history: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("history: %w", err)
+	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) > 0 && body[0] == '<' {
@@ -594,20 +711,28 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 		Data *json.RawMessage `json:"data"`
 	}
 	json.Unmarshal(body, &apiResp)
-	if apiResp.Data == nil { return nil, nil }
+	if apiResp.Data == nil {
+		return nil, nil
+	}
 
 	var dataStr string
 	json.Unmarshal(*apiResp.Data, &dataStr)
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
-	if err != nil { return nil, nil }
+	if err != nil {
+		return nil, nil
+	}
 
 	// Parse ra mảng messages
 	var msgsData []any
 	if err := json.Unmarshal(decrypted, &msgsData); err != nil {
 		// Thử parse từ wrapper {data: [...]}
-		var wrap struct { Data json.RawMessage `json:"data"` }
-		if err2 := json.Unmarshal(decrypted, &wrap); err2 != nil { return nil, nil }
+		var wrap struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err2 := json.Unmarshal(decrypted, &wrap); err2 != nil {
+			return nil, nil
+		}
 		json.Unmarshal(wrap.Data, &msgsData)
 	}
 
@@ -619,10 +744,105 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 			msgs = append(msgs, Message{
 				ID: toString(m["msgId"]), ConvID: toString(m["grid"]),
 				FromID: toString(m["uidFrom"]), FromName: toString(m["dName"]),
-				Content: toString(m["content"]),
+				Content:   toString(m["content"]),
 				Timestamp: int64(ts), Type: MsgType(msgType),
 			})
 		}
+	}
+	return msgs, nil
+}
+
+// GetGroupHistoryV2 dùng endpoint /api/group/history (service map group).
+// Zalo PC bundle và zca-js dùng endpoint này; response có thể trả thẳng object
+// hoặc data string encrypted.
+func (c *Client) GetGroupHistoryV2(ctx context.Context, groupID string, count int) ([]Message, error) {
+	if c.Session == nil || c.Session.SecretKey == "" {
+		return nil, ErrNotLoggedIn
+	}
+	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
+	if err != nil || len(rawKey) == 0 {
+		return nil, err
+	}
+
+	params := map[string]any{
+		"grid":  groupID,
+		"count": count,
+	}
+	jsonP, _ := json.Marshal(params)
+	enc, err := EncodeAESCBC(rawKey, string(jsonP))
+	if err != nil {
+		return nil, err
+	}
+
+	baseURL := serviceBaseURL(c.Session, "group", "https://group-wpa.chat.zalo.me")
+	serviceURL := fmt.Sprintf("%s/api/group/history?params=%s&zpw_ver=%d&zpw_type=%d",
+		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
+	c.setHeaders(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("group history v2: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) > 0 && body[0] == '<' {
+		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
+	}
+
+	var apiResp struct {
+		Data *json.RawMessage `json:"data"`
+	}
+	json.Unmarshal(body, &apiResp)
+	if apiResp.Data == nil {
+		return nil, nil
+	}
+
+	var dataStr string
+	if err := json.Unmarshal(*apiResp.Data, &dataStr); err != nil {
+		return nil, nil
+	}
+	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	if err != nil {
+		// Một số response trả raw JSON thay vì encrypted.
+		decrypted = []byte(dataStr)
+	}
+
+	var raw struct {
+		GroupMsgs []map[string]any `json:"groupMsgs"`
+		Msgs      []map[string]any `json:"msgs"`
+		Data      json.RawMessage  `json:"data"`
+	}
+	if err := json.Unmarshal(decrypted, &raw); err != nil {
+		return nil, nil
+	}
+	items := raw.GroupMsgs
+	if len(items) == 0 {
+		items = raw.Msgs
+	}
+	if len(items) == 0 && len(raw.Data) > 0 {
+		var inner struct {
+			GroupMsgs []map[string]any `json:"groupMsgs"`
+			Msgs      []map[string]any `json:"msgs"`
+		}
+		if json.Unmarshal(raw.Data, &inner) == nil {
+			items = inner.GroupMsgs
+			if len(items) == 0 {
+				items = inner.Msgs
+			}
+		}
+	}
+
+	msgs := make([]Message, 0, len(items))
+	for _, item := range items {
+		ts, _ := item["ts"].(float64)
+		msgType, _ := item["msgType"].(float64)
+		msgs = append(msgs, Message{
+			ID: toString(item["msgId"]), ConvID: toString(firstNonEmpty(item["grid"], item["idTo"], item["toid"])),
+			FromID: toString(firstNonEmpty(item["uidFrom"], item["userId"])), FromName: toString(item["dName"]),
+			Content:   toString(item["content"]),
+			Timestamp: int64(ts), Type: MsgType(msgType),
+		})
 	}
 	return msgs, nil
 }
@@ -635,6 +855,9 @@ func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Origin", "https://chat.zalo.me")
 	req.Header.Set("Referer", "https://chat.zalo.me/")
+	if cookie := cookiesToString(c.Session.Cookies); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
 }
 
 func generateClientID() string {

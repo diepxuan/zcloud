@@ -67,8 +67,8 @@ func New(dbPath string, mediaPath string) (*Store, error) {
 }
 
 // DB trả về *sql.DB
-func (s *Store) DB() *sql.DB   { return s.db }
-func (s *Store) Path() string  { return s.dbPath }
+func (s *Store) DB() *sql.DB       { return s.db }
+func (s *Store) Path() string      { return s.dbPath }
 func (s *Store) MediaPath() string { return s.mediaPath }
 
 // Close đóng database
@@ -111,6 +111,36 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migration failed: %w\nSQL: %s", err, m[:80])
 		}
 	}
+
+	if err := s.ensureSessionServiceMap(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureSessionServiceMap() error {
+	rows, err := s.db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return fmt.Errorf("sessions pragma: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dflt, pk interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return fmt.Errorf("sessions pragma scan: %w", err)
+		}
+		if name == "service_map" {
+			return nil
+		}
+	}
+
+	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN service_map TEXT DEFAULT '{}'`); err != nil {
+		return fmt.Errorf("sessions add service_map: %w", err)
+	}
 	return nil
 }
 
@@ -137,6 +167,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_agent      TEXT DEFAULT '',
     language        TEXT DEFAULT 'vi',
     ws_urls         TEXT DEFAULT '[]',
+    service_map     TEXT DEFAULT '{}',
     api_type        INTEGER DEFAULT 30,
     api_version     INTEGER DEFAULT 665,
     is_active       INTEGER DEFAULT 1,
@@ -321,11 +352,16 @@ func (s *Store) ListActiveAccountIDs() ([]string, error) {
 }
 
 func (s *Store) SaveSession(sr *Session) error {
+	// Chỉ giữ 1 session active cho mỗi account để tránh nhiều WebSocket
+	// cùng lúc bị Zalo kick (KICKOUT_BY_WORKER).
+	if _, err := s.db.Exec(`UPDATE sessions SET is_active = 0 WHERE account_id = ? AND id <> ?`, sr.AccountID, sr.ID); err != nil {
+		return err
+	}
 	q := `INSERT OR REPLACE INTO sessions
-		(id, account_id, user_id, cookies, secret_key, imei, user_agent, language, ws_urls, api_type, api_version, is_active, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		(id, account_id, user_id, cookies, secret_key, imei, user_agent, language, ws_urls, service_map, api_type, api_version, is_active, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(q, sr.ID, sr.AccountID, sr.UserID, sr.Cookies, sr.SecretKey,
-		sr.IMEI, sr.UserAgent, sr.Language, sr.WSURLs, sr.APIType, sr.APIVersion, sr.IsActive, sr.ExpiresAt)
+		sr.IMEI, sr.UserAgent, sr.Language, sr.WSURLs, sr.ServiceMap, sr.APIType, sr.APIVersion, sr.IsActive, sr.ExpiresAt)
 	return err
 }
 
@@ -333,10 +369,10 @@ func (s *Store) LoadSession(id string) (*Session, error) {
 	sr := &Session{}
 	err := s.db.QueryRow(
 		`SELECT id, account_id, user_id, cookies, secret_key, imei, user_agent, language,
-		ws_urls, api_type, api_version, is_active, created_at, expires_at
+		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at
 		FROM sessions WHERE id = ?`, id,
 	).Scan(&sr.ID, &sr.AccountID, &sr.UserID, &sr.Cookies, &sr.SecretKey,
-		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs,
+		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs, &sr.ServiceMap,
 		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -349,10 +385,10 @@ func (s *Store) GetActiveSession(accountID string) (*Session, error) {
 	sr := &Session{}
 	err := s.db.QueryRow(
 		`SELECT id, account_id, user_id, cookies, secret_key, imei, user_agent, language,
-		ws_urls, api_type, api_version, is_active, created_at, expires_at
+		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at
 		FROM sessions WHERE account_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1`, accountID,
 	).Scan(&sr.ID, &sr.AccountID, &sr.UserID, &sr.Cookies, &sr.SecretKey,
-		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs,
+		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs, &sr.ServiceMap,
 		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -383,7 +419,9 @@ func (s *Store) GetConversation(accountID, convID string) (*Conversation, error)
 		`SELECT id, account_id, name, avatar, conv_type, last_msg_id, last_msg_at, unread_count, updated_at
 		FROM conversations WHERE account_id = ? AND id = ?`, accountID, convID,
 	).Scan(&c.ID, &c.AccountID, &c.Name, &c.Avatar, &c.ConvType, &c.LastMsgID, &c.LastMsgAt, &c.Unread, &c.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return c, err
 }
 
@@ -615,6 +653,7 @@ type Session struct {
 	UserAgent  string    `json:"userAgent"`
 	Language   string    `json:"language"`
 	WSURLs     string    `json:"wsUrls"`
+	ServiceMap string    `json:"serviceMap"`
 	APIType    uint      `json:"apiType"`
 	APIVersion uint      `json:"apiVersion"`
 	IsActive   int       `json:"isActive"`
@@ -627,7 +666,7 @@ type Conversation struct {
 	AccountID string       `json:"accountId"`
 	Name      string       `json:"name"`
 	Avatar    string       `json:"avatar"`
-	ConvType  int          `json:"convType"`  // 0: cá nhân, 1: nhóm, 2: OA
+	ConvType  int          `json:"convType"` // 0: cá nhân, 1: nhóm, 2: OA
 	LastMsgID string       `json:"lastMsgId"`
 	LastMsgAt sql.NullTime `json:"lastMsgAt"`
 	Unread    int          `json:"unread"`

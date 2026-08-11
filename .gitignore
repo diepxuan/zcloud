@@ -24,6 +24,11 @@ Thumbs.db
 *.swp
 *~
 
+# Local scratch
+memory/
+tmp/
+work/
+
 # Coverage
 coverage/
 

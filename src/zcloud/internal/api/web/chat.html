@@ -36,6 +36,8 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .msg .tm{font-size:10px;opacity:.6;margin-top:4px;text-align:right}
 .msg.out .tm{color:rgba(255,255,255,.7)}
 .msg .nm{font-size:11px;color:#0068ff;font-weight:500;margin-bottom:2px}
+.msg img.media{max-width:260px;max-height:260px;border-radius:8px;display:block;margin-top:4px}
+.msg a.file{display:inline-block;margin-top:4px;color:inherit;font-weight:500}
 .ia{display:flex;padding:12px 16px;background:#fff;border-top:1px solid #e0e0e0;gap:8px}
 .ia input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:20px;font-size:14px;outline:none}
 .ia input:focus{border-color:#0068ff}
@@ -93,12 +95,14 @@ var ca='',cu=0,ld=false,pt=null,cvCache={};
 var wsr=null;
 document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();wc()});
 function wc(){if(!ca||wsr)return;wsr=new WebSocket('ws://'+location.host+'/ws?accountId='+ca);
-wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;var ml=document.getElementById('ml');var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');var fn=( m.fromName && m.fromId!=ca) ? m.fromName : '';dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight}}catch(ex){}};
+wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight}else if(d.type=='media_downloaded'){document.querySelectorAll('#ml .msg[data-msg="'+d.data.msgId+'"]').forEach(function(b){var im=document.createElement('img');im.className='media';im.src=d.data.url;b.appendChild(im)})}}catch(ex){}};
 wsr.onclose=function(){wsr=null;setTimeout(wc,3000)}}
 async function la(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data&&d.data.length>0){ca=d.data[0].id;el('ul','');d.data.forEach(function(a){var dv=document.createElement('div');dv.className='mg-item';dv.innerHTML='<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="mg-n">'+(a.displayName||a.id)+'</div><div class="mg-acts"><button class="mg-btn" onclick="ca=a.id;uh();sy();st(\'ch\')">Chuyển</button> <button class="mg-del" onclick="xd(\''+a.id+'\')">Xoá</button></div>';el('ul').appendChild(dv)})}else{window.location.href='/'}return true}catch(e){return false}}
 function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}}).catch(function(){})}
 function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
 function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function renderMsg(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');dv.dataset.msg=m.id;var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');var body='';var atts=m.attachments||[];for(var i=0;i<atts.length;i++){var a=atts[i];if(a.url){var ext=(a.fileName||'').split('.').pop().toLowerCase();if(['jpg','jpeg','png','gif','webp'].indexOf(ext)>=0){body+='<img class="media" src="'+esc(a.url)+'" onerror="this.style.display=\'none\'">'}else if(ext=='mp4'||ext=='webm'){body+='<video class="media" controls src="'+esc(a.url)+'"></video>'}else{body+='<a class="file" href="'+esc(a.url)+'" target="_blank" rel="noopener">'+esc(a.fileName||'Tải file')+'</a>'}}}body+=esc(m.content||'');dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';return dv}
 async function loadFriends(){if(!ca){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa chọn user</div>');return}
 el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
 try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
@@ -123,10 +127,7 @@ fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/j
 async function lm(){if(!cc||ld||!ca)return;ld=true;
 try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
 if(d.ok){var ml=el('ml');if(cu===0)el('ml','');
-d.data.forEach(function(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');
-var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
-dv.innerHTML=(fn?'<div class="nm">'+fn+'</div>':'')+'<div>'+(m.content||'')+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv)});
+d.data.forEach(function(m){ml.appendChild(renderMsg(m))});
 if(d.data.length>0)cu=d.data[d.data.length-1].timestamp;ml.scrollTop=ml.scrollHeight;}}catch(e){}finally{ld=false}}
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();

@@ -20,9 +20,9 @@ import (
 
 // Định nghĩa các kiểu mã hoá WebSocket
 const (
-	WSEncryptNone     = 0 // Plain JSON
-	WSEncryptBase64GZ = 1 // Base64 + gzip
-	WSEncryptAESGCM   = 2 // AES-GCM + gzip
+	WSEncryptNone      = 0 // Plain JSON
+	WSEncryptBase64GZ  = 1 // Base64 + gzip
+	WSEncryptAESGCM    = 2 // AES-GCM + gzip
 	WSEncryptAESGCMRaw = 3 // AES-GCM không gzip
 )
 
@@ -305,9 +305,13 @@ func encryptParamsForLogin(sc SessionContext, encrypt bool, typeStr string) (*En
 // DecodeAESGCM giải mã AES-GCM dùng cho WebSocket event data
 func DecodeAESGCM(key, iv, aad, ct []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, fmt.Errorf("aes-gcm: new cipher: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm: new cipher: %w", err)
+	}
 	gcm, err := cipher.NewGCMWithNonceSize(block, 16)
-	if err != nil { return nil, fmt.Errorf("aes-gcm: new gcm: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm: new gcm: %w", err)
+	}
 	return gcm.Open(nil, iv, ct, aad)
 }
 
@@ -320,29 +324,71 @@ func DecodeWSEvent(rawData []byte, cipherKey []byte) ([]byte, error) {
 	if err := json.Unmarshal(rawData, &env); err != nil {
 		return rawData, nil // try plain
 	}
+
 	switch env.Encrypt {
 	case 0:
 		return []byte(env.Data), nil
 	case 1:
-		b, _ := base64.StdEncoding.DecodeString(env.Data)
-		gzr, _ := gzip.NewReader(bytes.NewReader(b))
-		if gzr != nil { defer gzr.Close(); return io.ReadAll(gzr) }
-		return b, nil
+		b, err := base64.StdEncoding.DecodeString(env.Data)
+		if err != nil {
+			return nil, fmt.Errorf("ws base64: %w", err)
+		}
+		return gunzipIfNeeded(b)
 	case 2:
-		decoded, _ := url.PathUnescape(env.Data)
-		raw, _ := base64.StdEncoding.DecodeString(decoded)
-		if len(raw) < 32 { return nil, fmt.Errorf("aes-gcm: short data %d", len(raw)) }
-		plain, err := DecodeAESGCM(cipherKey, raw[:16], raw[16:32], raw[32:])
-		if err != nil { return nil, fmt.Errorf("aes-gcm: %w", err) }
-		gzr, _ := gzip.NewReader(bytes.NewReader(plain))
-		if gzr != nil { defer gzr.Close(); return io.ReadAll(gzr) }
-		return plain, nil
+		raw, err := decodeWSBase64(env.Data)
+		if err != nil {
+			return nil, err
+		}
+		plain, err := decryptAESGCMWithKey(raw, cipherKey)
+		if err != nil {
+			return nil, err
+		}
+		return gunzipIfNeeded(plain)
 	case 3:
-		decoded, _ := url.PathUnescape(env.Data)
-		raw, _ := base64.StdEncoding.DecodeString(decoded)
-		if len(raw) < 32 { return nil, fmt.Errorf("aes-gcm-raw: short data %d", len(raw)) }
-		return DecodeAESGCM(cipherKey, raw[:16], raw[16:32], raw[32:])
+		raw, err := decodeWSBase64(env.Data)
+		if err != nil {
+			return nil, err
+		}
+		return decryptAESGCMWithKey(raw, cipherKey)
 	default:
 		return []byte(env.Data), nil
 	}
+}
+
+func decodeWSBase64(data string) ([]byte, error) {
+	unescaped, err := url.PathUnescape(data)
+	if err != nil {
+		return nil, fmt.Errorf("ws unescape: %w", err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(unescaped)
+	if err != nil {
+		return nil, fmt.Errorf("ws base64 decode: %w", err)
+	}
+	if len(raw) < 32 {
+		return nil, fmt.Errorf("aes-gcm: short data %d", len(raw))
+	}
+	return raw, nil
+}
+
+func decryptAESGCMWithKey(raw, cipherKey []byte) ([]byte, error) {
+	if len(cipherKey) == 0 {
+		return nil, fmt.Errorf("aes-gcm: cipher key is required")
+	}
+	key := cipherKey
+	if kb, err := base64.StdEncoding.DecodeString(string(cipherKey)); err == nil && len(kb) > 0 {
+		key = kb
+	}
+	return DecodeAESGCM(key, raw[:16], raw[16:32], raw[32:])
+}
+
+func gunzipIfNeeded(data []byte) ([]byte, error) {
+	if len(data) < 2 || data[0] != 0x1f || data[1] != 0x8b {
+		return data, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("gzip reader: %w", err)
+	}
+	defer zr.Close()
+	return io.ReadAll(zr)
 }

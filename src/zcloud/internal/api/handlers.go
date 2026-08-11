@@ -38,7 +38,9 @@ func writeJSON(w http.ResponseWriter, status int, resp APIResponse) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(resp)
 }
-func ok(w http.ResponseWriter, data interface{}) { writeJSON(w, 200, APIResponse{OK: true, Data: data}) }
+func ok(w http.ResponseWriter, data interface{}) {
+	writeJSON(w, 200, APIResponse{OK: true, Data: data})
+}
 func fail(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, APIResponse{OK: false, Error: msg, Code: status})
 }
@@ -49,16 +51,33 @@ func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	if accountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
 	a, err := s.Store.GetAccount(accountID)
-	if err != nil { fail(w, 500, err.Error()); return }
-	if a == nil { fail(w, 404, "not found"); return }
+	if err != nil {
+		// Giữ UI hiển thị dữ liệu đã có trong DB nếu Zalo API lỗi.
+		s.Logger.Printf("conversations/sync: zalo error=%v", err)
+		dbConvs, _ := s.Store.GetConversations(accountID)
+		if dbConvs == nil {
+			dbConvs = []store.Conversation{}
+		}
+		ok(w, dbConvs)
+		return
+	}
+	if a == nil {
+		fail(w, 404, "not found")
+		return
+	}
 	ok(w, a)
 }
 
 func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
 	accounts, _ := s.Store.ListAccounts(1)
-	if accounts == nil { accounts = []store.Account{} }
+	if accounts == nil {
+		accounts = []store.Account{}
+	}
 	ok(w, accounts)
 }
 
@@ -86,16 +105,31 @@ func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		var req struct{ Token string `json:"token"` }; json.NewDecoder(r.Body).Decode(&req); token = req.Token
+		var req struct {
+			Token string `json:"token"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		token = req.Token
 	}
-	if token == "" { fail(w, 400, "missing token"); return }
-	qrMu.RLock(); qrSession, exists := qrSessions[token]; qrMu.RUnlock()
-	if !exists { fail(w, 404, "QR session expired"); return }
+	if token == "" {
+		fail(w, 400, "missing token")
+		return
+	}
+	qrMu.RLock()
+	qrSession, exists := qrSessions[token]
+	qrMu.RUnlock()
+	if !exists {
+		fail(w, 404, "QR session expired")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	result, err := core.PollQRLogin(ctx, qrSession)
-	if err != nil { fail(w, 400, err.Error()); return }
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 
 	session := result.Session
 	accountID := "acc_" + session.UserID
@@ -108,21 +142,33 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		displayName, avatar = n, a
 	}
 	innerCancel()
-	if displayName == "" { displayName = safeDisplayName(session.UserID) }
+	if displayName == "" {
+		displayName = safeDisplayName(session.UserID)
+	}
 
 	s.Store.CreateAccount(accountID, displayName, 1)
-	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
+	if avatar != "" {
+		s.Store.UpdateAccount(accountID, displayName, avatar)
+	}
 	cookiesJSON, _ := json.Marshal(session.Cookies)
 	wsList := session.WSURLs
-	if wsList == nil { wsList = []string{} }
+	if wsList == nil {
+		wsList = []string{}
+	}
 	wsURLsJSON, _ := json.Marshal(wsList)
+	serviceMapJSON, _ := json.Marshal(session.ServiceMap)
+	if session.ServiceMap == nil {
+		serviceMapJSON = []byte("{}")
+	}
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wsURLsJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wsURLsJSON), ServiceMap: string(serviceMapJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
-	qrMu.Lock(); delete(qrSessions, token); qrMu.Unlock()
+	qrMu.Lock()
+	delete(qrSessions, token)
+	qrMu.Unlock()
 	// Start Zalo WS listener ngay sau login — không cần browser WebSocket
 	go StartZaloListener(s.Store, accountID, s.Logger)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
@@ -132,17 +178,28 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleConversations(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	if accountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
 	convs, _ := s.Store.GetConversations(accountID)
-	if convs == nil { convs = []store.Conversation{} }
+	if convs == nil {
+		convs = []store.Conversation{}
+	}
 	ok(w, convs)
 }
 
 func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	if accountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
 	sessRec, err := s.Store.GetActiveSession(accountID)
-	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	if err != nil || sessRec == nil {
+		fail(w, 401, "not logged in")
+		return
+	}
 
 	// Start Zalo WS listener nền (Go server tự làm Zalo client)
 	go StartZaloListener(s.Store, accountID, s.Logger)
@@ -150,27 +207,49 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
 
-	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+	var cookies map[string]string
+	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
 		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
-	UserID: sessRec.UserID,
+		UserID: sessRec.UserID,
+	}
+	var serviceMap map[string][]string
+	if json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap) == nil {
+		session.ServiceMap = serviceMap
+	}
+	var wsURLs []string
+	if json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs) == nil {
+		session.WSURLs = wsURLs
 	}
 	client := core.NewClient(session)
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	convs, err := client.GetConversations(ctx)
 	if err != nil {
 		if sessRec2 := s.autoRefresh(sessRec); sessRec2.ID != sessRec.ID {
 			// Refresh thành công, thử lại
 			sessRec = sessRec2
 			json.Unmarshal([]byte(sessRec.Cookies), &cookies)
-			session.Cookies = cookies; session.SecretKey = sessRec.SecretKey
+			session.Cookies = cookies
+			session.SecretKey = sessRec.SecretKey
 			client = core.NewClient(session)
 			convs, err = client.GetConversations(ctx)
 		}
 	}
-	if err != nil { fail(w, 500, err.Error()); return }
-	if convs == nil { convs = []core.Conversation{} }
+	if err != nil {
+		// Giữ UI hiển thị dữ liệu đã có trong DB nếu Zalo API lỗi.
+		s.Logger.Printf("conversations/sync: zalo error=%v", err)
+		dbConvs, _ := s.Store.GetConversations(accountID)
+		if dbConvs == nil {
+			dbConvs = []store.Conversation{}
+		}
+		ok(w, dbConvs)
+		return
+	}
+	if convs == nil {
+		convs = []core.Conversation{}
+	}
 
 	// Lưu vào DB
 	for _, c := range convs {
@@ -186,7 +265,11 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 
 	// Resolve group names — cập nhật tên + avatar cho group vào cả convs và DB
 	var groupIDs []string
-	for _, c := range convs { if c.Type == core.ConvGroup { groupIDs = append(groupIDs, c.ID) } }
+	for _, c := range convs {
+		if c.Type == core.ConvGroup {
+			groupIDs = append(groupIDs, c.ID)
+		}
+	}
 	if len(groupIDs) > 0 {
 		if gm, err := client.GetGroupInfo(ctx, groupIDs); err == nil {
 			for i := range convs {
@@ -203,7 +286,9 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 
 	// Trả về từ DB để có đầy đủ tên + avatar
 	dbConvs, _ := s.Store.GetConversations(accountID)
-	if dbConvs == nil { dbConvs = []store.Conversation{} }
+	if dbConvs == nil {
+		dbConvs = []store.Conversation{}
+	}
 	ok(w, dbConvs)
 }
 
@@ -212,81 +297,190 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
 	convID := r.URL.Query().Get("convId")
-	if accountID == "" || convID == "" { fail(w, 400, "missing accountId or convId"); return }
+	if accountID == "" || convID == "" {
+		fail(w, 400, "missing accountId or convId")
+		return
+	}
 	cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
-	if cursor == 0 { cursor = time.Now().UnixMilli() + 1 }
+	if cursor == 0 {
+		cursor = time.Now().UnixMilli() + 1
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 { limit = 50 }
+	if limit <= 0 {
+		limit = 50
+	}
 	msgs, _ := s.Store.GetMessages(accountID, convID, cursor, limit)
-	if msgs == nil { msgs = []store.Message{} }
+	if msgs == nil {
+		msgs = []store.Message{}
+	}
 	ok(w, msgs)
 }
 
 func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AccountID string `json:"accountId"`; To string `json:"to"`; Content string `json:"content"`
+		AccountID string `json:"accountId"`
+		To        string `json:"to"`
+		Content   string `json:"content"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
-	if req.AccountID == "" || req.Content == "" { fail(w, 400, "missing fields"); return }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.AccountID == "" || req.Content == "" {
+		fail(w, 400, "missing fields")
+		return
+	}
 
 	sessRec, err := s.Store.GetActiveSession(req.AccountID)
-	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
+	if err != nil || sessRec == nil {
+		fail(w, 401, "not logged in")
+		return
+	}
 	// Refresh session nếu hết hạn — tránh gửi tin với secret_key cũ (zpw_sek bị thiếu/không đúng)
 	sessRec = s.autoRefresh(sessRec)
-	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+	var cookies map[string]string
+	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
 		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
 	}
-	var wsURLs []string; json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs); session.WSURLs = wsURLs
+	var wsURLs []string
+	json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
+	session.WSURLs = wsURLs
+	var serviceMap map[string][]string
+	if json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap) == nil {
+		session.ServiceMap = serviceMap
+	}
 
 	client := core.NewClient(session)
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	msg, err := client.SendMessage(ctx, req.To, req.Content, core.MsgTypeText)
-	if err != nil { fail(w, 500, "Gui tin that bai: "+err.Error()); return }
+	if err != nil {
+		fail(w, 500, "Gui tin that bai: "+err.Error())
+		return
+	}
+	// Lưu tin đã gửi vào DB để UI/history hiển thị ngay.
+	s.Store.SaveMessage(&store.Message{
+		ID: msg.ID, AccountID: req.AccountID, ConvID: req.To,
+		FromID: sessRec.UserID, FromName: "", Content: msg.Content,
+		MsgType: int(msg.Type), Timestamp: msg.Timestamp,
+	})
 	ok(w, map[string]interface{}{"sent": true, "msgId": msg.ID, "content": msg.Content, "timestamp": msg.Timestamp})
 }
 
 // ========== SYNC MESSAGES ==========
 
 func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
-	var req struct{ AccountID string `json:"accountId"`; ConvID string `json:"convId"` }
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
-	if req.AccountID == "" || req.ConvID == "" { fail(w, 400, "missing fields"); return }
+	var req struct {
+		AccountID string `json:"accountId"`
+		ConvID    string `json:"convId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.AccountID == "" || req.ConvID == "" {
+		fail(w, 400, "missing fields")
+		return
+	}
 	conv, _ := s.Store.GetConversation(req.AccountID, req.ConvID)
 	synced := 0
 	// Gửi request old messages qua WS listener nền
 	convType := 0
-	if conv != nil { convType = conv.ConvType }
+	if conv != nil {
+		convType = conv.ConvType
+	}
 	if RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType) {
 		synced++
+	}
+
+	// REST fallback: nếu WS không chạy hoặc không có response, thử lấy history
+	// qua REST để không để UI trống.
+	if convType == 1 && synced == 0 {
+		sessRec, err := s.Store.GetActiveSession(req.AccountID)
+		if err == nil && sessRec != nil {
+			var cookies map[string]string
+			json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+			session := &core.Session{
+				Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
+				UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
+				UserID: sessRec.UserID,
+			}
+			var serviceMap map[string][]string
+			if json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap) == nil {
+				session.ServiceMap = serviceMap
+			}
+			client := core.NewClient(session)
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			msgs, err := client.GetGroupHistoryV2(ctx, req.ConvID, 50)
+			if err == nil {
+				for _, m := range msgs {
+					attJSON, _ := json.Marshal(m.Attachments)
+					s.Store.SaveMessage(&store.Message{
+						ID: m.ID, AccountID: req.AccountID, ConvID: req.ConvID,
+						FromID: m.FromID, FromName: m.FromName, Content: m.Content,
+						MsgType: int(m.Type), Timestamp: m.Timestamp, Attachments: string(attJSON),
+					})
+				}
+				if len(msgs) > 0 {
+					synced++
+				}
+			}
+		}
 	}
 	ok(w, map[string]interface{}{"syncing": synced > 0, "synced": synced})
 }
 
 func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" { fail(w, 400, "missing accountId"); return }
+	if accountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
 	sessRec, err := s.Store.GetActiveSession(accountID)
-	if err != nil || sessRec == nil { fail(w, 401, "not logged in"); return }
-	var cookies map[string]string; json.Unmarshal([]byte(sessRec.Cookies), &cookies)
+	if err != nil || sessRec == nil {
+		fail(w, 401, "not logged in")
+		return
+	}
+	var cookies map[string]string
+	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
 	session := &core.Session{
 		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
 		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
 	}
+	var serviceMap map[string][]string
+	if json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap) == nil {
+		session.ServiceMap = serviceMap
+	}
 	client := core.NewClient(session)
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	users, err := client.GetFriends(ctx)
-	if err != nil { fail(w, 500, "get friends: "+err.Error()); return }
+	if err != nil {
+		// Không làm mất UI Contact khi Zalo tạm lỗi.
+		s.Logger.Printf("friends: zalo error=%v", err)
+		ok(w, []core.User{})
+		return
+	}
 	ok(w, users)
 }
 
 // ========== LOGOUT ==========
 
 func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
-	var req struct{ AccountID string `json:"accountId"` }
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
-	if req.AccountID == "" { fail(w, 400, "missing accountId"); return }
+	var req struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.AccountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
 	StopZaloListener(req.AccountID)
 	s.Store.DeleteAccount(req.AccountID)
 	ok(w, map[string]interface{}{"loggedOut": true})
@@ -295,14 +489,26 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // ========== COOKIE LOGIN ==========
 
 func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Cookie string `json:"cookie"` }
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fail(w, 400, "invalid body"); return }
+	var req struct {
+		Cookie string `json:"cookie"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
 	cookies := parseCookie(req.Cookie)
-	if len(cookies) == 0 { fail(w, 400, "no cookies"); return }
+	if len(cookies) == 0 {
+		fail(w, 400, "no cookies")
+		return
+	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second); defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	result, err := core.CookieLogin(ctx, cookies, "", "")
-	if err != nil { fail(w, 500, "login failed: "+err.Error()); return }
+	if err != nil {
+		fail(w, 500, "login failed: "+err.Error())
+		return
+	}
 	session := result.Session
 	accountID := "acc_" + session.UserID
 
@@ -314,16 +520,25 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		displayName, avatar = n, a
 	}
 	innerCancel()
-	if displayName == "" { displayName = safeDisplayName(session.UserID) }
+	if displayName == "" {
+		displayName = safeDisplayName(session.UserID)
+	}
 
 	s.Store.CreateAccount(accountID, displayName, 1)
-	if avatar != "" { s.Store.UpdateAccount(accountID, displayName, avatar) }
-	cj, _ := json.Marshal(session.Cookies); wj, _ := json.Marshal(session.WSURLs)
+	if avatar != "" {
+		s.Store.UpdateAccount(accountID, displayName, avatar)
+	}
+	cj, _ := json.Marshal(session.Cookies)
+	wj, _ := json.Marshal(session.WSURLs)
+	smj, _ := json.Marshal(session.ServiceMap)
+	if session.ServiceMap == nil {
+		smj = []byte("{}")
+	}
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
@@ -331,8 +546,14 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 func parseCookie(s string) map[string]string {
 	c := make(map[string]string)
 	for _, p := range strings.Split(s, ";") {
-		p = strings.TrimSpace(p); if p == "" { continue }
-		parts := strings.SplitN(p, "=", 2); if len(parts) == 2 { c[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1]) }
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		parts := strings.SplitN(p, "=", 2)
+		if len(parts) == 2 {
+			c[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
 	}
 	return c
 }
@@ -342,7 +563,10 @@ func parseCookie(s string) map[string]string {
 func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html, err := webFS.ReadFile("web/login.html")
-	if err != nil { http.Error(w, "template error", 500); return }
+	if err != nil {
+		http.Error(w, "template error", 500)
+		return
+	}
 	w.Write(html)
 }
 
@@ -352,7 +576,9 @@ func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleFavicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml")
 	fav, _ := webFS.ReadFile("web/favicon.svg")
-	if fav != nil { w.Write(fav) }
+	if fav != nil {
+		w.Write(fav)
+	}
 }
 
 func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
@@ -363,33 +589,53 @@ func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
 	}
 	accOpts := ""
 	for _, a := range accounts {
-		sel := ""; if len(accounts) == 1 { sel = "selected" }
-		n := a.DisplayName; if n == "" { n = a.ID[:min(20, len(a.ID))] }
+		sel := ""
+		if len(accounts) == 1 {
+			sel = "selected"
+		}
+		n := a.DisplayName
+		if n == "" {
+			n = a.ID[:min(20, len(a.ID))]
+		}
 		accOpts += fmt.Sprintf(`<option value="%s" %s>%s</option>`, a.ID, sel, n)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html, err := webFS.ReadFile("web/chat.html")
-	if err != nil { http.Error(w, "template error", 500); return }
+	if err != nil {
+		http.Error(w, "template error", 500)
+		return
+	}
 	// Dùng strings.Replace thay vì fmt.Fprintf — tránh lỗi %! trong CSS
 	w.Write([]byte(strings.Replace(string(html), "%s", accOpts, 1)))
 }
 
 func safeDisplayName(userID string) string {
-	if userID == "" { return "Zalo User" }
+	if userID == "" {
+		return "Zalo User"
+	}
 	short := userID
-	if len(short) > 8 { short = short[:8] }
+	if len(short) > 8 {
+		short = short[:8]
+	}
 	return "Zalo User " + short
 }
 
-func min(a, b int) int { if a < b { return a }; return b }
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 // autoRefresh kiểm tra và refresh session nếu sắp hết hạn hoặc token hết hạn
 func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
-	if sessRec == nil { return nil }
+	if sessRec == nil {
+		return nil
+	}
 	now := time.Now()
 	// Refresh nếu còn dưới 1 tiếng hoặc đã hết hạn
-	if now.Before(sessRec.ExpiresAt.Add(-1 * time.Hour)) && now.Before(sessRec.ExpiresAt) {
+	if now.Before(sessRec.ExpiresAt.Add(-1*time.Hour)) && now.Before(sessRec.ExpiresAt) {
 		return sessRec // Còn hạn, không cần refresh
 	}
 	// Thử refresh bằng cookie login
@@ -409,12 +655,16 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	accountID := sessRec.AccountID
 	cj, _ := json.Marshal(session.Cookies)
 	wj, _ := json.Marshal(session.WSURLs)
+	smj, _ := json.Marshal(session.ServiceMap)
+	if session.ServiceMap == nil {
+		smj = []byte("{}")
+	}
 	newSession := &store.Session{
-		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
+		ID:        session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10),
 		AccountID: accountID, UserID: session.UserID,
 		Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
-		WSURLs: string(wj), APIType: session.APIType, APIVersion: session.APIVersion,
+		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion,
 		IsActive: 1, ExpiresAt: session.ExpiresAt,
 	}
 	saveErr := s.Store.SaveSession(newSession)
@@ -425,23 +675,21 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }
+
 // RefreshAllSessions refresh tat ca session sap het han (goi tu background goroutine)
 func (s *Server) RefreshAllSessions() {
 	accounts, err := s.Store.ListAccounts(1)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	for _, a := range accounts {
 		sessRec, err := s.Store.GetActiveSession(a.ID)
-		if err != nil || sessRec == nil { continue }
+		if err != nil || sessRec == nil {
+			continue
+		}
 		if time.Now().After(sessRec.ExpiresAt.Add(-30 * time.Minute)) {
 			s.Logger.Printf("autoRefresh: background refreshing %s", a.ID)
 			s.autoRefresh(sessRec)
 		}
 	}
 }
-
-
-
-
-
-
-

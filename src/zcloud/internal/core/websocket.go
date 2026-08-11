@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,19 +20,21 @@ import (
 
 // WSClient quản lý kết nối WebSocket tới Zalo
 type WSClient struct {
-	conn      *websocket.Conn
-	connCtx   context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	conn    *websocket.Conn
+	connCtx context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 
-	msgChan   chan Event
-	errChan   chan error
+	msgChan chan Event
+	errChan chan error
 
-	cipherKey []byte // Key cho AES-GCM decrypt event data
-	session   *Session
-	url       string
+	cipherKey   []byte // Key cho AES-GCM decrypt event data
+	session     *Session
+	url         string
+	requestIDs  uint64
+	pingStarted bool
 
-	mu        sync.Mutex
+	mu sync.Mutex
 }
 
 // NewWSClient tạo WebSocket client mới
@@ -42,10 +45,10 @@ func NewWSClient(session *Session) *WSClient {
 	}
 
 	return &WSClient{
-		msgChan:   make(chan Event, 100),
-		errChan:   make(chan error, 10),
-		session:   session,
-		url:       url,
+		msgChan: make(chan Event, 100),
+		errChan: make(chan error, 10),
+		session: session,
+		url:     url,
 	}
 }
 
@@ -91,6 +94,7 @@ func (w *WSClient) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ws dial: %w", err)
 	}
+	fmt.Printf("[zcloud] ws connected: url=%s\n", wsURL)
 
 	w.conn = conn
 	w.connCtx, w.cancel = context.WithCancel(ctx)
@@ -105,13 +109,17 @@ func (w *WSClient) Connect(ctx context.Context) error {
 // Close đóng kết nối WebSocket
 func (w *WSClient) Close() error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	conn := w.conn
+	cancel := w.cancel
+	w.conn = nil
+	w.cancel = nil
+	w.mu.Unlock()
 
-	if w.cancel != nil {
-		w.cancel()
+	if cancel != nil {
+		cancel()
 	}
-	if w.conn != nil {
-		w.conn.Close(websocket.StatusNormalClosure, "client closing")
+	if conn != nil {
+		conn.Close(websocket.StatusNormalClosure, "client closing")
 	}
 	w.wg.Wait()
 	return nil
@@ -141,6 +149,21 @@ func (w *WSClient) SendWS(ctx context.Context, cmd uint16, subCmd uint8, data ma
 	return w.conn.Write(ctx, websocket.MessageBinary, frame)
 }
 
+func (w *WSClient) SendWSWithID(ctx context.Context, cmd uint16, subCmd uint8, data map[string]any) error {
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["req_id"] = fmt.Sprintf("req_%d", w.nextRequestID())
+	return w.SendWS(ctx, cmd, subCmd, data)
+}
+
+func (w *WSClient) nextRequestID() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.requestIDs++
+	return w.requestIDs
+}
+
 // ====================================
 // Read loop
 // ====================================
@@ -159,6 +182,7 @@ func (w *WSClient) readLoop() {
 
 		_, msg, err := w.conn.Read(w.connCtx)
 		if err != nil {
+			fmt.Printf("[zcloud] ws read error: %v\n", err)
 			select {
 			case w.errChan <- fmt.Errorf("ws read: %w", err):
 			default:
@@ -166,6 +190,7 @@ func (w *WSClient) readLoop() {
 			return
 		}
 
+		fmt.Printf("[zcloud] ws frame: len=%d first=%x\n", len(msg), msg[:min(8, len(msg))])
 		w.handleFrame(msg)
 	}
 }
@@ -187,6 +212,7 @@ func (w *WSClient) handleFrame(data []byte) {
 			Key string `json:"key"`
 		}
 		if err := json.Unmarshal(payload, &keyMsg); err == nil && keyMsg.Key != "" {
+			fmt.Printf("[zcloud] ws auth key received: keylen=%d\n", len(keyMsg.Key))
 			w.mu.Lock()
 			decoded, decErr := base64.StdEncoding.DecodeString(keyMsg.Key)
 			if decErr == nil && len(decoded) > 0 {
@@ -195,6 +221,14 @@ func (w *WSClient) handleFrame(data []byte) {
 				w.cipherKey = []byte(keyMsg.Key)
 			}
 			w.mu.Unlock()
+			w.mu.Lock()
+			if !w.pingStarted {
+				w.pingStarted = true
+				w.mu.Unlock()
+				go w.startPingLoop()
+			} else {
+				w.mu.Unlock()
+			}
 		}
 
 	case cmd == 501 && subCmd == 0:
@@ -205,6 +239,18 @@ func (w *WSClient) handleFrame(data []byte) {
 		// New group messages
 		w.handleNewMessages(payload, ThreadGroup)
 
+	case cmd == 502 && subCmd == 0:
+		w.handleMessageStatus(payload, ThreadUser)
+
+	case cmd == 522 && subCmd == 0:
+		w.handleMessageStatus(payload, ThreadGroup)
+
+	case cmd == 601 && subCmd == 0:
+		w.handleControl(payload)
+
+	case cmd == 602 && subCmd == 0:
+		w.handleActions(payload)
+
 	case cmd == 510 && subCmd == 1:
 		w.handleOldMessages(payload, ThreadUser)
 
@@ -213,13 +259,25 @@ func (w *WSClient) handleFrame(data []byte) {
 
 	case (cmd == 510 || cmd == 511) && subCmd == 0:
 		w.handleOldMessages(payload, ThreadUser)
-		if cmd == 511 { w.handleOldMessages(payload, ThreadGroup) }
+		if cmd == 511 {
+			w.handleOldMessages(payload, ThreadGroup)
+		}
 
 	case cmd == 2 && subCmd == 1:
 		// Ping — send pong
-		w.SendWS(w.connCtx, 2, 2, map[string]any{
+		w.SendWSWithID(w.connCtx, 2, 2, map[string]any{
 			"eventId": time.Now().UnixMilli(),
 		})
+
+	case cmd == 610 && subCmd == 1:
+		w.handleReactions(payload, ThreadUser)
+
+	case cmd == 611 && subCmd == 1:
+		w.handleReactions(payload, ThreadGroup)
+
+	case cmd == 612 && subCmd == 0:
+		w.handleReactions(payload, ThreadUser)
+		w.handleReactions(payload, ThreadGroup)
 
 	case cmd == 3000:
 		// Duplicate connection
@@ -234,15 +292,19 @@ func (w *WSClient) handleFrame(data []byte) {
 // RequestOldMessages gửi yêu cầu lấy tin nhắn cũ qua WebSocket
 func (w *WSClient) RequestOldMessages(ctx context.Context, tt ThreadType, lastMsgID string) error {
 	cmd := uint16(510)
-	if tt == ThreadGroup { cmd = 511 }
+	if tt == ThreadGroup {
+		cmd = 511
+	}
 	lastId := lastMsgID
-	if lastId == "" { lastId = "10000000000000000" } // Giá trị lớn để lấy tin mới nhất
+	if lastId == "" {
+		lastId = "10000000000000000"
+	} // Giá trị lớn để lấy tin mới nhất
 	data := map[string]any{
 		"first":  true,
 		"lastId": lastId,
 		"preIds": []string{},
 	}
-	return w.SendWS(ctx, cmd, 1, data)
+	return w.SendWSWithID(ctx, cmd, 1, data)
 }
 
 func (w *WSClient) decryptPayload(payload []byte) []byte {
@@ -263,43 +325,18 @@ func (w *WSClient) decryptPayload(payload []byte) []byte {
 func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 	data := w.decryptPayload(payload)
 	var rawData struct {
-		Msgs json.RawMessage `json:"msgs"`
+		Msgs      json.RawMessage `json:"msgs"`
+		GroupMsgs json.RawMessage `json:"groupMsgs"`
 	}
 	if err := json.Unmarshal(data, &rawData); err != nil {
 		return
 	}
 
-	if len(rawData.Msgs) > 0 {
-		msg := Event{
-			Type: EventNewMessage,
-		}
-		var msgs []struct {
-			MsgID     string          `json:"msgId"`
-			Content   string          `json:"content"`
-			FromUID   string          `json:"fromUid"`
-			ConvID    string          `json:"convId"`
-			Timestamp int64           `json:"timestamp"`
-			Type      int             `json:"type"`
-			DName     string          `json:"dName"`
-		}
-			if err := json.Unmarshal(rawData.Msgs, &msgs); err == nil && len(msgs) > 0 {
-				for _, m := range msgs {
-					msg.Message = &Message{
-						ID:        m.MsgID,
-						FromID:    m.FromUID,
-						FromName:  m.DName,
-						Content:   m.Content,
-						Timestamp: m.Timestamp,
-						Type:      MsgType(m.Type),
-					}
-					// Emit message
-					select {
-					case w.msgChan <- msg:
-					default:
-					}
-				}
-			}
+	msgsRaw := rawData.Msgs
+	if tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
+		msgsRaw = rawData.GroupMsgs
 	}
+	w.parseMessages(msgsRaw, EventNewMessage, tt)
 }
 
 // handleOldMessages xử lý cmd 510/511 (old messages response)
@@ -317,8 +354,12 @@ func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
 	msgsRaw := rawData.Msgs
 	if len(msgsRaw) == 0 && len(rawData.Data) > 0 {
 		// Thử parse từ wrapper {data: {msgs: ...}}
-		var inner struct { Msgs json.RawMessage `json:"msgs"` }
-		if json.Unmarshal(rawData.Data, &inner) == nil { msgsRaw = inner.Msgs }
+		var inner struct {
+			Msgs json.RawMessage `json:"msgs"`
+		}
+		if json.Unmarshal(rawData.Data, &inner) == nil {
+			msgsRaw = inner.Msgs
+		}
 	}
 	if len(msgsRaw) == 0 && tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
 		msgsRaw = rawData.GroupMsgs
@@ -326,24 +367,383 @@ func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
 	if tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
 		msgsRaw = rawData.GroupMsgs
 	}
-	if len(msgsRaw) == 0 { return }
-	var msgs []struct {
-		MsgID     string `json:"msgId"`
-		Content   string `json:"content"`
-		FromUID   string `json:"fromUid"`
-		ConvID    string `json:"convId"`
-		Timestamp int64  `json:"timestamp"`
-		Type      int    `json:"type"`
-		DName     string `json:"dName"`
+	if len(msgsRaw) == 0 {
+		return
 	}
-	if err := json.Unmarshal(msgsRaw, &msgs); err != nil || len(msgs) == 0 { return }
-	evt := Event{Type: EventOldMessages}
+	w.parseMessages(msgsRaw, EventOldMessages, tt)
+}
+
+func (w *WSClient) parseMessages(msgsRaw json.RawMessage, evtType EventType, tt ThreadType) {
+	if len(msgsRaw) == 0 {
+		return
+	}
+	var msgs []wsMessage
+	if err := json.Unmarshal(msgsRaw, &msgs); err != nil || len(msgs) == 0 {
+		return
+	}
 	for _, m := range msgs {
-		evt.Message = &Message{
-			ID: m.MsgID, FromID: m.FromUID, FromName: m.DName,
-			Content: m.Content, Timestamp: m.Timestamp, Type: MsgType(m.Type),
+		if m.MsgID == "" && m.CliMsgID == "" {
+			continue
 		}
-		select { case w.msgChan <- evt: default: }
+		evt := Event{Type: evtType, Message: m.toMessage(w.session)}
+		select {
+		case w.msgChan <- evt:
+		default:
+		}
+	}
+}
+
+func (w *WSClient) handleMessageStatus(payload []byte, tt ThreadType) {
+	data := w.decryptPayload(payload)
+	var raw struct {
+		Delivereds json.RawMessage `json:"delivereds"`
+		Seens      json.RawMessage `json:"seens"`
+		GroupSeens json.RawMessage `json:"groupSeens"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	w.emitRawEvent(EventDelivered, raw.Delivereds)
+	if tt == ThreadGroup && len(raw.GroupSeens) > 0 {
+		w.emitRawEvent(EventSeen, raw.GroupSeens)
+	} else {
+		w.emitRawEvent(EventSeen, raw.Seens)
+	}
+}
+
+func (w *WSClient) handleControl(payload []byte) {
+	data := w.decryptPayload(payload)
+	var raw struct {
+		Controls []struct {
+			Content struct {
+				ActionType string          `json:"act_type"`
+				Action     string          `json:"act"`
+				Data       json.RawMessage `json:"data"`
+				FileID     *int64          `json:"fileId,omitempty"`
+			} `json:"content"`
+		} `json:"controls"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	for _, c := range raw.Controls {
+		if c.Content.ActionType != "file_done" {
+			continue
+		}
+		payloadData := c.Content.Data
+		if len(payloadData) > 0 && payloadData[0] == '"' {
+			var s string
+			if json.Unmarshal(payloadData, &s) == nil {
+				payloadData = []byte(s)
+			}
+		}
+		var up struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(payloadData, &up) == nil && up.URL != "" {
+			evt := Event{Type: EventUploadAttachment, Message: &Message{Content: up.URL}}
+			if c.Content.FileID != nil {
+				evt.FileID = fmt.Sprintf("%d", *c.Content.FileID)
+			}
+			select {
+			case w.msgChan <- evt:
+			default:
+			}
+		}
+	}
+}
+
+func (w *WSClient) handleActions(payload []byte) {
+	data := w.decryptPayload(payload)
+	var raw struct {
+		Actions []struct {
+			ActionType string          `json:"act_type"`
+			Action     string          `json:"act"`
+			Data       json.RawMessage `json:"data"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	for _, a := range raw.Actions {
+		if a.ActionType != "typing" {
+			continue
+		}
+		d := a.Data
+		if len(d) > 0 && d[0] == '"' {
+			var s string
+			if json.Unmarshal(d, &s) == nil {
+				d = []byte(s)
+			}
+		}
+		evt := Event{Type: EventTyping}
+		if a.Action == "gtyping" {
+			var g struct {
+				GID string `json:"gid"`
+				UID string `json:"uid"`
+			}
+			json.Unmarshal(d, &g)
+			evt.Message = &Message{ConvID: g.GID, FromID: g.UID}
+		} else {
+			var u struct {
+				UID  string `json:"uid"`
+				ToID string `json:"toid"`
+			}
+			json.Unmarshal(d, &u)
+			evt.Message = &Message{ConvID: u.ToID, FromID: u.UID}
+		}
+		select {
+		case w.msgChan <- evt:
+		default:
+		}
+	}
+}
+
+func (w *WSClient) handleReactions(payload []byte, tt ThreadType) {
+	data := w.decryptPayload(payload)
+	var raw struct {
+		Reacts      json.RawMessage `json:"reacts"`
+		ReactGroups json.RawMessage `json:"reactGroups"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	if tt == ThreadGroup {
+		w.emitRawEvent(EventReaction, raw.ReactGroups)
+	} else {
+		w.emitRawEvent(EventReaction, raw.Reacts)
+	}
+}
+
+func (w *WSClient) emitRawEvent(typ EventType, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return
+	}
+	for range arr {
+		select {
+		case w.msgChan <- Event{Type: typ}:
+		default:
+		}
+	}
+}
+
+type wsMessage struct {
+	MsgID       string          `json:"msgId"`
+	CliMsgID    string          `json:"cliMsgId"`
+	Content     json.RawMessage `json:"content"`
+	FromUID     string          `json:"uidFrom"`
+	DName       string          `json:"dName"`
+	ConvID      string          `json:"convId"`
+	IDTo        string          `json:"idTo"`
+	ToID        string          `json:"toid"`
+	Grid        string          `json:"grid"`
+	UID         string          `json:"userId"`
+	UIN         string          `json:"uin"`
+	TS          json.RawMessage `json:"ts"`
+	Type        json.RawMessage `json:"msgType"`
+	SubType     int             `json:"subType"`
+	PropertyExt *struct {
+		SubType int    `json:"subType"`
+		Ext     string `json:"ext"`
+	} `json:"propertyExt"`
+	Mentions []wsMention     `json:"mentions"`
+	Quote    json.RawMessage `json:"quote"`
+}
+
+type wsMention struct {
+	UID  string `json:"uid"`
+	Pos  int    `json:"pos"`
+	Len  int    `json:"len"`
+	Name string `json:"name,omitempty"`
+}
+
+func (m wsMessage) toMessage(session *Session) *Message {
+	msgID := m.MsgID
+	if msgID == "" {
+		msgID = m.CliMsgID
+	}
+	convID := firstNonEmpty(m.ConvID, m.Grid, m.IDTo, m.ToID, m.UID)
+	fromID := m.FromUID
+	if fromID == "" {
+		fromID = m.UID
+	}
+	if session != nil && fromID == "0" {
+		fromID = session.UserID
+	}
+	if session != nil && m.IDTo == "0" {
+		convID = session.UserID
+	}
+	if session != nil && m.IDTo == "0" && m.ToID != "" {
+		convID = m.ToID
+	}
+	msg := &Message{
+		ID: msgID, ConvID: convID, FromID: fromID, FromName: m.DName,
+		Content:   m.contentText(),
+		Timestamp: m.ts(),
+		Type:      m.msgType(),
+	}
+	msg.Attachments = m.attachments()
+	for _, mn := range m.Mentions {
+		msg.Mentions = append(msg.Mentions, MessageMention{UID: mn.UID, Pos: mn.Pos, Len: mn.Len, Name: mn.Name})
+	}
+	return msg
+}
+
+func (m wsMessage) attachments() []Attachment {
+	var out []Attachment
+	obj, ok := m.contentObject()
+	if !ok {
+		return out
+	}
+
+	add := func(id string, url string, name string, fileSize int64, width, height int) {
+		if id == "" && url == "" {
+			return
+		}
+		if id == "" {
+			id = fmt.Sprintf("%s-%d", m.MsgID, len(out))
+		}
+		out = append(out, Attachment{
+			ID: id, URL: url, FileName: name, FileSize: fileSize, Width: width, Height: height,
+		})
+	}
+
+	url := firstNonEmpty(obj["href"], obj["url"], obj["fileUrl"], obj["normalUrl"], obj["hdUrl"], obj["oriUrl"], obj["thumbUrl"], obj["thumb"])
+	name := firstNonEmpty(obj["fileName"], obj["filename"], obj["name"], obj["title"])
+	var size int64
+	if f, ok := obj["fileSize"].(float64); ok {
+		size = int64(f)
+	}
+	if s, ok := obj["fileSize"].(string); ok {
+		fmt.Sscanf(s, "%d", &size)
+	}
+	var w, h int
+	if f, ok := obj["width"].(float64); ok {
+		w = int(f)
+	}
+	if f, ok := obj["height"].(float64); ok {
+		h = int(f)
+	}
+	id := firstNonEmpty(obj["fileId"], obj["photoId"], obj["fileID"], obj["stickerId"], obj["id"])
+	add(id, url, name, size, w, h)
+
+	for _, key := range []string{"normalUrl", "hdUrl", "oriUrl", "thumbUrl", "thumb"} {
+		if u, ok := obj[key].(string); ok && u != "" && u != url {
+			add(id+"-"+key, u, name, size, w, h)
+		}
+	}
+	return out
+}
+
+func (m wsMessage) contentObject() (map[string]any, bool) {
+	if len(m.Content) == 0 {
+		return nil, false
+	}
+	if m.Content[0] == '"' {
+		var s string
+		if json.Unmarshal(m.Content, &s) == nil && len(s) > 0 && s[0] == '{' {
+			var obj map[string]any
+			if json.Unmarshal([]byte(s), &obj) == nil {
+				return obj, true
+			}
+		}
+	}
+	var obj map[string]any
+	if json.Unmarshal(m.Content, &obj) == nil {
+		return obj, true
+	}
+	return nil, false
+}
+
+func (m wsMessage) contentText() string {
+	if len(m.Content) == 0 {
+		return ""
+	}
+	if m.Content[0] == '"' {
+		var s string
+		if json.Unmarshal(m.Content, &s) == nil {
+			return s
+		}
+	}
+	var obj map[string]any
+	if json.Unmarshal(m.Content, &obj) == nil {
+		if s, ok := obj["text"].(string); ok {
+			return s
+		}
+		if s, ok := obj["title"].(string); ok {
+			return s
+		}
+	}
+	return strings.TrimSpace(string(m.Content))
+}
+
+func (m wsMessage) ts() int64 {
+	if len(m.TS) == 0 {
+		return 0
+	}
+	if m.TS[0] == '"' {
+		var s string
+		if json.Unmarshal(m.TS, &s) == nil {
+			var n int64
+			fmt.Sscanf(s, "%d", &n)
+			return n
+		}
+	}
+	var n int64
+	json.Unmarshal(m.TS, &n)
+	return n
+}
+
+func (m wsMessage) msgType() MsgType {
+	if len(m.Type) == 0 {
+		return MsgTypeText
+	}
+	if m.Type[0] == '"' {
+		var s string
+		if json.Unmarshal(m.Type, &s) == nil {
+			switch {
+			case strings.Contains(s, "chat.photo"):
+				return MsgTypeImage
+			case strings.Contains(s, "chat.sticker"):
+				return MsgTypeSticker
+			case strings.Contains(s, "chat.file"):
+				return MsgTypeFile
+			case strings.Contains(s, "chat.voice"):
+				return MsgTypeVoice
+			case strings.Contains(s, "chat.link"):
+				return MsgTypeLink
+			case strings.Contains(s, "chat.video"):
+				return MsgTypeVideo
+			case strings.Contains(s, "chat.card"):
+				return MsgTypeCard
+			case strings.Contains(s, "chat.location"):
+				return MsgTypeLocation
+			default:
+				return MsgTypeText
+			}
+		}
+	}
+	var n int
+	json.Unmarshal(m.Type, &n)
+	return MsgType(n)
+}
+
+func (w *WSClient) startPingLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.connCtx.Done():
+			return
+		case <-ticker.C:
+			w.SendWSWithID(w.connCtx, 2, 1, map[string]any{
+				"eventId": time.Now().UnixMilli(),
+			})
+		}
 	}
 }
 
@@ -357,4 +757,26 @@ func stringMapToHTTP(h map[string]string) http.Header {
 		hh.Set(k, v)
 	}
 	return hh
+}
+
+func firstNonEmpty(values ...interface{}) string {
+	for _, v := range values {
+		switch x := v.(type) {
+		case string:
+			if x != "" {
+				return x
+			}
+		case fmt.Stringer:
+			if s := x.String(); s != "" {
+				return s
+			}
+		default:
+			if x != nil {
+				if s := fmt.Sprintf("%v", x); s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
 }
