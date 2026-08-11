@@ -2,7 +2,7 @@
 
 > File này merge nội dung từ `master-plan.md` (kiến trúc + 4 mục tiêu) và
 > `audit.md` (trạng thái chi tiết từng module + tồn đọng). Cập nhật
-> 28/07/2026.
+> 11/08/2026.
 
 ---
 
@@ -65,6 +65,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 12 | Logout / đổi tài khoản | 🟢 Xong | [12-logout.md](tasks/12-logout.md) |
 | 13 | Media download | 🟢 Xong | [13-media-download.md](tasks/13-media-download.md) |
 | 14 | Tách Web UI ra file tĩnh | 🟢 Xong | [14-split-webui.md](tasks/14-split-webui.md) |
+| 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
 
 ---
 
@@ -153,6 +154,8 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
 | T7 | Re-login QR cho account hiện tại | 🔴 Block | Session cookies bị Zalo server reject (`zpw_sek không đúng`) — cần Sếp login lại qua QR |
 | T8 | Verify end-to-end sau re-login | 🟡 Medium | Gửi tin qua Zalo client khác → DB có message + browser WS nhận event |
+| T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
+| T10 | WS AES-GCM + desktop command set | 🟢 Optional | PC bundle xác nhận AES-GCM layout và cmd 590-592/630-634 nếu làm cross-device/backup sync |
 
 ## 5.1. Đã hoàn thành trong đợt này (29/07/2026)
 
@@ -160,6 +163,15 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 - **api_version đọc từ session**: bỏ hardcode `688` trong `HandlePollQR`/`HandleCreateAccountFromProfile`/`HandleCookieLogin`, thay bằng `session.APIVersion` (đã được auth.go set = 688 mặc định).
 - **SendMessage debug + autoRefresh**: thêm log `error_message` + raw body khi fail. Thêm `autoRefresh` vào `HandleSendMessage` để session hết hạn được refresh tự động trước khi gửi.
 - **DB session refresh**: phát hiện session cũ (`api_version=665`) đã được refresh nhiều lần qua background, secret_key cập nhật (`bZMgG6RLiSa/DrYbIotXIg==`).
+
+## 5.2. Đã hoàn thành trong đợt này (11/08/2026)
+
+- **Reverse tĩnh Zalo PC 26.8.10**: tải/verify/extract installer Windows, giải
+  `app.asar`, map framework Electron + API/auth/crypto + desktop sync.
+- **Tài liệu**: `docs/protocol/pc-desktop.md` + case
+  `work/reverse-zalo-pc-20260811/evidence/E-REPORT.md`.
+- **Kết luận**: Web API core khớp zcloud; desktop thêm cross-device/backup sync,
+  ZCloud/family media, trusted-device WASM, SQLite encrypted local store.
 
 ---
 
@@ -172,4 +184,3 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | Za-go | Go | 64★ | `docs/references/za-go/` |
 
 ---
-
