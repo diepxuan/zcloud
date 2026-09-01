@@ -83,7 +83,19 @@ func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
 
 // ========== QR LOGIN ==========
 
-var qrSessions = make(map[string]*core.QRLoginSession)
+// qrFlow là một lần tạo QR trên server. Poll chỉ khởi động một goroutine
+// duy nhất, tránh nhiều HTTP poll cùng lúc gọi login hoặc tạo nhiều session.
+type qrFlow struct {
+	qr       *core.QRLoginSession
+	mu       sync.Mutex
+	started  bool
+	consumed bool
+	done     chan struct{}
+	result   *core.LoginResult
+	err      error
+}
+
+var qrFlows = make(map[string]*qrFlow)
 var qrMu sync.RWMutex
 
 func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
@@ -95,11 +107,26 @@ func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code := qrSession.Code
+	flow := &qrFlow{qr: qrSession, done: make(chan struct{})}
+
 	qrMu.Lock()
-	qrSessions[code] = qrSession
+	qrFlows[code] = flow
 	qrMu.Unlock()
-	go func() { time.Sleep(5 * time.Minute); qrMu.Lock(); delete(qrSessions, code); qrMu.Unlock() }()
-	ok(w, map[string]interface{}{"token": code, "image": qrSession.ImageB64, "expires": time.Now().Add(3 * time.Minute).Unix()})
+
+	go func() {
+		time.Sleep(5 * time.Minute)
+		qrMu.Lock()
+		if current, ok := qrFlows[code]; ok && current == flow {
+			delete(qrFlows, code)
+		}
+		qrMu.Unlock()
+	}()
+
+	ok(w, map[string]interface{}{
+		"token":   code,
+		"image":   qrSession.ImageB64,
+		"expires": time.Now().Add(3 * time.Minute).Unix(),
+	})
 }
 
 func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
@@ -115,26 +142,77 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "missing token")
 		return
 	}
+
 	qrMu.RLock()
-	qrSession, exists := qrSessions[token]
+	flow := qrFlows[token]
 	qrMu.RUnlock()
-	if !exists {
+	if flow == nil {
 		fail(w, 404, "QR session expired")
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-	result, err := core.PollQRLogin(ctx, qrSession)
-	if err != nil {
-		fail(w, 400, err.Error())
+	// Chỉ poll QR login một lần. Các request sau chỉ đọc trạng thái.
+	flow.mu.Lock()
+	if !flow.started {
+		flow.started = true
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+		go func() {
+			defer cancel()
+			result, err := core.PollQRLogin(ctx, flow.qr)
+			flow.mu.Lock()
+			flow.result = result
+			flow.err = err
+			close(flow.done)
+			flow.mu.Unlock()
+		}()
+	}
+	flow.mu.Unlock()
+
+	select {
+	case <-flow.done:
+		flow.mu.Lock()
+		result := flow.result
+		err := flow.err
+		consumed := flow.consumed
+		flow.consumed = true
+		flow.mu.Unlock()
+
+		qrMu.Lock()
+		delete(qrFlows, token)
+		qrMu.Unlock()
+
+		if consumed {
+			fail(w, 404, "QR session expired")
+			return
+		}
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		if result == nil || result.Session == nil {
+			fail(w, 500, "login failed: empty session")
+			return
+		}
+		s.commitLoginSession(w, result.Session)
+		return
+	case <-time.After(1500 * time.Millisecond):
+		ok(w, map[string]interface{}{"pending": true})
+		return
+	case <-r.Context().Done():
+		ok(w, map[string]interface{}{"pending": true})
+		return
+	}
+}
+
+func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session) {
+	if session == nil || session.UserID == "" {
+		fail(w, 500, "login failed: missing user id")
 		return
 	}
 
-	session := result.Session
 	accountID := "acc_" + session.UserID
 
-	// Láº¥y tÃªn tháº­t tá»« Zalo API
+	// Lấy tên thật từ Zalo API; nếu API tạm lỗi vẫn đăng nhập được.
 	friendClient := core.NewClient(session)
 	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	displayName, avatar := "", ""
@@ -150,6 +228,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 	if avatar != "" {
 		s.Store.UpdateAccount(accountID, displayName, avatar)
 	}
+
 	cookiesJSON, _ := json.Marshal(session.Cookies)
 	wsList := session.WSURLs
 	if wsList == nil {
@@ -160,17 +239,18 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 	if session.ServiceMap == nil {
 		serviceMapJSON = []byte("{}")
 	}
+
+	// Chỉ giữ 1 session active cho account. Stop listener cũ trước khi lưu
+	// session mới để không còn WebSocket cũ bị Zalo coi là duplicate/kickout.
+	StopZaloListener(accountID)
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wsURLsJSON), ServiceMap: string(serviceMapJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
-	qrMu.Lock()
-	delete(qrSessions, token)
-	qrMu.Unlock()
-	// Start Zalo WS listener ngay sau login — không cần browser WebSocket
 	go StartZaloListener(s.Store, accountID, s.Logger)
+
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
 
@@ -206,6 +286,8 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
+	// Start listener lại với session mới sau autoRefresh.
+	go StartZaloListener(s.Store, accountID, s.Logger)
 
 	var cookies map[string]string
 	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
@@ -540,6 +622,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
+	go StartZaloListener(s.Store, accountID, s.Logger)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
 
@@ -667,11 +750,13 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion,
 		IsActive: 1, ExpiresAt: session.ExpiresAt,
 	}
+	// Ngừng listener cũ trước khi đổi session; nếu không, Zalo vẫn giữ
+	// WebSocket cũ và có thể kick connection mới.
+	StopZaloListener(accountID)
 	saveErr := s.Store.SaveSession(newSession)
-	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s sk=%s", saveErr, newSession.ID, newSession.SecretKey[:8])
-	// Vô hiệu hoá session cũ
-	delErr := s.Store.DeleteSession(sessRec.ID)
-	s.Logger.Printf("autoRefresh: DeleteSession old=%s err=%v", sessRec.ID, delErr)
+	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s", saveErr, newSession.ID)
+	// SaveSession tự vô hiệu hoá session active cũ của account.
+	go StartZaloListener(s.Store, accountID, s.Logger)
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }

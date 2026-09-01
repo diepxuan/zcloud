@@ -137,21 +137,36 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 // Zalo Listener Manager (chạy nền)
 // ====================================
 
+type zaloListenerEntry struct {
+	cancel    context.CancelFunc
+	client    *core.Client
+	sessionID string
+}
+
 var (
-	zaloListeners  = make(map[string]context.CancelFunc)
-	zaloClients    = make(map[string]*core.Client)
+	zaloListeners  = make(map[string]*zaloListenerEntry)
 	zaloListenerMu sync.Mutex
+)
+
+const (
+	maxReconnectAttempts = 8
+	maxReconnectDelay    = 30 * time.Second
 )
 
 // StartZaloListener khởi động Zalo WebSocket listener cho account
 // RequestOldMessagesViaListener gửi yêu cầu old messages qua WS listener nền
 func RequestOldMessagesViaListener(accountID, convID string, convType int) bool {
 	zaloListenerMu.Lock()
-	client, ok := zaloClients[accountID]
+	entry := zaloListeners[accountID]
 	zaloListenerMu.Unlock()
+	ok := entry != nil
+	var client *core.Client
+	if entry != nil {
+		client = entry.client
+	}
 	fmt.Printf("[zcloud] ws-sync: account=%s conv=%s type=%d client_ok=%v ws_nil=%v\n",
 		accountID, convID, convType, ok, !ok || client == nil || client.WS == nil)
-	if !ok || client.WS == nil {
+	if !ok || client == nil || client.WS == nil {
 		return false
 	}
 	tt := core.ThreadUser
@@ -171,24 +186,26 @@ func StartZaloListener(st *store.Store, accountID string, logger *log.Logger) {
 	zaloListenerMu.Lock()
 	defer zaloListenerMu.Unlock()
 
-	// Nếu đã chạy rồi thì skip
-	if _, ok := zaloListeners[accountID]; ok {
-		// Dừng listener cũ nếu account đã đổi session mới.
-		if c, ok := zaloClients[accountID]; ok && c != nil && c.WS != nil {
-			if sessRec, err := st.GetActiveSession(accountID); err == nil && sessRec != nil {
-				if cookies, _ := json.Marshal(c.Session.Cookies); string(cookies) != sessRec.Cookies {
-					_ = c.WS.Close()
-					c.WS = nil
-				}
-			}
-		}
+	sessRec, err := st.GetActiveSession(accountID)
+	if err != nil || sessRec == nil {
+		logger.Printf("zalo-ws: no active session for %s", accountID)
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	zaloListeners[accountID] = cancel
+	// Nếu đã chạy với cùng session thì giữ nguyên, tránh tạo duplicate WS.
+	if entry, ok := zaloListeners[accountID]; ok {
+		if entry.sessionID == sessRec.ID {
+			return
+		}
+		entry.cancel()
+		delete(zaloListeners, accountID)
+	}
 
-	go runZaloListener(ctx, st, accountID, logger)
+	ctx, cancel := context.WithCancel(context.Background())
+	entry := &zaloListenerEntry{cancel: cancel, sessionID: sessRec.ID}
+	zaloListeners[accountID] = entry
+
+	go runZaloListener(ctx, entry, st, accountID, logger)
 
 	logger.Printf("zalo-ws: started listener for %s", accountID)
 }
@@ -197,32 +214,95 @@ func StartZaloListener(st *store.Store, accountID string, logger *log.Logger) {
 func StopZaloListener(accountID string) {
 	zaloListenerMu.Lock()
 	defer zaloListenerMu.Unlock()
-	if cancel, ok := zaloListeners[accountID]; ok {
-		cancel()
+	if entry, ok := zaloListeners[accountID]; ok {
+		entry.cancel()
 		delete(zaloListeners, accountID)
 	}
 }
 
-func runZaloListener(ctx context.Context, st *store.Store, accountID string, logger *log.Logger) {
+func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.Store, accountID string, logger *log.Logger) {
 	defer func() {
+		if current != nil && current.client != nil && current.client.WS != nil {
+			_ = current.client.WS.Close()
+		}
 		zaloListenerMu.Lock()
-		delete(zaloListeners, accountID)
+		if zaloListeners[accountID] == current {
+			delete(zaloListeners, accountID)
+		}
 		zaloListenerMu.Unlock()
 	}()
 
-	// Lấy session từ DB
-	sessRec, err := st.GetActiveSession(accountID)
-	if err != nil || sessRec == nil {
-		logger.Printf("zalo-ws: no session for %s", accountID)
-		return
+	// Auto-reconnect giới hạn: lỗi mạng retry tối đa, kickout/duplicate dừng
+	// ngay để không tạo vòng lặp vô hạn.
+	for attempt := 0; attempt < maxReconnectAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		sessRec, err := st.GetActiveSession(accountID)
+		if err != nil || sessRec == nil {
+			logger.Printf("zalo-ws: no active session for %s", accountID)
+			return
+		}
+
+		client, err := clientFromSession(sessRec)
+		if err != nil {
+			logger.Printf("zalo-ws: build client error %s: %v", accountID, err)
+			return
+		}
+
+		zaloListenerMu.Lock()
+		if zaloListeners[accountID] != current {
+			zaloListenerMu.Unlock()
+			return
+		}
+		current.client = client
+		zaloListenerMu.Unlock()
+
+		logger.Printf("zalo-ws: connecting %s (attempt %d)", accountID, attempt+1)
+
+		if err := client.ConnectWS(ctx); err != nil {
+			logger.Printf("zalo-ws: connect error %s: %v", accountID, err)
+			if current.client != nil && current.client.WS != nil {
+				_ = current.client.WS.Close()
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff(attempt)):
+			}
+			continue
+		}
+
+		// Nhận events từ Zalo WebSocket
+		reason := listenLoop(ctx, st, client, accountID, logger)
+
+		// Mất kết nối → reconnect sau backoff
+		if reason.Code == 3000 || reason.Code == 3003 {
+			logger.Printf("zalo-ws: %s stopped after kickout code=%d reason=%q", accountID, reason.Code, reason.Reason)
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff(attempt)):
+		}
 	}
+	logger.Printf("zalo-ws: %s exceeded reconnect limit, listener stopped", accountID)
+}
 
+func clientFromSession(sessRec *store.Session) (*core.Client, error) {
 	var cookies map[string]string
-	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
-
+	if err := json.Unmarshal([]byte(sessRec.Cookies), &cookies); err != nil {
+		return nil, fmt.Errorf("parse cookies: %w", err)
+	}
 	var wsURLs []string
 	json.Unmarshal([]byte(sessRec.WSURLs), &wsURLs)
-
 	var serviceMap map[string][]string
 	json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap)
 
@@ -237,73 +317,32 @@ func runZaloListener(ctx context.Context, st *store.Store, accountID string, log
 		ServiceMap: serviceMap,
 		UserID:     sessRec.UserID,
 	}
-
-	client := core.NewClient(session)
-
-	// Lưu client để handler gửi request old messages qua WS listener nền
-	zaloListenerMu.Lock()
-	zaloClients[accountID] = client
-	zaloListenerMu.Unlock()
-	defer func() {
-		zaloListenerMu.Lock()
-		delete(zaloClients, accountID)
-		zaloListenerMu.Unlock()
-	}()
-
-	// Auto-reconnect loop
-	for attempt := 0; ; attempt++ {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		logger.Printf("zalo-ws: connecting %s (attempt %d)", accountID, attempt+1)
-
-		if client.WS != nil {
-			_ = client.WS.Close()
-			client.WS = nil
-		}
-
-		if err := client.ConnectWS(ctx); err != nil {
-			logger.Printf("zalo-ws: connect error %s: %v", accountID, err)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff(attempt)):
-			}
-			continue
-		}
-
-		// Nhận events từ Zalo WebSocket
-		listenLoop(ctx, st, client, accountID, logger)
-
-		// Mất kết nối → reconnect sau backoff
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoff(attempt)):
-		}
-	}
+	return core.NewClient(session), nil
 }
 
-func listenLoop(ctx context.Context, st *store.Store, client *core.Client, accountID string, logger *log.Logger) {
+func listenLoop(ctx context.Context, st *store.Store, client *core.Client, accountID string, logger *log.Logger) core.CloseEvent {
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return core.CloseEvent{Code: -1}
 		case event, ok := <-client.WS.Messages():
 			if !ok {
-				return
+				return core.CloseEvent{Code: -1}
 			}
 			handleZaloEvent(ctx, st, event, accountID, logger)
 
 		case err, ok := <-client.WS.Errors():
 			if !ok {
-				return
+				return core.CloseEvent{Code: -1}
 			}
 			logger.Printf("zalo-ws: event error %s: %v", accountID, err)
-			return
+			return core.CloseEvent{Code: -1}
+
+		case ce, ok := <-client.WS.CloseEvents():
+			if !ok {
+				return core.CloseEvent{Code: -1}
+			}
+			return ce
 		}
 	}
 }
@@ -509,11 +548,11 @@ func uploadAttachmentURL(event core.Event) string {
 	return ""
 }
 
-// backoff tính thời gian chờ reconnect (1s → 2s → 4s → ... → max 60s)
+// backoff tính thời gian chờ reconnect (1s → 2s → 4s → ... → max 30s)
 func backoff(attempt int) time.Duration {
 	d := time.Duration(1<<uint(attempt)) * time.Second
-	if d > 60*time.Second {
-		d = 60 * time.Second
+	if d > maxReconnectDelay {
+		d = maxReconnectDelay
 	}
 	return d
 }

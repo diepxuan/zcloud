@@ -20,6 +20,7 @@ const defaultUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 type QRLoginSession struct {
 	Code     string
 	ImageB64 string
+	Version  string
 	IMEI     string
 	client   *http.Client
 	jar      *cookiejar.Jar
@@ -80,6 +81,8 @@ func readBody(resp *http.Response) ([]byte, error) {
 // Bước 1: Tạo QR code
 // ====================================
 
+const defaultQRVersion = "5.5.7"
+
 func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 	client, jar := newZaloClient()
 	imei := generateIMEI(defaultUA)
@@ -109,12 +112,12 @@ func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 	ah.Set("Referer", "https://id.zalo.me/account?continue=https%3A%2F%2Fzalo.me%2Fpc")
 
 	postForm(ctx, client, "https://id.zalo.me/account/logininfo", ah,
-		url.Values{"v": {"688"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {defaultQRVersion}, "continue": {"https://zalo.me/pc"}})
 	postForm(ctx, client, "https://id.zalo.me/account/verify-client", ah,
-		url.Values{"v": {"688"}, "type": {"device"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {defaultQRVersion}, "type": {"device"}, "continue": {"https://zalo.me/pc"}})
 
 	resp4, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/generate", ah,
-		url.Values{"v": {"688"}, "continue": {"https://zalo.me/pc"}})
+		url.Values{"v": {defaultQRVersion}, "continue": {"https://zalo.me/pc"}})
 	if err != nil {
 		return nil, fmt.Errorf("generate qr: %w", err)
 	}
@@ -140,6 +143,7 @@ func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 	return &QRLoginSession{
 		Code:     qrResp.Data.Code,
 		ImageB64: image,
+		Version:  defaultQRVersion,
 		IMEI:     imei,
 		client:   client,
 		jar:      jar,
@@ -151,9 +155,16 @@ func CreateQRLogin(ctx context.Context) (*QRLoginSession, error) {
 // ====================================
 
 func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, error) {
+	if session == nil {
+		return nil, fmt.Errorf("qr session is nil")
+	}
 	client := session.client
 	code := session.Code
 	imei := session.IMEI
+	version := session.Version
+	if version == "" {
+		version = defaultQRVersion
+	}
 
 	// Headers cho QR poll (giống zcago)
 	ph := http.Header{}
@@ -169,66 +180,11 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 	ph.Set("Sec-Fetch-Site", "same-origin")
 	ph.Set("Referer", "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F")
 
-	// Poll waiting-scan
-	for i := 0; i < 120; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-scan", ph,
-			url.Values{"v": {"688"}, "code": {code}, "continue": {"https://zalo.me/pc"}})
-		if err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
-		}
-
-		body, _ := readBody(resp)
-		var result struct {
-			ErrorCode int `json:"error_code"`
-		}
-		json.Unmarshal(body, &result)
-
-		if result.ErrorCode == 0 {
-			break
-		}
-		if i%10 == 0 {
-			fmt.Printf("[zcloud] scan poll %d code=%d\n", i+1, result.ErrorCode)
-		}
-		time.Sleep(2 * time.Second)
+	if err := pollQRWaitingScan(ctx, client, ph, version, code); err != nil {
+		return nil, err
 	}
-
-	// Poll waiting-confirm
-	for i := 0; i < 60; i++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-confirm", ph,
-			url.Values{"v": {"688"}, "code": {code}, "gToken": {""}, "gAction": {"CONFIRM_QR"}, "continue": {"https://zalo.me/pc"}})
-		if err != nil {
-			return nil, fmt.Errorf("confirm: %w", err)
-		}
-
-		body, _ := readBody(resp)
-		var result struct {
-			ErrorCode int    `json:"error_code"`
-			ErrorMsg  string `json:"error_message"`
-		}
-		json.Unmarshal(body, &result)
-
-		if result.ErrorCode == 0 {
-			break
-		}
-		if result.ErrorCode == -13 {
-			return nil, fmt.Errorf("từ chối trên điện thoại")
-		}
-		if i%5 == 0 {
-			fmt.Printf("[zcloud] confirm poll %d code=%d msg=%s\n", i+1, result.ErrorCode, result.ErrorMsg)
-		}
-		time.Sleep(2 * time.Second)
+	if err := pollQRWaitingConfirm(ctx, client, ph, version, code); err != nil {
+		return nil, err
 	}
 
 	// Check session — dùng browser-like headers
@@ -254,6 +210,72 @@ func PollQRLogin(ctx context.Context, session *QRLoginSession) (*LoginResult, er
 
 	// Cookie login — dùng CHUNG client + jar
 	return doCookieLogin(ctx, client, session.jar, imei)
+}
+
+func pollQRWaitingScan(ctx context.Context, client *http.Client, ph http.Header, version, code string) error {
+	for i := 0; i < 120; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-scan", ph,
+			url.Values{"v": {version}, "code": {code}, "continue": {"https://zalo.me/pc"}})
+		if err != nil {
+			return fmt.Errorf("scan: %w", err)
+		}
+
+		body, _ := readBody(resp)
+		var result struct {
+			ErrorCode int `json:"error_code"`
+		}
+		json.Unmarshal(body, &result)
+
+		if result.ErrorCode == 0 {
+			return nil
+		}
+		if i%10 == 0 {
+			fmt.Printf("[zcloud] scan poll %d code=%d\n", i+1, result.ErrorCode)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("qr scan timed out")
+}
+
+func pollQRWaitingConfirm(ctx context.Context, client *http.Client, ph http.Header, version, code string) error {
+	for i := 0; i < 90; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		resp, err := postForm(ctx, client, "https://id.zalo.me/account/authen/qr/waiting-confirm", ph,
+			url.Values{"v": {version}, "code": {code}, "gToken": {""}, "gAction": {"CONFIRM_QR"}, "continue": {"https://zalo.me/pc"}})
+		if err != nil {
+			return fmt.Errorf("confirm: %w", err)
+		}
+
+		body, _ := readBody(resp)
+		var result struct {
+			ErrorCode int    `json:"error_code"`
+			ErrorMsg  string `json:"error_message"`
+		}
+		json.Unmarshal(body, &result)
+
+		if result.ErrorCode == 0 {
+			return nil
+		}
+		if result.ErrorCode == -13 {
+			return fmt.Errorf("từ chối trên điện thoại")
+		}
+		if i%5 == 0 {
+			fmt.Printf("[zcloud] confirm poll %d code=%d msg=%s\n", i+1, result.ErrorCode, result.ErrorMsg)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("qr confirm timed out")
 }
 
 // ====================================

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +14,12 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+// CloseEvent mô tả lý do WebSocket bị đóng.
+type CloseEvent struct {
+	Code   int
+	Reason string
+}
 
 // ====================================
 // WebSocket client cho Zalo real-time
@@ -25,8 +32,10 @@ type WSClient struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 
-	msgChan chan Event
-	errChan chan error
+	msgChan   chan Event
+	errChan   chan error
+	closeChan chan CloseEvent
+	authErr   error
 
 	cipherKey   []byte // Key cho AES-GCM decrypt event data
 	session     *Session
@@ -45,10 +54,11 @@ func NewWSClient(session *Session) *WSClient {
 	}
 
 	return &WSClient{
-		msgChan: make(chan Event, 100),
-		errChan: make(chan error, 10),
-		session: session,
-		url:     url,
+		msgChan:   make(chan Event, 100),
+		errChan:   make(chan error, 10),
+		closeChan: make(chan CloseEvent, 4),
+		session:   session,
+		url:       url,
 	}
 }
 
@@ -62,14 +72,21 @@ func (w *WSClient) Errors() <-chan error {
 	return w.errChan
 }
 
+// CloseEvents trả về channel nhận lý do đóng kết nối từ Zalo.
+func (w *WSClient) CloseEvents() <-chan CloseEvent {
+	return w.closeChan
+}
+
 // Connect kết nối WebSocket tới Zalo
 func (w *WSClient) Connect(ctx context.Context) error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	session := w.session
+	baseURL := w.url
+	w.mu.Unlock()
 
 	// Tạo header với cookies
 	header := make(map[string]string)
-	ua := w.session.UserAgent
+	ua := session.UserAgent
 	if ua == "" {
 		ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 	}
@@ -77,13 +94,13 @@ func (w *WSClient) Connect(ctx context.Context) error {
 	header["Origin"] = "https://chat.zalo.me"
 	header["Accept"] = "*/*"
 	header["Accept-Language"] = "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
-	header["Cookie"] = cookiesToString(w.session.Cookies)
+	header["Cookie"] = cookiesToString(session.Cookies)
 
 	// Build query params
 	query := fmt.Sprintf("zpw_ver=%d&zpw_type=%d&t=%d",
-		w.session.APIVersion, w.session.APIType, time.Now().UnixMilli())
+		session.APIVersion, session.APIType, time.Now().UnixMilli())
 
-	wsURL := w.url + "?" + query
+	wsURL := baseURL + "?" + query
 
 	// Dial với header
 	dialOpts := &websocket.DialOptions{
@@ -96,12 +113,42 @@ func (w *WSClient) Connect(ctx context.Context) error {
 	}
 	fmt.Printf("[zcloud] ws connected: url=%s\n", wsURL)
 
+	w.mu.Lock()
 	w.conn = conn
 	w.connCtx, w.cancel = context.WithCancel(ctx)
-
-	// Start read loop
+	w.cipherKey = nil
+	w.pingStarted = false
+	w.authErr = nil
 	w.wg.Add(1)
+	w.mu.Unlock()
+
+	// Start read loop. Vòng chờ key exchange bên dưới không được giữ w.mu,
+	// nếu không readLoop sẽ không lock được để ghi cipherKey → deadlock.
 	go w.readLoop()
+
+	// Key exchange thường đến ngay sau handshake. Chờ tối đa 15s để listener
+	// có cipher key trước khi nhận event được mã hoá.
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	for {
+		w.mu.Lock()
+		ready := w.cipherKey != nil
+		authErr := w.authErr
+		w.mu.Unlock()
+		if authErr != nil {
+			return authErr
+		}
+		if ready {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("ws key exchange: %w", ctx.Err())
+		case <-deadline.C:
+			return fmt.Errorf("ws key exchange timeout")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 
 	return nil
 }
@@ -113,13 +160,15 @@ func (w *WSClient) Close() error {
 	cancel := w.cancel
 	w.conn = nil
 	w.cancel = nil
+	w.cipherKey = nil
+	w.pingStarted = false
 	w.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
 	if conn != nil {
-		conn.Close(websocket.StatusNormalClosure, "client closing")
+		conn.CloseNow()
 	}
 	w.wg.Wait()
 	return nil
@@ -172,6 +221,10 @@ func (w *WSClient) readLoop() {
 	defer w.wg.Done()
 	defer close(w.msgChan)
 	defer close(w.errChan)
+	defer close(w.closeChan)
+
+	// Zalo dùng WebSocket close frame với các mã đóng tuỳ biến; không nên gọi
+	// CloseRead vì nó chuyển các close frame thành lỗi không kèm CloseStatus.
 
 	for {
 		select {
@@ -182,16 +235,50 @@ func (w *WSClient) readLoop() {
 
 		_, msg, err := w.conn.Read(w.connCtx)
 		if err != nil {
-			fmt.Printf("[zcloud] ws read error: %v\n", err)
-			select {
-			case w.errChan <- fmt.Errorf("ws read: %w", err):
-			default:
-			}
+			w.handleReadError(err)
 			return
 		}
 
 		fmt.Printf("[zcloud] ws frame: len=%d first=%x\n", len(msg), msg[:min(8, len(msg))])
 		w.handleFrame(msg)
+	}
+}
+
+func (w *WSClient) pingLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.connCtx.Done():
+			return
+		case <-ticker.C:
+			w.SendWSWithID(w.connCtx, 2, 1, map[string]any{
+				"eventId": time.Now().UnixMilli(),
+			})
+		}
+	}
+}
+
+func (w *WSClient) handleReadError(err error) {
+	closeErr := &websocket.CloseError{}
+	if errors.As(err, &closeErr) {
+		ce := CloseEvent{Code: int(closeErr.Code), Reason: closeErr.Reason}
+		fmt.Printf("[zcloud] ws closed: code=%d reason=%q\n", ce.Code, ce.Reason)
+		select {
+		case w.closeChan <- ce:
+		default:
+		}
+		select {
+		case w.errChan <- fmt.Errorf("ws closed: code=%d reason=%q", ce.Code, ce.Reason):
+		default:
+		}
+		return
+	}
+
+	fmt.Printf("[zcloud] ws read error: %v\n", err)
+	select {
+	case w.errChan <- fmt.Errorf("ws read: %w", err):
+	default:
 	}
 }
 
@@ -209,7 +296,9 @@ func (w *WSClient) handleFrame(data []byte) {
 	case cmd == 1 && subCmd == 1:
 		// Key exchange — lưu cipherKey
 		var keyMsg struct {
-			Key string `json:"key"`
+			Key       string `json:"key"`
+			ErrorCode int    `json:"error_code"`
+			ErrorMsg  string `json:"error_message"`
 		}
 		if err := json.Unmarshal(payload, &keyMsg); err == nil && keyMsg.Key != "" {
 			fmt.Printf("[zcloud] ws auth key received: keylen=%d\n", len(keyMsg.Key))
@@ -225,10 +314,19 @@ func (w *WSClient) handleFrame(data []byte) {
 			if !w.pingStarted {
 				w.pingStarted = true
 				w.mu.Unlock()
-				go w.startPingLoop()
+				go w.pingLoop()
 			} else {
 				w.mu.Unlock()
 			}
+			return
+		}
+		if keyMsg.ErrorCode != 0 || keyMsg.ErrorMsg != "" {
+			w.mu.Lock()
+			w.authErr = fmt.Errorf("ws auth error %d: %s", keyMsg.ErrorCode, keyMsg.ErrorMsg)
+			w.mu.Unlock()
+			fmt.Printf("[zcloud] ws auth error: code=%d msg=%q\n", keyMsg.ErrorCode, keyMsg.ErrorMsg)
+			_ = w.conn.CloseNow()
+			return
 		}
 
 	case cmd == 501 && subCmd == 0:
@@ -269,6 +367,9 @@ func (w *WSClient) handleFrame(data []byte) {
 			"eventId": time.Now().UnixMilli(),
 		})
 
+	case cmd == 2 && subCmd == 2:
+		// Pong nhận từ server, giữ kết nối.
+
 	case cmd == 610 && subCmd == 1:
 		w.handleReactions(payload, ThreadUser)
 
@@ -280,10 +381,14 @@ func (w *WSClient) handleFrame(data []byte) {
 		w.handleReactions(payload, ThreadGroup)
 
 	case cmd == 3000:
-		// Duplicate connection
+		// Duplicate connection - close ngay để listener không tự reconnect.
+		fmt.Printf("[zcloud] ws duplicate connection received\n")
 		select {
 		case w.errChan <- fmt.Errorf("ws: duplicate connection detected"):
 		default:
+		}
+		if w.conn != nil {
+			_ = w.conn.CloseNow()
 		}
 	}
 }
@@ -730,21 +835,6 @@ func (m wsMessage) msgType() MsgType {
 	var n int
 	json.Unmarshal(m.Type, &n)
 	return MsgType(n)
-}
-
-func (w *WSClient) startPingLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-w.connCtx.Done():
-			return
-		case <-ticker.C:
-			w.SendWSWithID(w.connCtx, 2, 1, map[string]any{
-				"eventId": time.Now().UnixMilli(),
-			})
-		}
-	}
 }
 
 // ====================================
