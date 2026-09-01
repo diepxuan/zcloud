@@ -2,9 +2,9 @@
 
 _Learn about the person you're helping. Update this as you go._
 
-- **Name:** Duc Tran
+- **Name:** Trần Ngọc Đức (Duc Tran)
 - **What to call them:** Sếp
-- **Pronouns:** 
+- **Email:** caothu91@gmail.com
 - **Timezone:** Asia/Saigon (GMT+7)
 - **Notes:**
 
@@ -18,3 +18,10 @@ _Learn about the person you're helping. Update this as you go._
 ---
 
 The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+
+## Tài khoản kỹ thuật
+
+- GitHub: `diepxuan` (repo `diepxuan/zcloud`).
+- Git author mặc định cho workspace: `Trần Ngọc Đức <caothu91@gmail.com>`.
+- Commit do CI/agent ký `root <root@zcloud.diepxuan.corp>` — giữ nguyên để
+  khớp 65 commit gần nhất trong history.

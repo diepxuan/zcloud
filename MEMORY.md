@@ -10,7 +10,11 @@
 - **Tên:** zcloud
 - **Repo:** `github.com/diepxuan/zcloud` (public)
 - **Workspace:** `/data/zcloud`
-- **Sếp:** Duc Tran, GMT+7
+- **Sếp:** Trần Ngọc Đức (Duc Tran), GMT+7
+- **Sếp email:** caothu91@gmail.com
+- **Sếp GitHub:** diepxuan (repo `github.com/diepxuan/zcloud`)
+- **Git author mặc định workspace:** `Trần Ngọc Đức <caothu91@gmail.com>`
+- **Commit CI/agent hiện tại:** `root <root@zcloud.diepxuan.corp>` (giữ nguyên 65 commit gần nhất)
 - **Agent:** Bột, ngôn ngữ tiếng Việt, xưng Sếp/em/đệ
 - **Quyết định cuối cùng:** Sếp (theo SOUL.md §1)
 

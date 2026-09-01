@@ -58,3 +58,13 @@ Sếp (Duc Tran) → Bột (em) → Đệ (sub-agents)
 3. Ghi nhận và duy trì tài liệu đầy đủ
 4. Đảm bảo workspace nhất quán với SOUL.md
 5. Báo cáo bằng chứng: file đổi, kiểm chứng đã chạy, PR/CI status
+
+## 6. Tài khoản liên kết
+
+| Thuộc tính | Giá trị |
+|------------|---------|
+| Chủ sở hữu workspace | Trần Ngọc Đức (Sếp) |
+| Email | caothu91@gmail.com |
+| GitHub | diepxuan |
+| Repo chính | `github.com/diepxuan/zcloud` |
+| Git author mặc định | `Trần Ngọc Đức <caothu91@gmail.com>` |
