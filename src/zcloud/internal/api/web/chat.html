@@ -50,6 +50,10 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .ia button{padding:10px 20px;background:#0068ff;color:#fff;border:none;border-radius:20px;font-size:14px;cursor:pointer}
 .em{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#999;gap:8px;font-size:48px}
 .lm{text-align:center;padding:8px;color:#0068ff;cursor:pointer;font-size:13px}
+.lm-end{text-align:center;padding:8px;color:#999;font-size:12px;opacity:.6}
+.lm-load{text-align:center;padding:6px;color:#0068ff;font-size:12px;opacity:.8}
+.lm-load::before{content:'';display:inline-block;width:10px;height:10px;border:2px solid #0068ff;border-right-color:transparent;border-radius:50%;animation:lm-spin .8s linear infinite;vertical-align:-1px;margin-right:6px}
+@keyframes lm-spin{to{transform:rotate(360deg)}}
 .hd{display:none}
 .mg{padding:0}
 .mg-h{background:#f5f5f5;padding:10px 16px;border-bottom:1px solid #e0e0e0;font-size:13px;font-weight:600;color:#333;text-transform:uppercase;letter-spacing:.5px}
@@ -151,16 +155,78 @@ d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
 var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
 dv.onclick=function(){sc(c.id,c.name,c.avatar)};el('cl').appendChild(dv)});}}catch(e){}}
-function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;
+function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
-el('ml','<div class="lm" onclick="lm()">Tải tin nhắn cũ</div>');
+el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
 fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
-async function lm(){if(!cc||ld||!ca)return;ld=true;
-try{var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');var d=await r.json();
-if(d.ok){var ml=el('ml');if(cu===0)el('ml','');
-d.data.forEach(function(m){ml.appendChild(renderMsg(m))});
-if(d.data.length>0)cu=d.data[d.data.length-1].timestamp;ml.scrollTop=ml.scrollHeight;}}catch(e){}finally{ld=false}}
+// lm(manual) — load thêm tin cũ. manual=true khi user click button.
+// Khi cuộn lên đầu thread (scrollTop <= 80px) sẽ tự gọi.
+// Giữ vị trí scroll: trước khi append lưu scrollHeight, sau khi append
+// bù lại phần chênh lệch để tin đang đọc không bị giật.
+async function lm(manual){
+  if(!cc||ld||!ca||cuEnd)return;
+  ld=true;
+  var ml=document.getElementById('ml');
+  var btn=document.getElementById('lm-btn');
+  var load=document.getElementById('lm-load');
+  if(manual){
+    // click thủ công: không cần preserve scroll (user đang ở đầu rồi).
+    if(btn){btn.className='lm-load';btn.textContent='Đang tải...';btn.onclick=null;}
+  }else{
+    // auto-scroll trigger: chèn spinner tạm ở đầu để tránh nhảy layout.
+    if(!load){load=document.createElement('div');load.id='lm-load';load.className='lm-load';load.textContent='Đang tải...';ml.insertBefore(load,ml.firstChild);}
+  }
+  try{
+    var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');
+    var d=await r.json();
+    if(d.ok&&d.data&&d.data.length>0){
+      var oldH=ml.scrollHeight,oldT=ml.scrollTop;
+      if(cu===0){el('ml','');ml=document.getElementById('ml');}
+      // Chèn tin cũ vào đầu, giữ nguyên các node hiện tại.
+      var frag=document.createDocumentFragment();
+      d.data.forEach(function(m){frag.appendChild(renderMsg(m))});
+      // Sau khi xóa spinner (nếu có), chèn fragment lên đầu.
+      var sp=document.getElementById('lm-load');if(sp)sp.remove();
+      ml.insertBefore(frag,ml.firstChild);
+      // Bù scroll để giữ vị trí.
+      var newH=ml.scrollHeight;
+      if(cu===0){
+        // First load: cuộn xuống cuối.
+        ml.scrollTop=ml.scrollHeight;
+      }else{
+        ml.scrollTop=oldT+(newH-oldH);
+      }
+      cu=d.data[d.data.length-1].timestamp;
+      // Nếu batch đầy → vẫn còn tin cũ hơn → giữ button.
+      // Nếu batch < limit → hết → đổi sang thông báo end.
+      if(d.data.length<30){
+        cuEnd=true;
+        if(btn){btn.remove();}
+        var end=document.createElement('div');end.className='lm-end';end.textContent='Đã tải hết lịch sử';
+        ml.insertBefore(end,ml.firstChild);
+      }else if(btn){
+        btn.className='lm';btn.textContent='Tải tin nhắn cũ';btn.onclick=function(){lm(true);};
+      }
+    }else{
+      cuEnd=true;
+      var sp=document.getElementById('lm-load');if(sp)sp.remove();
+      if(btn){btn.remove();}
+      var end=document.createElement('div');end.className='lm-end';end.textContent='Đã tải hết lịch sử';
+      ml.insertBefore(end,ml.firstChild);
+    }
+  }catch(e){
+    var sp=document.getElementById('lm-load');if(sp)sp.remove();
+    if(btn){btn.className='lm';btn.textContent='Tải tin nhắn cũ (thử lại)';btn.onclick=function(){lm(true);};}
+  }finally{ld=false;}
+}
+// Auto-load khi cuộn lên đầu thread.
+document.addEventListener('DOMContentLoaded',function(){
+  var ml=document.getElementById('ml');
+  ml.addEventListener('scroll',function(){
+    if(ml.scrollTop<=80&&!ld&&!cuEnd&&cc){lm(false);}
+  });
+});
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
 if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
