@@ -53,6 +53,17 @@
   trước khi dùng AES-GCM.
 - **`lastId` mặc định `10000000000000000`** (epoch lớn) cho lần đầu sync
   old messages.
+- **`/api/preloadconvers/get-last-msgs` trả `data.msgs` + `data.groupMsgs`**
+  chứa tin nhắn cuối (15-18 tin). Zcloud trước đây chỉ dùng để build name
+  map — không lưu DB. Fix 02/09/2026 (commit `2ab42ba`) parse qua
+  `wsMessage.toMessage` và lưu vào `messages` + cập nhật
+  `conversations.last_msg_id/last_msg_at`.
+- **WS cmd 510/511 cho user thread KHÔNG có REST fallback phụ** — Zalo
+  chỉ trả cache queue (thường rỗng nếu user mới). Giải pháp chính là
+  REST get-last-msgs (last 15 tin) + WS new-message (cmd 501/521 cho
+  tin tới thời gian thực).
+- **Group thread** có thêm `/api/group/history` qua service map `group[0]`
+  (xem `GetGroupHistoryV2`).
 
 ## Tồn đọng còn lại (cập nhật 28/07/2026)
 
