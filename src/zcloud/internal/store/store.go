@@ -189,7 +189,10 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, account_id)
 );
-CREATE INDEX IF NOT EXISTS idx_convs_account ON conversations(account_id, updated_at DESC);`
+CREATE INDEX IF NOT EXISTS idx_convs_account ON conversations(account_id, updated_at DESC);
+-- Index phụ để sort hội thoại theo tin cuối. NULLS LAST đẩy conv rỗng xuống.
+-- Modernc sqlite >= 3.30 hỗ trợ indexed DESC + partial WHERE.
+CREATE INDEX IF NOT EXISTS idx_convs_msgat ON conversations(account_id, last_msg_at DESC, updated_at DESC);`
 
 const migrationMessages = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -434,9 +437,18 @@ func (s *Store) DeleteAccount(id string) error {
 }
 
 func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
+	// Sắp xếp theo tin nhắn cuối (DESC) để cuộc đang chat lên đầu.
+	// NULLS LAST: conv rỗng (last_msg_at = 0001-01-01) xuống cuối.
+	// Fallback updated_at DESC khi last_msg_at trùng nhau.
+	// SQLite chuẩn không có NULLS LAST trong index expression; dùng IS NULL
+	// để đẩy về cuối rồi ORDER BY last_msg_at DESC cho phần còn lại.
 	rows, err := s.db.Query(
 		`SELECT id, account_id, name, avatar, conv_type, last_msg_id, last_msg_at, unread_count, updated_at
-		FROM conversations WHERE account_id = ? ORDER BY updated_at DESC`, accountID,
+		FROM conversations
+		WHERE account_id = ?
+		ORDER BY (last_msg_at IS NULL OR last_msg_at = '0001-01-01 00:00:00'),
+		         last_msg_at DESC,
+		         updated_at DESC`, accountID,
 	)
 	if err != nil {
 		return nil, err
