@@ -382,6 +382,8 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 				"timestamp":   msg.Timestamp,
 				"type":        msg.Type,
 				"attachments": msg.Attachments,
+				"isAck":       msg.IsDeliveryAck,
+				"ackStatus":   msg.AckStatus,
 			},
 		})
 
@@ -439,6 +441,8 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 				"fromName": om.FromName, "content": om.Content,
 				"timestamp": om.Timestamp, "type": om.Type,
 				"attachments": om.Attachments,
+				"isAck":     om.IsDeliveryAck,
+				"ackStatus": om.AckStatus,
 			},
 		})
 

@@ -307,6 +307,11 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 		}
 	}
 
+	// Đánh dấu delivery ack cho mọi message (last + raw).
+	for _, m := range lastByConv {
+		MarkDeliveryAck(m)
+	}
+
 	return convs, nil
 }
 
@@ -935,9 +940,69 @@ func toRaw(v interface{}) json.RawMessage {
 	return b
 }
 
+// DeliveryAck là action metadata mà Zalo gửi kèm khi Sếp gửi tin nhắn.
+// Thay vì text, Zalo wrap JSON có {actionType, clientDelMsgId,
+// globalDelMsgId, uidFrom, uidTo, destId, type} vào trường content.
+// UI dùng cấu trúc này để render badge trạng thái thay vì in nguyên JSON.
+type DeliveryAck struct {
+	ActionType    int    `json:"actionType"`
+	Type          int    `json:"type"`
+	ClientDelMsgID int64  `json:"clientDelMsgId"`
+	GlobalDelMsgID int64  `json:"globalDelMsgId"`
+	UIDFrom        int64  `json:"uidFrom"`
+	UIDTo          int64  `json:"uidTo"`
+	DestID         int64  `json:"destId"`
+}
+
+// ParseDeliveryAck thử parse content làm DeliveryAck.
+// Trả nil nếu content không phải JSON có các trường đặc trưng của ack
+// (actionType + globalDelMsgId).
+func ParseDeliveryAck(content string) *DeliveryAck {
+	if len(content) == 0 || content[0] != '[' && content[0] != '{' {
+		return nil
+	}
+	// Zalo wrap action JSON trong content. Hình dạng có thể là:
+	//   - Array 1 phần tử: [{"actionType":0,"globalDelMsgId":8216...}]
+	//   - Object trực tiếp: {"actionType":0,"globalDelMsgId":8216...}
+	// actionType có thể = 0 (delivered) hoặc các giá trị khác, nên
+	// ta dùng globalDelMsgId > 0 làm dấu hiệu nhận dạng chắc chắn.
+	var ack DeliveryAck
+	if err := json.Unmarshal([]byte(content), &ack); err == nil && ack.GlobalDelMsgID > 0 {
+		return &ack
+	}
+	var arr []DeliveryAck
+	if err := json.Unmarshal([]byte(content), &arr); err == nil && len(arr) > 0 && arr[0].GlobalDelMsgID > 0 {
+		return &arr[0]
+	}
+	return nil
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+// MarkDeliveryAck điền IsDeliveryAck/AckStatus dựa trên content.
+// actionType=0 → "sent" (server đã nhận).
+// content rỗng mà msgType vẫn là 1 → không phải ack.
+// Nếu Sếp muốn "chưa làm" (chưa nhận ack) thì AckStatus="sent" vẫn
+// đúng — UI sẽ hiển thị "Đã gửi" vì đây là event ack server trả.
+// Trường hợp ack rỗng (chưa có globalDelMsgId) → vẫn set IsDeliveryAck
+// nhưng AckStatus="" để UI hiển thị "Đã gửi (chưa rõ)".
+// MarkDeliveryAck điền IsDeliveryAck/AckStatus cho Message dựa trên content.
+// actionType=0 → "sent" (server đã nhận ack).
+// Khi rỗng → UI render "Đã gửi (chưa rõ)".
+// Trả về true nếu content là delivery ack.
+func MarkDeliveryAck(m *Message) bool {
+	if m == nil {
+		return false
+	}
+	ack := ParseDeliveryAck(m.Content)
+	if ack == nil {
+		return false
+	}
+	m.IsDeliveryAck = true
+	m.AckStatus = "sent"
+	return true
 }

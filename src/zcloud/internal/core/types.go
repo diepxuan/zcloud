@@ -64,8 +64,29 @@ type Message struct {
 	Attachments []Attachment     `json:"attachments,omitempty"`
 	Mentions    []MessageMention `json:"mentions,omitempty"`
 	Quote       *Message         `json:"quote,omitempty"`
+
+	// IsDeliveryAck true nếu message là ack gửi/nhận (Zalo wrap action JSON
+	// trong content thay vì text). UI dùng cờ này để render badge
+	// "Đã gửi/Đã nhận/Đã xem" thay vì in nguyên JSON.
+	IsDeliveryAck bool `json:"isAck,omitempty"`
+	// AckStatus là nhãn tiếng Việt đã chuẩn hoá:
+	//   "sent"      — Sếp đã gửi đến server (actionType=0)
+	//   "delivered" — người nhận đã nhận (delivered event cmd 502)
+	//   "seen"      — người nhận đã xem (seen event cmd 502/522)
+	//   "unsent"    — người gửi thu hồi (Undo)
+	//   "" (rỗng)   — chưa rõ trạng thái, UI mặc định "Đã gửi"
+	AckStatus string `json:"ackStatus,omitempty"`
 }
 
+// IsDeliveryAck true nếu Message là ack gửi/nhận (Zalo wrap action JSON
+// trong trường content thay vì text). UI dùng cờ này để render badge
+// "Đã gửi/Đã nhận/Đã xem" thay vì in nguyên JSON.
+// AckStatus là nhãn tiếng Việt đã chuẩn hoá cho UI:
+//   "sent"      — Sếp đã gửi đến server (actionType=0, default)
+//   "delivered" — người nhận đã nhận (delivered event cmd 502)
+//   "seen"      — người nhận đã xem (seen event cmd 502/522)
+//   "unsent"    — người gửi thu hồi (Undo)
+// Khi rỗng → UI render "Đã gửi (chưa rõ trạng thái)".
 // Attachment represents a file/image attachment
 type Attachment struct {
 	ID       string `json:"id"`

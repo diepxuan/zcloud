@@ -414,7 +414,22 @@ func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
 	if msgs == nil {
 		msgs = []store.Message{}
 	}
-	ok(w, msgs)
+	// Map sang core.Message để đính kèm cờ delivery ack + status.
+	out := make([]core.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = core.Message{
+			ID: m.ID, ConvID: m.ConvID, FromID: m.FromID, FromName: m.FromName,
+			Content: m.Content, Type: core.MsgType(m.MsgType), Timestamp: m.Timestamp,
+		}
+		var atts []core.Attachment
+		if len(m.Attachments) > 0 && m.Attachments != "null" {
+			_ = json.Unmarshal([]byte(m.Attachments), &atts)
+		}
+		out[i].Attachments = atts
+		// MarkDeliveryAck điền cả IsDeliveryAck + AckStatus nếu content là ack JSON.
+		core.MarkDeliveryAck(&out[i])
+	}
+	ok(w, out)
 }
 
 func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {

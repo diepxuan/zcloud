@@ -695,6 +695,7 @@ func (m wsMessage) toMessage(session *Session) *Message {
 	for _, mn := range m.Mentions {
 		msg.Mentions = append(msg.Mentions, MessageMention{UID: mn.UID, Pos: mn.Pos, Len: mn.Len, Name: mn.Name})
 	}
+	MarkDeliveryAck(msg)
 	return msg
 }
 

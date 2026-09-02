@@ -38,6 +38,12 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .msg .nm{font-size:11px;color:#0068ff;font-weight:500;margin-bottom:2px}
 .msg img.media{max-width:260px;max-height:260px;border-radius:8px;display:block;margin-top:4px}
 .msg a.file{display:inline-block;margin-top:4px;color:inherit;font-weight:500}
+/* Delivery ack badge — tin nhắn chỉ là ack gửi/nhận, không phải text. */
+.msg.ack{max-width:60%;padding:6px 12px;font-size:12px;opacity:.85;align-self:center;border-radius:14px;background:transparent;border:1px dashed rgba(0,0,0,.15);color:#666;text-align:center;line-height:1.3}
+.msg.ack .ack-ic{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:4px}
+.msg.ack .ack-tx{font-weight:500}
+.msg.ack.sent{color:#888}.msg.ack.delivered{color:#2e7d32}.msg.ack.seen{color:#1565c0}.msg.ack.unsent{color:#c62828}
+.msg.ack .ack-id{font-size:10px;opacity:.5;margin-left:4px;font-family:monospace}
 .ia{display:flex;padding:12px 16px;background:#fff;border-top:1px solid #e0e0e0;gap:8px}
 .ia input{flex:1;padding:10px 14px;border:1px solid #ddd;border-radius:20px;font-size:14px;outline:none}
 .ia input:focus{border-color:#0068ff}
@@ -102,7 +108,33 @@ function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r)
 function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
 function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function renderMsg(m){var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');dv.dataset.msg=m.id;var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');var body='';var atts=m.attachments||[];for(var i=0;i<atts.length;i++){var a=atts[i];if(a.url){var ext=(a.fileName||'').split('.').pop().toLowerCase();if(['jpg','jpeg','png','gif','webp'].indexOf(ext)>=0){body+='<img class="media" src="'+esc(a.url)+'" onerror="this.style.display=\'none\'">'}else if(ext=='mp4'||ext=='webm'){body+='<video class="media" controls src="'+esc(a.url)+'"></video>'}else{body+='<a class="file" href="'+esc(a.url)+'" target="_blank" rel="noopener">'+esc(a.fileName||'Tải file')+'</a>'}}}body+=esc(m.content||'');dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';return dv}
+// renderAck trả về badge cho delivery ack (tin server chỉ xác nhận gửi/nhận/xem).
+// status: "sent" (mặc định — server đã nhận), "delivered", "seen", "unsent".
+// ackId: globalDelMsgId từ Zalo (nếu có) để debug.
+function renderAck(m){
+  var st=m.ackStatus||'sent';
+  var labels={sent:'Đã gửi',delivered:'Đã nhận',seen:'Đã xem',unsent:'Thu hồi'};
+  var ic={sent:'✓',delivered:'✓✓',seen:'✓✓',unsent:'⟲'};
+  var lb=labels[st]||('Đã gửi'+(st?(' ('+st+')'):' (chưa rõ)'));
+  var icn=ic[st]||'✓';
+  var dv=document.createElement('div');
+  dv.className='msg ack '+st;
+  dv.dataset.msg=m.id;
+  var t=new Date(m.timestamp);
+  var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+  var hint='';
+  if(st==='sent'&&(!m.ackStatus||!m.ackId)) hint=' — chưa rõ trạng thái';
+  var idPart=m.ackId?' <span class="ack-id">#'+esc(m.ackId)+'</span>':'';
+  dv.innerHTML='<span class="ack-ic">'+icn+'</span><span class="ack-tx">'+esc(lb)+esc(hint)+'</span>'+idPart+'<div class="tm">'+ts+'</div>';
+  return dv;
+}
+
+function renderMsg(m){
+  // Nếu server đánh dấu đây là delivery ack → render badge thay vì text thô.
+  if(m.isAck||(m.content&&m.content.charAt(0)==='['&&m.content.indexOf('actionType')>=0)){
+    return renderAck(m);
+  }
+  var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');dv.dataset.msg=m.id;var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');var body='';var atts=m.attachments||[];for(var i=0;i<atts.length;i++){var a=atts[i];if(a.url){var ext=(a.fileName||'').split('.').pop().toLowerCase();if(['jpg','jpeg','png','gif','webp'].indexOf(ext)>=0){body+='<img class="media" src="'+esc(a.url)+'" onerror="this.style.display=\'none\'">'}else if(ext=='mp4'||ext=='webm'){body+='<video class="media" controls src="'+esc(a.url)+'"></video>'}else{body+='<a class="file" href="'+esc(a.url)+'" target="_blank" rel="noopener">'+esc(a.fileName||'Tải file')+'</a>'}}}body+=esc(m.content||'');dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';return dv}
 async function loadFriends(){if(!ca){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa chọn user</div>');return}
 el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
 try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
