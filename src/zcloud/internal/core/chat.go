@@ -259,6 +259,54 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 	// Resolve names từ API
 	resolveNames(c, convs)
 
+	// Build last-message map cho mỗi conversation từ msgs/groupMsgs.
+	// Endpoint get-last-msgs trả về danh sách tin cuối; ta lấy tin có timestamp
+	// lớn nhất theo từng convId để gắn vào Conversation.LastMsg và để handler
+	// lưu vào DB.
+	lastByConv := map[string]*Message{}
+	if dataObj, ok := rawData["data"].(map[string]any); ok {
+		collectLast := func(arr []any) {
+			for _, item := range arr {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				wm := wsMessage{
+					MsgID:    toString(m["msgId"]),
+					CliMsgID: toString(m["cliMsgId"]),
+					Content:  toRaw(m["content"]),
+					FromUID:  toString(m["uidFrom"]),
+					DName:    toString(m["dName"]),
+					Grid:     toString(m["grid"]),
+					IDTo:     toString(m["idTo"]),
+					UID:      toString(m["userId"]),
+					TS:       toRaw(m["ts"]),
+					Type:     toRaw(m["msgType"]),
+				}
+				msg := wm.toMessage(c.Session)
+				if msg == nil || msg.ID == "" || msg.ConvID == "" {
+					continue
+				}
+				cur, exists := lastByConv[msg.ConvID]
+				if !exists || msg.Timestamp > cur.Timestamp {
+					cp := *msg
+					lastByConv[msg.ConvID] = &cp
+				}
+			}
+		}
+		if msgs, ok := dataObj["msgs"].([]any); ok {
+			collectLast(msgs)
+		}
+		if gmsgs, ok := dataObj["groupMsgs"].([]any); ok {
+			collectLast(gmsgs)
+		}
+	}
+	for i := range convs {
+		if lm, ok := lastByConv[convs[i].ID]; ok {
+			convs[i].LastMsg = lm
+		}
+	}
+
 	return convs, nil
 }
 
@@ -869,6 +917,22 @@ func toString(v interface{}) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// toRaw chuyển một giá trị JSON bất kỳ sang json.RawMessage.
+// Dùng để truyền content/ts/msgType vào wsMessage.toMessage.
+func toRaw(v interface{}) json.RawMessage {
+	if v == nil {
+		return nil
+	}
+	if r, ok := v.(json.RawMessage); ok {
+		return r
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func min(a, b int) int {

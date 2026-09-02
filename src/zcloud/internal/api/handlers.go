@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -335,8 +336,26 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 
 	// Lưu vào DB
 	for _, c := range convs {
+		conv := store.Conversation{
+			ID: c.ID, AccountID: accountID, Name: c.Name, Avatar: c.Avatar,
+			ConvType: int(c.Type), UpdatedAt: time.Now(),
+		}
+		if c.LastMsg != nil {
+			conv.LastMsgID = c.LastMsg.ID
+			conv.LastMsgAt = sql.NullTime{Time: time.UnixMilli(c.LastMsg.Timestamp), Valid: true}
+			// Lưu message cuối vào bảng messages để có lịch sử ngay khi mở thread.
+			attJSON, _ := json.Marshal(c.LastMsg.Attachments)
+			s.Store.SaveMessage(&store.Message{
+				ID: c.LastMsg.ID, AccountID: accountID, ConvID: c.ID,
+				FromID: c.LastMsg.FromID, FromName: c.LastMsg.FromName,
+				Content: c.LastMsg.Content, MsgType: int(c.LastMsg.Type),
+				Timestamp: c.LastMsg.Timestamp, Attachments: string(attJSON),
+			})
+		}
 		s.Store.SaveConversation(&store.Conversation{
-			ID: c.ID, AccountID: accountID, Name: c.Name, Avatar: c.Avatar, ConvType: int(c.Type), UpdatedAt: time.Now(),
+			ID: c.ID, AccountID: accountID, Name: conv.Name, Avatar: conv.Avatar,
+			ConvType: int(c.Type), LastMsgID: conv.LastMsgID,
+			LastMsgAt: conv.LastMsgAt, UpdatedAt: time.Now(),
 		})
 	}
 
