@@ -36,8 +36,23 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .msg .tm{font-size:10px;opacity:.6;margin-top:4px;text-align:right}
 .msg.out .tm{color:rgba(255,255,255,.7)}
 .msg .nm{font-size:11px;color:#0068ff;font-weight:500;margin-bottom:2px}
-.msg img.media{max-width:260px;max-height:260px;border-radius:8px;display:block;margin-top:4px}
-.msg a.file{display:inline-block;margin-top:4px;color:inherit;font-weight:500}
+/* Ảnh đính kèm: grid responsive. 1 ảnh max 320px, 2-3 ảnh 2 cột vuông, 4+ ảnh 3 cột. */
+.msg .imgs{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.msg .imgs .img{width:160px;height:160px;object-fit:cover;border-radius:8px;cursor:pointer;background:#e8e8e8;display:block;transition:transform .15s}
+.msg .imgs .img:hover{transform:scale(1.02)}
+.msg .imgs.imgs-1 .img{width:auto;height:auto;max-width:320px;max-height:320px;border-radius:8px}
+.msg .imgs.imgs-2-3 .img{width:calc(50% - 2px);height:160px}
+.msg .imgs.imgs-4p .img{width:calc(33.333% - 3px);height:120px}
+.msg .imgs .img-spinner,.msg .imgs .img-err{width:160px;height:160px;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.05);border-radius:8px;color:#666;font-size:12px;text-align:center;padding:8px}
+.msg video.media{max-width:320px;max-height:320px;border-radius:8px;display:block;margin-top:4px}
+.msg a.file{display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:6px 10px;background:rgba(0,104,255,.08);color:#0068ff;border-radius:6px;font-weight:500;font-size:13px;text-decoration:none}
+.msg.out a.file{background:rgba(255,255,255,.18);color:#fff}
+/* Lightbox phóng to ảnh khi click */
+.lb{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center}
+.lb.on{display:flex}
+.lb-bg{position:absolute;inset:0;background:rgba(0,0,0,.85)}
+.lb-img{position:relative;max-width:95vw;max-height:90vh;object-fit:contain;border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.lb-cap{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);color:#fff;font-size:13px;background:rgba(0,0,0,.5);padding:4px 12px;border-radius:12px;max-width:80vw;text-align:center}
 /* Delivery ack badge — tin nhắn chỉ là ack gửi/nhận, không phải text. */
 .msg.ack{max-width:60%;padding:6px 12px;font-size:12px;opacity:.85;align-self:center;border-radius:14px;background:transparent;border:1px dashed rgba(0,0,0,.15);color:#666;text-align:center;line-height:1.3}
 .msg.ack .ack-ic{display:inline-block;width:14px;height:14px;vertical-align:-2px;margin-right:4px}
@@ -105,7 +120,7 @@ var ca='',cu=0,ld=false,pt=null,cvCache={};
 var wsr=null;
 document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();wc()});
 function wc(){if(!ca||wsr)return;wsr=new WebSocket('ws://'+location.host+'/ws?accountId='+ca);
-wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight}else if(d.type=='media_downloaded'){document.querySelectorAll('#ml .msg[data-msg="'+d.data.msgId+'"]').forEach(function(b){var im=document.createElement('img');im.className='media';im.src=d.data.url;b.appendChild(im)})}}catch(ex){}};
+wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight}else if(d.type=='media_downloaded'){applyMediaDownloaded(d.data)}}catch(ex){}};
 wsr.onclose=function(){wsr=null;setTimeout(wc,3000)}}
 async function la(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data&&d.data.length>0){ca=d.data[0].id;el('ul','');d.data.forEach(function(a){var dv=document.createElement('div');dv.className='mg-item';dv.innerHTML='<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="mg-n">'+(a.displayName||a.id)+'</div><div class="mg-acts"><button class="mg-btn" onclick="ca=a.id;uh();sy();st(\'ch\')">Chuyển</button> <button class="mg-del" onclick="xd(\''+a.id+'\')">Xoá</button></div>';el('ul').appendChild(dv)})}else{window.location.href='/'}return true}catch(e){return false}}
 function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}}).catch(function(){})}
@@ -138,7 +153,140 @@ function renderMsg(m){
   if(m.isAck||(m.content&&m.content.charAt(0)==='['&&m.content.indexOf('actionType')>=0)){
     return renderAck(m);
   }
-  var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');dv.dataset.msg=m.id;var t=new Date(m.timestamp);var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');var body='';var atts=m.attachments||[];for(var i=0;i<atts.length;i++){var a=atts[i];if(a.url){var ext=(a.fileName||'').split('.').pop().toLowerCase();if(['jpg','jpeg','png','gif','webp'].indexOf(ext)>=0){body+='<img class="media" src="'+esc(a.url)+'" onerror="this.style.display=\'none\'">'}else if(ext=='mp4'||ext=='webm'){body+='<video class="media" controls src="'+esc(a.url)+'"></video>'}else{body+='<a class="file" href="'+esc(a.url)+'" target="_blank" rel="noopener">'+esc(a.fileName||'Tải file')+'</a>'}}}body+=esc(m.content||'');dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';return dv}
+  var dv=document.createElement('div');dv.className='msg '+(m.fromId===ca?'out':'in');dv.dataset.msg=m.id;
+  var t=new Date(m.timestamp);
+  var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+  var fn=(m.fromName&&m.fromId!==ca)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
+  var body='';
+  body+=renderAttachments(m.attachments||[],m.id,m.convId||cc);
+  body+=esc(m.content||'');
+  dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';
+  return dv;
+}
+
+// imageExt: đuôi ảnh browser hiểu được. Trả về ext nếu là ảnh, '' nếu không.
+function imageExt(nameOrUrl){
+  var ext=(nameOrUrl||'').split('.').pop().toLowerCase().split('?')[0].split('#')[0];
+  if(['jpg','jpeg','png','gif','webp','bmp'].indexOf(ext)>=0) return ext;
+  return '';
+}
+function videoExt(nameOrUrl){
+  var ext=(nameOrUrl||'').split('.').pop().toLowerCase().split('?')[0].split('#')[0];
+  if(['mp4','webm','mov','m4v'].indexOf(ext)>=0) return ext;
+  return '';
+}
+// localMediaUrl: nếu url đã trỏ về /media/ thì dùng luôn, không tải lại.
+function localMediaUrl(url){
+  if(!url) return '';
+  if(url.charAt(0)==='/'&&url.indexOf('/media/')===0) return url;
+  return '';
+}
+// renderAttachments: trả HTML cho mọi attachment của 1 message.
+// Ảnh: <img> grid (1 ảnh max 320px, 2-3 ảnh 2 cột vuông, 4+ ảnh 3 cột).
+//       URL Zalo CDN → auto POST /api/media/download để proxy về /media/.
+// Video: <video controls>. File khác: <a> tải về.
+function renderAttachments(atts,msgId,convId){
+  if(!atts||!atts.length) return '';
+  var imgs=[],vids=[],files=[];
+  for(var i=0;i<atts.length;i++){
+    var a=atts[i];if(!a||!a.url) continue;
+    var id=a.id||'';
+    // Bỏ variant kích thước: -hdUrl/-oriUrl/-thumbUrl/-thumb/-normalUrl.
+    if(/-(hdUrl|oriUrl|thumbUrl|thumb|normalUrl)$/.test(id)) continue;
+    var ie=imageExt(a.fileName||a.url);
+    var ve=videoExt(a.fileName||a.url);
+    if(ie){imgs.push({url:a.url,fileName:a.fileName,id:imgBaseId(id),ie:ie})}
+    else if(ve){vids.push({url:a.url,fileName:a.fileName,id:vidBaseId(id),ve:ve})}
+    else{files.push({url:a.url,fileName:a.fileName,fileSize:a.fileSize,id:id})}
+  }
+  var html='';
+  if(imgs.length){html+=renderImageGrid(imgs,msgId,convId)}
+  for(var j=0;j<vids.length;j++){
+    var v=vids[j];
+    var vSrc=localMediaUrl(v.url)||v.url;
+    html+='<video class="media" controls preload="metadata" src="'+esc(vSrc)+'"></video>';
+  }
+  for(var k=0;k<files.length;k++){
+    var f=files[k];
+    var fSrc=localMediaUrl(f.url)||f.url;
+    var label=f.fileName||'Tải file';
+    if(f.fileSize){label+=' ('+humanSize(f.fileSize)+')'}
+    html+='<a class="file" href="'+esc(fSrc)+'" target="_blank" rel="noopener">'+esc(label)+'</a>';
+  }
+  return html;
+}
+function imgBaseId(id){var i=id.lastIndexOf('-');return i>0?id.substring(0,i):id;}
+function vidBaseId(id){var i=id.lastIndexOf('-');return i>0?id.substring(0,i):id;}
+function humanSize(n){
+  if(!n||n<1024) return n+'B';
+  if(n<1024*1024) return Math.round(n/1024)+'KB';
+  if(n<1024*1024*1024) return Math.round(n/1024/1024)+'MB';
+  return (n/1024/1024/1024).toFixed(1)+'GB';
+}
+// renderImageGrid: render 1-n ảnh theo layout responsive.
+function renderImageGrid(imgs,msgId,convId){
+  var cls='imgs imgs-'+(imgs.length<=1?'1':imgs.length<=3?'2-3':'4p');
+  var html='<div class="'+cls+'">';
+  for(var i=0;i<imgs.length;i++){
+    var a=imgs[i];
+    var local=localMediaUrl(a.url);
+    var src=local||a.url;
+    var dn=local?'':' data-zalo="1" data-fname="'+esc(a.fileName||'')+'" data-ext="'+esc(a.ie)+'"';
+    html+='<img class="img" loading="lazy" src="'+esc(src)+'" alt="'+esc(a.fileName||'')+'"'+dn;
+    html+=' onclick="openLightbox(this)" onerror="imgErr(this)" data-mid="'+esc(msgId)+'" data-cid="'+esc(convId)+'">';
+  }
+  html+='</div>';
+  return html;
+}
+// imgErr: ảnh Zalo CDN load fail → tự download về server rồi swap src sang /media/.
+function imgErr(img){
+  if(img.dataset.zalo!=='1'){img.style.display='none';return}
+  img.dataset.zalo='2';
+  var mid=img.dataset.mid,cid=img.dataset.cid,fname=img.dataset.fname||'',ext=img.dataset.ext||'jpg';
+  var url=img.getAttribute('src');
+  var ph=document.createElement('div');ph.className='img-spinner';ph.textContent='Đang tải...';
+  img.parentNode.insertBefore(ph,img);img.style.display='none';
+  fetch('/api/media/download',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({accountId:ca,convId:cid,url:url,fileName:fname,fileExt:ext,msgId:mid})
+  }).then(function(r){return r.json()}).then(function(d){
+    if(d.ok&&d.data&&d.data.url){
+      var local=d.data.url;
+      var sels='.img[data-mid="'+cssEsc(mid)+'"][data-cid="'+cssEsc(cid)+'"][src="'+cssEsc(url)+'"]';
+      document.querySelectorAll(sels).forEach(function(el){
+        el.src=local;el.dataset.zalo='';el.style.display='';
+      });
+      if(ph&&ph.parentNode) ph.parentNode.removeChild(ph);
+    }else{
+      ph.textContent='Lỗi tải ảnh';ph.className='img-err';
+    }
+  }).catch(function(){
+    ph.textContent='Lỗi tải ảnh';ph.className='img-err';
+  });
+}
+function cssEsc(s){return String(s||'').replace(/["\\]/g,'\\$&')}
+// openLightbox: phóng to ảnh khi click. Esc/click backdrop đóng.
+var lbEl=null;
+function openLightbox(img){
+  if(!lbEl){
+    lbEl=document.createElement('div');lbEl.className='lb';
+    lbEl.innerHTML='<div class="lb-bg" onclick="closeLightbox()"></div><img class="lb-img" alt=""><div class="lb-cap"></div>';
+    document.body.appendChild(lbEl);
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeLightbox()});
+  }
+  lbEl.querySelector('.lb-img').src=img.src;
+  lbEl.querySelector('.lb-cap').textContent=img.alt||'';
+  lbEl.classList.add('on');
+}
+function closeLightbox(){if(lbEl) lbEl.classList.remove('on')}
+// applyMediaDownloaded: server báo đã tải xong media của 1 message. Swap src.
+function applyMediaDownloaded(data){
+  if(!data||!data.msgId) return;
+  var local=data.url;
+  document.querySelectorAll('#ml .msg[data-msg="'+cssEsc(data.msgId)+'"] .img[data-zalo]').forEach(function(el){
+    if(local){el.src=local;el.dataset.zalo=''}
+  });
+}
+
 async function loadFriends(){if(!ca){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa chọn user</div>');return}
 el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
 try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
