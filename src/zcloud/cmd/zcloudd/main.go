@@ -22,21 +22,35 @@ func main() {
 	// Logger
 	logger := log.New(os.Stdout, "[zcloud] ", log.LstdFlags|log.Lshortfile)
 	logger.Printf("Khởi động zcloud daemon — %s", cfg.HTTPEndpoint())
-	logger.Printf("Database: %s", cfg.DBPath)
-	logger.Printf("Media dir: %s", cfg.MediaDir)
+	logger.Printf("Database backend: %s", cfg.Database.Backend)
+	logger.Printf("Media dir: %s", cfg.MediaDirPath())
 
 	// ====================================
 	// Initialize database
 	// ====================================
 
-	db, err := store.New(cfg.DBPath, cfg.MediaDir)
+	var db *store.Store
+	var err error
+	switch cfg.Database.Backend {
+	case "postgres", "postgresql", "pg":
+		dsn := cfg.PostgresDSN()
+		if dsn == "" {
+			logger.Fatalf("Postgres backend được chọn nhưng DSN rỗng — kiểm tra host/user/dbname trong config")
+		}
+		logger.Printf("Postgres: %s@%s:%d/%s", cfg.Database.Postgres.User, cfg.Database.Postgres.Host, cfg.Database.Postgres.Port, cfg.Database.Postgres.DBName)
+		db, err = store.NewPostgres(dsn, cfg.MediaDirPath(),
+			cfg.Database.Postgres.MaxOpenConns, cfg.Database.Postgres.MaxIdleConns)
+	default:
+		logger.Printf("SQLite: %s", cfg.DBPath())
+		db, err = store.NewSQLite(cfg.DBPath(), cfg.MediaDirPath())
+	}
 	if err != nil {
 		logger.Fatalf("Database init error: %v", err)
 	}
 	defer db.Close()
 
 	// Tạo media directory nếu chưa có
-	if err := os.MkdirAll(cfg.MediaDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.MediaDirPath(), 0755); err != nil {
 		logger.Fatalf("Media dir error: %v", err)
 	}
 	logger.Printf("Database sẵn sàng — %s", db.Path())
@@ -53,7 +67,7 @@ func main() {
 
 	// CORS middleware (dev mode)
 	var handler http.Handler = mux
-	if cfg.DevMode {
+	if cfg.Server.DevMode {
 		handler = corsMiddleware(mux)
 	}
 
@@ -163,4 +177,3 @@ func init() {
 	fmt.Println("Phiên bản phát triển")
 	fmt.Println()
 }
-
