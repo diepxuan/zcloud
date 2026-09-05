@@ -79,9 +79,42 @@ func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
 	if accounts == nil {
 		accounts = []store.Account{}
 	}
-	ok(w, accounts)
+	// Build session status map (1 query thay vi N).
+	sessStatus, _ := s.Store.GetActiveSessionsForAccounts()
+	// Build listener status map (in-memory).
+	listenerSet := make(map[string]bool)
+	for _, snap := range ListListeners() {
+		listenerSet[snap.AccountID] = snap.Listening
+	}
+	// Enriched list: them listening + hasActiveSession.
+	type accWithStatus struct {
+		store.Account
+		Listening        bool `json:"listening"`
+		HasActiveSession bool `json:"hasActiveSession"`
+	}
+	out := make([]accWithStatus, 0, len(accounts))
+	for _, a := range accounts {
+		out = append(out, accWithStatus{
+			Account:          a,
+			Listening:        listenerSet[a.ID],
+			HasActiveSession: sessStatus[a.ID],
+		})
+	}
+	ok(w, out)
 }
 
+// HandleAccountRestart stop + start zalo listener cho account (fix WS loi,
+// session con song). Tra ve status moi.
+func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
+	StopZaloListener(accountID)
+	go StartZaloListener(s.Store, accountID, s.Logger)
+	ok(w, map[string]interface{}{"restarted": true, "accountId": accountID})
+}
 // ========== QR LOGIN ==========
 
 // qrFlow là một lần tạo QR trên server. Poll chỉ khởi động một goroutine

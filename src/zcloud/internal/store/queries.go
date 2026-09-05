@@ -105,6 +105,25 @@ func (s *Store) ListActiveAccountIDs() ([]string, error) {
 	return ids, nil
 }
 
+// GetActiveSessionsForAccounts tra ve map account_id -> true neu co session is_active=1.
+// 1 query thay vi N query (toi uu cho UI tab Quan ly khi co nhieu account).
+func (s *Store) GetActiveSessionsForAccounts() (map[string]bool, error) {
+	q := "SELECT DISTINCT account_id FROM sessions WHERE is_active = 1"
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, nil
+}
 func (s *Store) SaveSession(sr *Session) error {
 	// Deactivate các session cũ cùng account trước khi insert.
 	updateQ := "UPDATE sessions SET is_active = 0 WHERE account_id = ? AND id <> ?"
@@ -512,4 +531,3 @@ func (s *Store) GetPendingWebhooks(limit int) ([]OAWebhookLog, error) {
 	}
 	return logs, nil
 }
-

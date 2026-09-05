@@ -29,6 +29,7 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/health", s.HandleHealth)
 	mux.HandleFunc("GET /api/account", s.HandleAccount)
 	mux.HandleFunc("GET /api/account/list", s.HandleAccountList)
+	mux.HandleFunc("POST /api/account/restart", s.HandleAccountRestart)
 	mux.HandleFunc("GET /api/qr/create", s.HandleCreateQR)
 	mux.HandleFunc("POST /api/qr/poll", s.HandlePollQR)
 	mux.HandleFunc("POST /api/login/cookie", s.HandleCookieLogin)

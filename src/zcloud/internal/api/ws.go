@@ -141,6 +141,11 @@ type zaloListenerEntry struct {
 	cancel    context.CancelFunc
 	client    *core.Client
 	sessionID string
+	// State tracking cho tab Quan ly: cho biet listener dang chay hay loi.
+	connectedAt time.Time
+	lastError   string
+	// reconnectAttempts dem so lan reconnect that bai lien tiep.
+	reconnectAttempts int
 }
 
 var (
@@ -552,6 +557,14 @@ func uploadAttachmentURL(event core.Event) string {
 	return ""
 }
 
+// IsListening tra ve true neu zalo listener dang chay cho accountID.
+func IsListening(accountID string) bool {
+	zaloListenerMu.Lock()
+	defer zaloListenerMu.Unlock()
+	_, ok := zaloListeners[accountID]
+	return ok
+}
+
 // backoff tính thời gian chờ reconnect (1s → 2s → 4s → ... → max 30s)
 func backoff(attempt int) time.Duration {
 	d := time.Duration(1<<uint(attempt)) * time.Second
@@ -559,4 +572,21 @@ func backoff(attempt int) time.Duration {
 		d = maxReconnectDelay
 	}
 	return d
+}
+
+// ListenerSnapshot la trang thai listener cho 1 account (dung cho UI Quan ly).
+type ListenerSnapshot struct {
+	AccountID string `json:"accountId"`
+	Listening bool   `json:"listening"`
+}
+
+// ListListeners tra ve snapshot cho moi account dang co listener.
+func ListListeners() []ListenerSnapshot {
+	zaloListenerMu.Lock()
+	defer zaloListenerMu.Unlock()
+	out := make([]ListenerSnapshot, 0, len(zaloListeners))
+	for id := range zaloListeners {
+		out = append(out, ListenerSnapshot{AccountID: id, Listening: true})
+	}
+	return out
 }

@@ -83,6 +83,37 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 .mg-item .mg-btn:hover{background:#0068ff;color:#fff}
 .mg-item .mg-del{background:transparent;color:#ff4444;border:1px solid #ff4444;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px}
 .mg-item .mg-del:hover{background:#ff4444;color:#fff}
+.mg-toolbar{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid #f0f0f0;background:#fff;position:sticky;top:0;z-index:1}
+.mg-toolbar input{flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:13px;outline:none}
+.mg-toolbar input:focus{border-color:#0068ff}
+.mg-toolbar button{background:#0068ff;color:#fff;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500}
+.mg-toolbar button:hover{background:#0052cc}
+.mg-stats{padding:6px 16px;background:#f5f5f5;font-size:11px;color:#666;border-bottom:1px solid #f0f0f0}
+.mg-item .mg-st{width:8px;height:8px;border-radius:50%;flex-shrink:0;align-self:center}
+.mg-item .mg-st.on{background:#4caf50;box-shadow:0 0 4px rgba(76,175,80,.5)}
+.mg-item .mg-st.off{background:#ccc}
+.mg-item .mg-st.err{background:#ff9800}
+.mg-item .mg-grid{display:flex;align-items:center;gap:10px;grid-column:1/3;grid-row:1}
+.mg-item .mg-meta{font-size:11px;color:#999;grid-column:2;grid-row:2;text-align:left;margin-top:-4px}
+.modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center}
+.modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.5)}
+.modal-card{position:relative;background:#fff;border-radius:8px;width:380px;max-width:90vw;max-height:90vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.modal-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #e0e0e0;font-size:15px;font-weight:500}
+.modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:#666;padding:0;width:28px;height:28px;line-height:1}
+.modal-close:hover{color:#333}
+.modal-tabs{display:flex;border-bottom:1px solid #e0e0e0}
+.modal-tab{flex:1;background:none;border:none;padding:12px;cursor:pointer;font-size:13px;color:#666;border-bottom:2px solid transparent}
+.modal-tab.on{color:#0068ff;border-bottom-color:#0068ff;font-weight:500}
+.modal-tab:hover{background:#f5f5f5}
+.modal-body{padding:18px;text-align:center}
+.modal-body textarea{width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-family:monospace;font-size:12px;resize:vertical;box-sizing:border-box}
+.qr-loading{padding:40px;color:#999;font-size:13px}
+#qr-img{display:block;margin:0 auto;max-width:240px;height:auto;border:1px solid #e0e0e0;border-radius:4px;padding:8px;background:#fff}
+.qr-expire{padding:20px;color:#c62828;font-size:13px}
+.qr-hint{margin-top:14px;font-size:12px;color:#666;line-height:1.5}
+.modal-primary{margin-top:12px;background:#0068ff;color:#fff;border:none;padding:10px 20px;border-radius:4px;cursor:pointer;font-size:13px;width:100%}
+.modal-primary:hover{background:#0052cc}
+.modal-err{margin-top:10px;padding:8px;background:#ffebee;color:#c62828;border-radius:4px;font-size:12px;text-align:left}
 @media(max-width:768px){.sb{width:100%}.sb.hide{display:none}}
 </style>
 </head><body>
@@ -106,9 +137,38 @@ body{font-family:sans-serif;background:#f5f5f5;height:100vh;display:flex;flex-di
 	<div id="pn-mg" class="sp">
 	<div class="mg">
 	<div class="mg-h">Quản lý tài khoản</div>
+	<div class="mg-toolbar">
+	<input id="mg-search" type="text" placeholder="Tìm theo tên hoặc ID..." oninput="renderAccounts()">
+	<button id="mg-add" onclick="showAddModal()">+ Thêm tài khoản</button>
+	</div>
+	<div class="mg-stats" id="mg-stats"></div>
 	<div id="ul"></div>
 	</div>
 	</div>
+<!-- Modal thêm tài khoản (QR + Cookie) -->
+<div id="add-modal" class="modal" style="display:none">
+<div class="modal-bg" onclick="hideAddModal()"></div>
+<div class="modal-card">
+<div class="modal-h"><span>Thêm tài khoản Zalo</span><button class="modal-close" onclick="hideAddModal()">×</button></div>
+<div class="modal-tabs">
+<button class="modal-tab on" data-tab="qr" onclick="switchAddTab('qr')">Quét QR</button>
+<button class="modal-tab" data-tab="cookie" onclick="switchAddTab('cookie')">Cookie</button>
+</div>
+<div class="modal-body" id="qr-pane">
+<div id="qr-loading" class="qr-loading">Đang tạo mã QR...</div>
+<img id="qr-img" style="display:none" alt="QR Zalo">
+<div id="qr-expire" class="qr-expire" style="display:none">Mã QR hết hạn. Vui lòng tạo mới.</div>
+<div class="qr-hint">Mở Zalo điện thoại → Cài đặt → Máy tính và tablet → Quét mã QR</div>
+</div>
+<div class="modal-body" id="cookie-pane" style="display:none">
+<textarea id="cookie-input" placeholder="Danh sách cookie từ Zalo PC (zpsid, zpw_sek...)" rows="6"></textarea>
+<div class="qr-hint">Lấy cookie từ Zalo PC bằng DevTools. Mỗi lần chỉ thêm được 1 account.</div>
+<button class="modal-primary" onclick="submitCookie()">Đăng nhập bằng Cookie</button>
+<div id="cookie-err" class="modal-err" style="display:none"></div>
+</div>
+<div id="qr-err" class="modal-err" style="display:none"></div>
+</div>
+</div>
 <div class="ca">
 <div class="ch"><h2 id="ctt">Chọn hội thoại</h2></div>
 <div class="ms" id="ml"><div class="em">Chọn một hội thoại để bắt đầu</div></div>
@@ -122,7 +182,149 @@ document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy
 function wc(){if(!ca||wsr)return;wsr=new WebSocket('ws://'+location.host+'/ws?accountId='+ca);
 wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight}else if(d.type=='media_downloaded'){applyMediaDownloaded(d.data)}}catch(ex){}};
 wsr.onclose=function(){wsr=null;setTimeout(wc,3000)}}
-async function la(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data&&d.data.length>0){ca=d.data[0].id;el('ul','');d.data.forEach(function(a){var dv=document.createElement('div');dv.className='mg-item';dv.innerHTML='<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="mg-n">'+(a.displayName||a.id)+'</div><div class="mg-acts"><button class="mg-btn" onclick="ca=a.id;uh();sy();st(\'ch\')">Chuyển</button> <button class="mg-del" onclick="xd(\''+a.id+'\')">Xoá</button></div>';el('ul').appendChild(dv)})}else{window.location.href='/'}return true}catch(e){return false}}
+// accounts: cache list account cho tab Quan ly. Reload khi can.
+var accounts=[];
+// qrPollTimer: interval id cua QR poll loop.
+var qrPollTimer=null;
+// qrToken: token QR dang poll.
+var qrToken='';
+
+// loadAccounts lay danh sach account tu server (kem status listening/hasActiveSession).
+async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();if(!ca&&accounts.length>0){ca=accounts[0].id;uh()}return true}return false}catch(e){return false}}
+
+// renderAccounts ve lai danh sach account theo cache + filter search.
+function renderAccounts(){
+	var q=(document.getElementById('mg-search')||{value:''}).value.toLowerCase().trim();
+	var ul=document.getElementById('ul');if(!ul) return;
+	ul.innerHTML='';
+	var filtered=accounts.filter(function(a){
+		if(!q) return true;
+		return(a.displayName||'').toLowerCase().indexOf(q)>=0||(a.id||'').toLowerCase().indexOf(q)>=0;
+	});
+	filtered.forEach(function(a){
+		var dv=document.createElement('div');dv.className='mg-item';
+		var stClass=a.listening?'on':(a.hasActiveSession?'err':'off');
+		var stTitle=a.listening?'Dang nghe WS':(a.hasActiveSession?'Session OK, listener chua chay':'Khong co session active');
+		var uId=esc(a.id);
+		dv.innerHTML='<div class="mg-grid">'
+			+'<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
+			+'<div style="flex:1;min-width:0"><div class="mg-n">'+(a.displayName||a.id)+'</div>'
+			+'<div class="mg-meta"><span class="mg-st '+stClass+'" title="'+stTitle+'"></span> '+esc(a.id)+'</div>'
+			+'</div></div>'
+			+'<div class="mg-acts">'
+			+'<button class="mg-btn" onclick="switchAcc(\''+uId+'\')">Chuyển</button> '
+			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button> '
+			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
+			+'</div>';
+		ul.appendChild(dv);
+	});
+}
+
+// renderStats hien thi summary (tong so, dang nghe, offline).
+function renderStats(){
+	var s=document.getElementById('mg-stats');if(!s)return;
+	var total=accounts.length;
+	var on=accounts.filter(function(a){return a.listening}).length;
+	var sess=accounts.filter(function(a){return a.hasActiveSession}).length;
+	s.textContent=total+' tài khoản • '+on+' đang nghe WS • '+sess+' có session';
+}
+
+// switchAcc chuyen sang account (khong F5).
+function switchAcc(id){
+	ca=id;uh();sy();st('ch');
+}
+
+// restartListener stop+start listener (fix khi WS bi loi, session con song).
+async function restartListener(id){
+	try{
+		await fetch('/api/account/restart?accountId='+encodeURIComponent(id),{method:'POST'});
+		setTimeout(loadAccounts,500);
+	}catch(e){console.log('restart err',e)}
+}
+
+// Hien thi modal them tai khoan.
+async function showAddModal(){
+	var m=document.getElementById('add-modal');if(!m)return;
+	m.style.display='flex';
+	switchAddTab('qr');
+	await createQR();
+}
+// An modal.
+function hideAddModal(){
+	var m=document.getElementById('add-modal');if(!m)return;
+	m.style.display='none';
+	stopQRPoll();
+}
+// Chuyen tab QR/Cookie trong modal.
+function switchAddTab(t){
+	document.querySelectorAll('.modal-tab').forEach(function(b){b.classList.toggle('on',b.dataset.tab===t)});
+	document.getElementById('qr-pane').style.display=t==='qr'?'':'none';
+	document.getElementById('cookie-pane').style.display=t==='cookie'?'':'none';
+	if(t==='qr') createQR();
+	else stopQRPoll();
+}
+// Tao QR moi + bat dau polling.
+async function createQR(){
+	document.getElementById('qr-loading').style.display='';
+	document.getElementById('qr-img').style.display='none';
+	document.getElementById('qr-expire').style.display='none';
+	document.getElementById('qr-err').style.display='none';
+	try{
+		var r=await fetch('/api/qr/create');var d=await r.json();
+		if(!d.ok||!d.data){throw new Error(d.error||'tao QR that bai')}
+		qrToken=d.data.token;
+		document.getElementById('qr-img').src=d.data.image;
+		document.getElementById('qr-img').style.display='';
+		document.getElementById('qr-loading').style.display='none';
+		// Poll sau 1.5s
+		setTimeout(pollQR,1500);
+	}catch(e){
+		document.getElementById('qr-loading').style.display='none';
+		var er=document.getElementById('qr-err');er.textContent=e.message||String(e);er.style.display='';
+	}
+}
+// Poll QR. Khi thanh cong -> reload page.
+async function pollQR(){
+	if(!qrToken)return;
+	try{
+		var r=await fetch('/api/qr/poll?token='+encodeURIComponent(qrToken));var d=await r.json();
+		if(d.ok&&d.data&&d.data.pending){
+			setTimeout(pollQR,1500);return;
+		}
+		if(d.ok&&d.data&&d.data.accountId){
+			// Login thanh cong!
+			stopQRPoll();hideAddModal();window.location.reload();return;
+		}
+		// Loi: hien thi
+		if(!d.ok){
+			document.getElementById('qr-expire').style.display='';
+			stopQRPoll();
+			return;
+		}
+	}catch(e){console.log('poll err',e)}
+	setTimeout(pollQR,1500);
+}
+function stopQRPoll(){if(qrPollTimer){clearTimeout(qrPollTimer);qrPollTimer=null}qrToken=''}
+
+// Submit cookie login.
+async function submitCookie(){
+	var ta=document.getElementById('cookie-input');
+	var er=document.getElementById('cookie-err');
+	er.style.display='none';
+	if(!ta.value.trim()){er.textContent='Chua nhap cookie';er.style.display='';return}
+	try{
+		var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookies:ta.value})});
+		var d=await r.json();
+		if(d.ok){
+			hideAddModal();window.location.reload();
+		}else{
+			er.textContent=d.error||'Login that bai';er.style.display='';
+		}
+	}catch(e){er.textContent=String(e);er.style.display=''}
+}
+
+// Backward compat: la() goi loadAccounts de giu signature cu.
+async function la(){return loadAccounts()}
 function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}}).catch(function(){})}
 function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
 function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
