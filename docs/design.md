@@ -1,25 +1,36 @@
 # Design — zcloud (tài liệu thiết kế dùng chung)
 
-> Tài liệu thiết kế kiến trúc và quy ước kỹ thuật cho dự án zcloud.
+> Tài liệu thiết kế kiến trúc + design system + quy ước code cho dự án zcloud.
 > Áp dụng cho mọi module trong `src/zcloud/`. Khi thêm tính năng mới, đọc
 > file này trước để khớp với codebase hiện có.
+>
+> Lịch sử cập nhật:
+> - 2026-09-06: UI polish pass — sửa token self-reference (chat/login),
+>   sửa CSS token self-reference, đổi layout `mg-item` sang 3 dòng (avatar
+>   chiếm full height, tên / ID / badge+nút ở 3 dòng riêng), stats bar 3
+>   dòng, empty state cho tab Quản lý, `switchAcc` đóng WS cũ để reconnect.
+>   Bổ sung §B12–§B15.
 
-## 1. Mục tiêu
+---
+
+## Phần A — Kiến trúc & quy ước code
+
+### A1. Mục tiêu dự án
 
 Cloud service Zalo — cho phép đăng nhập QR, chat real-time, lưu lịch sử
 tin nhắn + media lâu dài, đồng bộ theo chuẩn Zalo (WS cmd 510/511).
 
-## 2. Tech stack
+### A2. Tech stack
 
 | Lớp | Tech |
 |-----|------|
-| Core | Go 1.22+, `modernc.org/sqlite`, `github.com/coder/websocket` |
+| Core | Go 1.25+, `modernc.org/sqlite`, `github.com/coder/websocket`, `github.com/jackc/pgx/v5` |
 | HTTP | `net/http` + `http.ServeMux` (Go 1.22 pattern routing) |
-| Storage | SQLite (WAL mode) + disk media files |
+| Storage | SQLite (mặc định, file local) hoặc Postgres (self-hosted) + disk media files |
 | Web UI | Vanilla JS ES6+, HTML/CSS thuần, `go:embed` |
 | Process | systemd service + `scripts/zcloudd.sh` watch mode |
 
-## 3. Cấu trúc module
+### A3. Cấu trúc module
 
 ```
 src/zcloud/
@@ -38,64 +49,69 @@ src/zcloud/
 │   │   ├── ws.go          # Browser WS + Zalo listener nền
 │   │   ├── embed.go       # //go:embed web/*
 │   │   └── web/           # login.html, chat.html, favicon.svg
-│   ├── store/             # SQLite layer
-│   │   └── store.go       # Migrations + queries
-│   └── config/            # Env config
+│   ├── store/             # DB layer (sqlite + postgres)
+│   │   ├── store.go       # Struct Store + NewSQLite/NewPostgres
+│   │   ├── queries.go     # Dialect-aware CRUD queries
+│   │   ├── store_sqlite.go    # SQLite migration
+│   │   ├── store_postgres.go  # Postgres migration
+│   │   └── types.go       # Domain types
+│   └── config/            # Config loader (YAML + CLI + env)
 └── examples/              # Test programs
 ```
 
-## 4. Quy ước code
+### A4. Quy ước code
 
-### 4.1 Package boundaries
+#### A4.1 Package boundaries
 - `internal/core` không import `internal/api` và `internal/store`.
 - `internal/api` import cả `core` + `store`.
 - `internal/store` không import `core` (chỉ thuần SQL).
 - Mọi package ngoài `cmd/` đều nằm trong `internal/` → không export ra ngoài.
 
-### 4.2 Naming
+#### A4.2 Naming
 - File Go: snake_case.
 - Struct/interface: PascalCase, có comment giải thích vai trò.
 - Method receiver: 1-2 ký tự (vd `s *Store`, `c *Client`, `w *WSClient`).
 - Error sentinel: prefix `Err` (vd `ErrNotLoggedIn`).
 - Log prefix: `[zcloud]` cho subsystem chính.
 
-### 4.3 Error handling
+#### A4.3 Error handling
 - Trả về error, không panic (trừ init).
-- API handler: dùng helper `ok(w, data)` / `fail(w, status, msg)` trong
-  `handlers.go`.
+- API handler: dùng helper `ok(w, data)` / `fail(w, status, msg)` trong `handlers.go`.
 - Log lỗi kèm context (accountId, convId, …).
 
-### 4.4 Logging
-- Hiện tại: `fmt.Printf` cho debug + `log.Printf` cho production.
-- TODO: tập trung về `*log.Logger` truyền qua `Server.Logger`.
+#### A4.4 Logging
+- Logger `*log.Logger` truyền qua `Server.Logger` — mọi module dùng chung.
+- Format: `[zcloud] <timestamp> <file:line>: <message>`.
+- Subsystem prefix: `zalo-ws:`, `media-download:`, `auto-refresh:`.
 
-### 4.5 HTTP
+#### A4.5 HTTP
 - Dùng `http.ServeMux` pattern (Go 1.22): `mux.HandleFunc("POST /api/x", h)`.
 - Response chuẩn: `APIResponse{OK bool, Data, Error, Code}`.
 - Status: 200 OK, 400 input, 401 auth, 404 not found, 500 server.
 
-### 4.6 Database
-- Tất cả schema trong `internal/store/store.go` dạng `const migrationX`.
+#### A4.6 Database
+- Tất cả schema trong `internal/store/store_sqlite.go` + `store_postgres.go` dạng `const migrationX`.
 - Thêm bảng = thêm `const` + push vào slice `migrations`.
-- Không sửa `schema.sql` khi chưa sync code (xem SOUL.md §3).
+- Queries dialect-aware trong `queries.go` qua `if s.backend == BackendPostgres`.
+- Không sửa schema khi chưa được yêu cầu (xem SOUL.md §3).
 
-### 4.7 WebSocket (browser)
+#### A4.7 WebSocket (browser)
 - Endpoint: `GET /ws?accountId=…`.
-- Message JSON: `{type: "new_message" | "sync_done" | …, data: {...}}`.
+- Message JSON: `{type: "new_message" | "old_message" | "media_downloaded" | …, data: {...}}`.
 
-### 4.8 WebSocket (Zalo)
+#### A4.8 WebSocket (Zalo)
 - Endpoint: từ `zpw_ws` trong login response (vd `wss://ws1-msg.chat.zalo.me`).
 - Frame: `version(1) + cmd(2 LE) + subCmd(1) + payload`.
 - Payload có thể AES-GCM + gzip → dùng `core.DecodeWSEvent`.
 
-## 5. Crypto
+### A5. Crypto
 
 - **AES-128-CBC** với IV zero, PKCS7 padding — cho REST params.
 - **AES-GCM** cho WS event data.
 - **MD5** cho chữ ký: `md5("zsecure" + type + sortedParams)`.
 - Key = `base64_decode(zpw_enk)` từ login response.
 
-## 6. Zalo API endpoints (đã dùng)
+### A6. Zalo API endpoints (đã dùng)
 
 | Method | Path | Mục đích |
 |--------|------|----------|
@@ -110,9 +126,9 @@ src/zcloud/
 
 WS cmds: 501/521 (new msg), 510/511 (old msg), 1 (ping).
 
-## 7. Data flow
+### A7. Data flow
 
-### Login
+#### Login
 ```
 Browser → POST /api/qr/create → core.CreateQRLogin → {token, image}
 Browser → poll /api/qr/poll → core.PollQRLogin → session
@@ -122,7 +138,7 @@ Browser → poll /api/qr/poll → core.PollQRLogin → session
                             core.NewClient + StartZaloListener
 ```
 
-### Chat real-time
+#### Chat real-time
 ```
 Zalo WS → core.WSClient.readLoop → core.handleFrame
                                 ↓
@@ -131,7 +147,7 @@ Zalo WS → core.WSClient.readLoop → core.handleFrame
               api.WSManager.Broadcast → Browser WS
 ```
 
-### Send message
+#### Send message
 ```
 Browser → POST /api/messages/send → core.Client.SendMessage
                                 ↓
@@ -142,54 +158,360 @@ Browser → POST /api/messages/send → core.Client.SendMessage
                               ok(data)
 ```
 
-## 8. Operations
+### A8. Operations
 
-### Build
+#### Build
 ```bash
 cd src/zcloud && go build -o ../../zcloudd ./cmd/zcloudd/
 ```
 
-### Run
+#### Run
 - Production: `systemctl start zcloud` (service quản lý qua
   `scripts/zcloudd.sh` watch mode).
 - Dev: `./scripts/zcloud.sh start|stop|restart|logs|status`.
 
-### Env
-| Var | Mặc định | Mô tả |
-|-----|----------|-------|
-| `ZCLOUD_DB_PATH` | `./storages/database/zcloud.db` | Đường dẫn SQLite |
-| `ZCLOUD_MEDIA_PATH` | `./storages/media` | Thư mục media |
-| `ZCLOUD_PORT` | `8080` | Port HTTP |
+#### Env / Config
+- File YAML: `~/.config/ductn/zcloud.yml` (override path qua `ZCLOUD_CONFIG`).
+- Thứ tự ưu tiên: defaults < YAML < env vars < CLI flags.
+- Env: `ZCLOUD_PORT`, `ZCLOUD_DB_PATH`, `ZCLOUD_DB_BACKEND`, `ZCLOUD_DB_PASSWORD`,
+  `ZCLOUD_PG_HOST`, `ZCLOUD_PG_PORT`, … (xem `internal/config/config.go`).
 
-### Restart
-- `systemctl restart zcloud` — KHÔNG start binary tay (xem CLAUDE.md
-  "Quy tắc vận hành").
+#### Backend DB
+- `sqlite` (mặc định) — file tại `~/.config/ductn/zcloud.yml > database.sqlite.path`.
+- `postgres` — set `database.backend: postgres` + điền `database.postgres.*`.
 
-### Restart Zalo listener nội bộ
-- Khi sửa code trong `src/zcloud/`, `scripts/zcloudd.sh` watch mode sẽ tự
-  build + restart service. Không cần thao tác tay thêm.
-- Muốn restart chỉ riêng Zalo listener cho một account, dùng:
-  - `StopZaloListener(accountID)` — dừng goroutine/listener, giữ nguyên session.
-  - `StartZaloListener(...)` — khởi động lại listener cho account.
-- **KHÔNG gọi `/api/logout` để restart listener.** `/api/logout` xoá account,
-  session, conversation, message, media trong DB; chỉ dùng khi Sếp thực sự
-  muốn xoá tài khoản.
-- Khi đổi session/cookie, đảm bảo chỉ giữ 1 session active cho mỗi account để
-  tránh nhiều WebSocket cùng lúc bị Zalo kick.
+#### Restart
+- `systemctl restart zcloud` — KHÔNG start binary tay.
+- Khi sửa code trong `src/zcloud/`, watch mode (`inotifywait`) tự build + restart.
 
-## 9. Testing
+#### Restart Zalo listener
+- `StopZaloListener(accountID)` + `StartZaloListener(...)` — chỉ stop/start WS nền.
+- Endpoint REST: `POST /api/account/restart?accountId=X`.
+- **KHÔNG dùng `/api/logout` để restart listener** — logout xoá account, session,
+  conversation, message, media.
 
-- Hiện có: `internal/core/encrypt_test.go` (AES-CBC + PKCS7).
-- Cần thêm (xem audit.md tồn đọng):
+### A9. Testing
+
+- Hiện có: `internal/core/encrypt_test.go` (AES-CBC + PKCS7), `chat_ack_test.go`.
+- Cần thêm (xem `docs/tasks.md` §5 T3):
   - `internal/core/chat_test.go` — SendMessage mock.
   - `internal/store/store_test.go` — migrations + CRUD.
   - `internal/api/handlers_test.go` — HTTP API với `httptest`.
 
-## 10. Conventions khi viết code mới
+### A10. Conventions khi viết code mới
 
 - Đọc file liên quan trước (grep, rg).
 - Không sửa schema nếu chưa được yêu cầu.
 - Commit nhỏ, mỗi commit là 1 thay đổi rõ ràng.
 - Format: `<loại>(<phạm vi>): <mô tả>` (vd `feat(api): thêm /api/friends`).
-- Push thẳng vào `main`, không cần PR.
+- Push thẳng vào `main`, không cần PR (theo SOUL.md §5).
 - Trước khi commit: `go build ./...` + `go test ./...` pass.
+
+---
+
+## Phần B — Design System (Web UI)
+
+> Áp dụng cho mọi file trong `src/zcloud/internal/api/web/`. Mục tiêu:
+> giao diện sạch, hiện đại, dễ đọc, nhất quán, không phụ thuộc framework.
+
+### B1. Nguyên tắc chung
+
+1. **Mobile-first** — layout responsive từ 360px trở lên.
+2. **Accessibility** — focus ring rõ, contrast >= 4.5:1, button có aria-label khi icon-only.
+3. **Zero dependency** — chỉ vanilla JS + CSS thuần, embed trong binary qua `go:embed`.
+4. **Tốc độ** — không load font ngoài, không CDN, không JS framework. Mở < 50ms.
+5. **Ngôn ngữ** — tiếng Việt cho user-facing text, code/identifier tiếng Anh.
+
+### B2. Design Tokens (CSS Variables)
+
+Tất cả giá trị visual (color, spacing, radius, shadow) định nghĩa trong `:root`
+của mỗi file HTML, dùng CSS variable. KHÔNG hardcode màu/spacing trong component.
+
+```css
+:root {
+  /* === Brand === */
+  --c-brand:        #0068ff;   /* Zalo blue, primary CTA */
+  --c-brand-hover:  #0052cc;
+  --c-brand-soft:   #e8f0ff;   /* Nền nhạt cho active state, badge */
+
+  /* === Neutral (text + surface) === */
+  --c-text:         #1a1a1a;   /* Body text chính */
+  --c-text-2:       #4a4a4a;   /* Text phụ */
+  --c-text-3:       #888;      /* Caption, placeholder */
+  --c-text-onbrand: #fff;      /* Text trên nền brand */
+  --c-bg:           #f5f5f7;   /* Page background */
+  --c-surface:      #fff;      /* Card, panel, modal */
+  --c-surface-2:    #f0f0f2;   /* Hover, input bg */
+  --c-border:       #e0e0e3;   /* Divider */
+  --c-border-2:     #d0d0d3;   /* Input border */
+
+  /* === Semantic === */
+  --c-success:      #2e7d32;
+  --c-warning:      #f57c00;
+  --c-danger:       #c62828;
+  --c-info:         #0277bd;
+
+  /* === Spacing scale (4px base) === */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px;  --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 32px;  --s-8: 48px;
+
+  /* === Radius === */
+  --r-sm: 4px;   /* Input, badge */
+  --r-md: 8px;   /* Card, button */
+  --r-lg: 12px;  /* Modal */
+  --r-pill: 999px; /* Avatar, tag */
+
+  /* === Shadow (elevation) === */
+  --sh-0: none;
+  --sh-1: 0 1px 2px rgba(0,0,0,.06);                  /* Card mỏng */
+  --sh-2: 0 2px 8px rgba(0,0,0,.08);                  /* Card nổi */
+  --sh-3: 0 8px 24px rgba(0,0,0,.12);                 /* Modal */
+  --sh-4: 0 16px 48px rgba(0,0,0,.16);                /* Lightbox */
+
+  /* === Typography === */
+  --ff-base: -apple-system, BlinkMacSystemFont, "Segoe UI",
+              "Helvetica Neue", Arial, "PingFang SC",
+              "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --ff-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fz-xs:  11px;   /* Caption */
+  --fz-sm:  12px;   /* Meta, badge */
+  --fz-md:  14px;   /* Body */
+  --fz-lg:  16px;   /* Heading 3, button */
+  --fz-xl:  20px;   /* Heading 2 */
+  --fz-2xl: 28px;   /* Heading 1 */
+  --lh:     1.5;
+  --fw-r:   400;
+  --fw-m:   500;
+  --fw-b:   600;
+
+  /* === Layout === */
+  --sb-w:    60px;   /* Sidebar icon width */
+  --pn-w:    320px;  /* Panel width (chat list, friends, mgmt) */
+  --hdr-h:   56px;   /* Header height */
+  --input-h: 40px;   /* Input field height */
+
+  /* === Animation === */
+  --ease:   cubic-bezier(.2,.8,.2,1);
+  --dur-1:  150ms;
+  --dur-2:  250ms;
+}
+```
+
+### B3. Component patterns
+
+#### B3.1 Button
+
+| Variant | Background | Text | Border | Dùng khi |
+|---------|-----------|------|--------|----------|
+| `primary` | `--c-brand` | `--c-text-onbrand` | none | CTA chính: Gửi, Lưu, Đăng nhập |
+| `secondary` | `--c-surface-2` | `--c-text` | `--c-border` | Hành động phụ: Huỷ, Restart |
+| `ghost` | transparent | `--c-text-2` | none | Icon-only trên toolbar |
+| `danger` | `--c-surface-2` | `--c-danger` | `--c-danger` | Xoá, logout |
+
+```css
+.btn{padding:var(--s-2) var(--s-4);border-radius:var(--r-md);
+     font-size:var(--fz-md);font-weight:var(--fw-m);
+     border:1px solid transparent;cursor:pointer;
+     transition:background var(--dur-1) var(--ease)}
+.btn.primary{background:var(--c-brand);color:var(--c-text-onbrand)}
+.btn.primary:hover{background:var(--c-brand-hover)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn:focus-visible{outline:2px solid var(--c-brand);outline-offset:2px}
+```
+
+#### B3.2 Input / Textarea
+
+- Height `--input-h`, padding 0 `--s-3`.
+- Border 1px `--c-border-2`, focus chuyển `--c-brand`.
+- Background `--c-surface` cho input trên nền sáng; transparent khi inline trong header.
+- Placeholder dùng `--c-text-3`.
+
+#### B3.3 Card
+
+- Background `--c-surface`, border-radius `--r-md`, shadow `--sh-1`.
+- Padding `--s-4` mặc định; `--s-3` cho card dày đặt (chat list).
+- Hover: shadow `--sh-2` (nếu clickable).
+
+#### B3.4 Modal
+
+- Overlay: `rgba(0,0,0,.5)`, position fixed full screen, z-index cao nhất.
+- Card: `--c-surface`, `--r-lg`, `--sh-3`, max-width 90vw, max-height 90vh.
+- Header: title + close button (`✕`), border-bottom `--c-border`.
+- Footer (nếu có): right-aligned action buttons.
+- Animation: fade-in overlay + scale-up card 0.96 → 1.0.
+
+#### B3.5 Badge / Status dot
+
+- 8px circle, no border.
+- Status:
+  - `on` (xanh lá): `--c-success` — listener đang chạy.
+  - `off` (xám): `--c-text-3` — không có session.
+  - `err` (cam): `--c-warning` — session OK nhưng listener chưa start.
+- Tooltip qua `title="..."` cho text mô tả.
+
+#### B3.6 Chat bubble
+
+- Outgoing (mình gửi): background `--c-brand`, text `--c-text-onbrand`,
+  align-self `flex-end`, border-bottom-right-radius `var(--r-sm)`.
+- Incoming: background `--c-surface`, text `--c-text`, align-self `flex-start`,
+  border-bottom-left-radius `var(--r-sm)`.
+- Border-radius còn lại `--r-md` (12px).
+- Max-width 70% (mobile: 85%).
+- Timestamp `var(--fz-xs)` opacity 0.6, right-aligned.
+- Sender name `var(--fz-sm)` màu brand, chỉ hiển thị với incoming + group.
+
+#### B3.7 Image grid (attachments)
+
+- Container flex-wrap với gap `--s-1`.
+- 1 ảnh: max 320×320, radius `--r-md`.
+- 2-3 ảnh: 2 cột, 160×160 vuông object-fit cover.
+- 4+ ảnh: 3 cột, 120×120 vuông object-fit cover.
+- Click → lightbox (xem B3.8).
+
+#### B3.8 Lightbox
+
+- Full screen fixed, z-index 1000.
+- Background `rgba(0,0,0,.85)`.
+- Image max 95vw × 90vh, object-fit contain.
+- Caption dưới đáy nếu có.
+- Đóng: click backdrop hoặc nhấn Esc.
+
+### B4. Layout — `/chat`
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ Header (height=var(--hdr-h))                               │
+│ ┌──┬─────────────────────┬──────────────────────────────┐  │
+│ │Av│ User name + avatar   │  Action buttons (optional)   │  │
+│ └──┴─────────────────────┴──────────────────────────────┘  │
+├────┬──────────────┬───────────────────────────────────────┤
+│    │ Panel (320px)│ Chat area                              │
+│ SB │              │ ┌────────────────────────────────────┐ │
+│(60 │  - Chat list │ │ Messages                           │ │
+│ px)│  - Friends   │ │  - bubbles                         │ │
+│    │  - Mgmt      │ │  - image grid                      │ │
+│    │              │ │  - ack badges                      │ │
+│    │              │ │                                    │ │
+│    │              │ ├────────────────────────────────────┤ │
+│    │              │ │ Input + Send button                │ │
+│    │              │ └────────────────────────────────────┘ │
+└────┴──────────────┴───────────────────────────────────────┘
+```
+
+Mobile (< 768px): SB ẩn, panel full width hoặc ẩn, chat area full screen.
+
+### B5. Layout — `/login`
+
+- Center card 420px max-width.
+- Header: logo ZCloud + tên app.
+- Tabs: QR / Cookie (segment control).
+- QR pane: ảnh QR 240×240 + hint text + trạng thái.
+- Cookie pane: textarea + button primary.
+
+### B6. Iconography
+
+- Dùng emoji Unicode cho icon đơn giản (⚙ 💬 👥 ➕ ✓ ✓✓ ⟲) — không cần SVG lib.
+- SVG icon (trong `favicon.svg`, `logo.svg`) chỉ dùng cho logo.
+- KHÔNG vẽ icon mới bằng CSS/SVG inline — giữ codebase nhỏ.
+
+### B7. Empty states
+
+Mỗi list rỗng (chat list, friends, messages) phải có:
+- Icon lớn mờ (emoji 48px `--c-text-3` opacity .5).
+- Text ngắn gợi ý hành động (vd "Chọn hội thoại để bắt đầu").
+- Optional: button CTA (vd "Đồng bộ ngay").
+
+### B8. Accessibility checklist
+
+- [ ] Mọi button có text hoặc `aria-label`.
+- [ ] Modal có `role="dialog"` + focus trap (tối thiểu focus vào element đầu khi mở).
+- [ ] Color không phải cách duy nhất truyền tải thông tin (status dot có title).
+- [ ] Form input có `<label>` hoặc `aria-label`.
+- [ ] ESC đóng modal.
+- [ ] Tab order hợp lý (modal > page).
+
+### B9. Migration từ CSS cũ
+
+Mọi file HTML trong `internal/api/web/` phải:
+1. Bắt đầu `<style>` bằng block `:root {...}` chứa tokens.
+2. Replace tất cả giá trị hardcode (`#0068ff`, `8px`, `border-radius:8px`...) bằng `var(--c-...)`, `var(--s-...)`, `var(--r-...)`.
+3. Component lặp lại > 2 lần → tách thành class dùng chung.
+4. KHÔNG xoá comment giải thích tiếng Việt — giữ cho người đọc sau.
+
+### B10. Anti-patterns (KHÔNG làm)
+
+- ❌ Hardcode màu (`#0068ff`) trong nhiều chỗ — dùng `var(--c-brand)`.
+- ❌ Font-size > 18px cho body text — khó đọc.
+- ❌ Letter-spacing âm hoặc dương > 0.5px — làm text khó scan.
+- ❌ Padding < 8px trên touch target < 44×44px — khó bấm mobile.
+- ❌ Animation quay vô tận khi không loading.
+- ❌ Modal không có close button hoặc không đóng bằng Esc.
+- ❌ Box-shadow đậm (alpha > 0.2) cho element nhỏ — trông nặng nề.
+- ❌ Color palette 1 tone — luôn kết hợp neutral + 1 accent (xem SOUL §frontend guidance).
+
+### B11. Versioning design
+
+- Mỗi lần thay đổi tokens (`--c-brand`, spacing scale...) → bump version trong
+  comment đầu file HTML.
+- Thay đổi component pattern → update `docs/design.md` Phần B.
+
+---
+
+
+### B12. Token integrity — không self-reference
+
+**Không** khai báo `var` tham chiếu chính nó — trình duyệt sẽ bỏ qua, thuộc
+tính dùng var đó fallback về initial. Đã sửa 2026-09-06:
+- SAI: `--c-success-glow: var(--c-success-glow)`
+- ĐÚNG: `--c-success-glow: rgba(46,125,50,.45)`
+
+### B13. Mgmt stats bar (3 dòng)
+
+Thanh thống kê trong panel Quản lý gồm 3 dòng riêng biệt:
+```
+Tổng tài khoản              3
+Đang nghe WS                2
+Có session active           3
+```
+CSS `.mg-stats` flex column, mỗi `.mg-stat-row` `display:flex;
+justify-content:space-between; align-items:center; padding:var(--s-2) var(--s-4)`.
+Số dùng `fw-b`, màu brand, `fz-lg`.
+
+### B14. Mgmt item pattern — 3 dòng, avatar chiếm full height
+
+Mỗi item trong panel Quản lý layout 3 dòng:
+```
+┌────┐  ● Tên tài khoản
+│ AV │  0123456789
+│44px│  [Đang dùng] [Restart] [Xoá]
+└────┘
+```
+- `.mg-item`: `display:flex; align-items:stretch; gap:var(--s-3)`.
+- `.mg-av`: `width:44px; align-self:stretch; border-radius:var(--r-pill); min-height:44px`.
+- `.mg-body`: `flex:1; flex-direction:column; gap:var(--s-1)`.
+- Row 1: status dot + tên (fw-b).
+- Row 2: account ID (mono, fz-xs).
+- Row 3: badge "Đang dùng" (chỉ khi `id === currentAccountId`) + Restart + Xoá.
+
+Item đang dùng: `.mg-item.cur` background `--c-brand-soft`. Empty state qua
+`.mg-empty` / `.mg-empty-i` / `.mg-empty-sub`.
+
+### B15. WS reconnect khi đổi account
+
+Mỗi account có 1 WS browser connection (`wsr`). `switchAcc` phải đóng `wsr` cũ
+trước khi reconnect cho account mới:
+```js
+function switchAcc(id){
+  if(wsr){try{wsr.onclose=null; wsr.close()}catch(e){} wsr=null;}
+  ca=id; uh(); sy(); st('ch');
+}
+```
+
+
+## Phần C — Tham chiếu
+
+- `docs/references/zca-js/` — TypeScript SDK Zalo (tham khảo protocol).
+- `docs/references/zcago/` — Go SDK nhỏ (tham khảo encrypt/chat).
+- `docs/references/za-go/` — Go SDK phổ biến hơn (tham khảo SendMessage REST).
+- `docs/protocol/pc-desktop.md` — Reverse Zalo PC 26.8.10 (tham khảo AES-GCM + cmd).
+- `docs/tasks.md` — Trạng thái task + tồn đọng.

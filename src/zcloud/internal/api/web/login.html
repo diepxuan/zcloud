@@ -1,55 +1,246 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>ZCloud Login</title>
+<html lang="vi"><head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZCloud — Đăng nhập</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
+/* === Design tokens — xem docs/design.md Phần B2 === */
+:root {
+  /* === Brand === */
+  --c-brand: #0068ff;
+  --c-brand-hover: #0052cc;
+  --c-brand-soft: #e8f0ff;
+  --c-brand-trans-08: rgba(0,104,255,.08);
+  --c-brand-trans-05: rgba(0,104,255,.05);
+  /* === Neutral === */
+  --c-text: #1a1a1a;
+  --c-text-2: #4a4a4a;
+  --c-text-3: #888;
+  --c-text-onbrand: #fff;
+  --c-bg: #f5f5f7;
+  --c-surface: #fff;
+  --c-surface-2: #f0f0f2;
+  --c-border: #e0e0e3;
+  --c-border-2: #d0d0d3;
+  /* === Semantic === */
+  --c-success: #2e7d32;
+  --c-success-soft: #e8f5e9;
+  --c-warning: #f57c00;
+  --c-danger: #c62828;
+  --c-danger-soft: #ffebee;
+  --c-info: #0277bd;
+  --c-info-soft: #e8f4fd;
+  /* === Spacing === */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 48px;
+  /* === Radius === */
+  --r-sm: 4px; --r-md: 8px; --r-lg: 12px; --r-pill: 999px;
+  /* === Shadow === */
+  --sh-1: 0 1px 2px rgba(0,0,0,.06);
+  --sh-2: 0 2px 8px rgba(0,0,0,.08);
+  --sh-3: 0 8px 24px rgba(0,0,0,.12);
+  /* === Typography === */
+  --ff-base: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --ff-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fz-xs: 11px; --fz-sm: 12px; --fz-md: 14px; --fz-lg: 16px;
+  --fz-xl: 20px; --fz-2xl: 28px;
+  --lh: 1.5; --fw-r: 400; --fw-m: 500; --fw-b: 600;
+  /* === Animation === */
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --dur-1: 150ms; --dur-2: 250ms;
+}
+
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:sans-serif;background:#f5f5f5;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.card{background:#fff;border-radius:12px;padding:32px;width:90%;max-width:420px;box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center}
-h1{font-size:22px;margin-bottom:16px;color:#333}p{color:#666;margin-bottom:16px;font-size:14px}
-.qr-box{border:2px dashed #ddd;border-radius:8px;margin:16px auto;padding:16px;min-height:200px;display:flex;align-items:center;justify-content:center}
-.qr-box img{max-width:220px}.qr-box .loading{color:#999;font-size:14px}
-.st{padding:12px;border-radius:6px;margin-top:12px;display:none}
-.st.i{background:#e8f4fd;color:#0068ff;display:block}.st.s{background:#d4edda;color:#155724;display:block}.st.e{background:#f8d7da;color:#721c24;display:block}
-.btn{padding:10px 24px;background:#0068ff;color:#fff;border:none;border-radius:6px;font-size:15px;cursor:pointer;margin-top:12px}
-.btn:hover{background:#0052cc}.btn.g{background:#6c757d}.hd{display:none}
-.tabs{display:flex;gap:8px;margin-bottom:16px}
-.tabs button{flex:1;padding:8px;background:#eee;color:#333;border-radius:6px;border:none;cursor:pointer;font-size:13px}
-.tabs button.on{background:#0068ff;color:#fff}
-.tc textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;font-size:13px;min-height:80px;font-family:monospace;margin-top:8px}
-</style></head><body>
+html,body{height:100%}
+body{
+  font-family:var(--ff-base);
+  font-size:var(--fz-md);
+  line-height:var(--lh);
+  color:var(--c-text);
+  background:
+    radial-gradient(circle at 20% 0%, var(--c-brand-trans-08), transparent 50%),
+    radial-gradient(circle at 80% 100%, var(--c-brand-trans-05), transparent 50%),
+    var(--c-bg);
+  display:flex;justify-content:center;align-items:center;padding:var(--s-4);
+}
+
+/* === Card login === */
+.card{
+  background:var(--c-surface);
+  border-radius:var(--r-lg);
+  box-shadow:var(--sh-2);
+  width:100%;max-width:420px;padding:var(--s-7);
+  text-align:center;
+}
+.card-brand{display:flex;flex-direction:column;align-items:center;gap:var(--s-2);margin-bottom:var(--s-5)}
+.card-logo{
+  width:56px;height:56px;border-radius:var(--r-md);
+  background:var(--c-brand-soft);
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;color:var(--c-brand);
+}
+.card-title{font-size:var(--fz-xl);font-weight:var(--fw-b);color:var(--c-text)}
+.card-sub{font-size:var(--fz-sm);color:var(--c-text-3);margin-top:2px}
+
+/* === Tabs QR / Cookie === */
+.tabs{
+  display:flex;gap:var(--s-1);background:var(--c-surface-2);
+  padding:var(--s-1);border-radius:var(--r-md);margin-bottom:var(--s-5);
+}
+.tabs button{
+  flex:1;padding:var(--s-2) var(--s-3);background:transparent;
+  color:var(--c-text-2);border:none;border-radius:var(--r-sm);
+  cursor:pointer;font-size:var(--fz-md);font-weight:var(--fw-m);
+  font-family:inherit;transition:all var(--dur-1) var(--ease);
+}
+.tabs button:hover{color:var(--c-text)}
+.tabs button.on{background:var(--c-surface);color:var(--c-brand);box-shadow:var(--sh-1)}
+
+/* === QR pane === */
+.qr-box{
+  border:2px dashed var(--c-border);border-radius:var(--r-md);
+  margin:0 auto var(--s-4);padding:var(--s-5);min-height:240px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--c-surface-2);
+}
+.qr-box img{max-width:220px;height:auto;display:block;border-radius:var(--r-sm)}
+.qr-loading{color:var(--c-text-3);font-size:var(--fz-md)}
+.qr-hint{font-size:var(--fz-sm);color:var(--c-text-2);line-height:var(--lh);margin-bottom:var(--s-3)}
+
+/* === Cookie pane === */
+.tc textarea{
+  width:100%;padding:var(--s-3);border:1px solid var(--c-border-2);
+  border-radius:var(--r-md);font-family:var(--ff-mono);font-size:var(--fz-sm);
+  min-height:100px;resize:vertical;color:var(--c-text);
+  outline:none;transition:border-color var(--dur-1) var(--ease);
+}
+.tc textarea:focus{border-color:var(--c-brand)}
+
+/* === Status toast === */
+.st{
+  padding:var(--s-3) var(--s-4);border-radius:var(--r-md);
+  margin-top:var(--s-4);font-size:var(--fz-sm);text-align:left;
+  display:none;border-left:3px solid transparent;
+}
+.st.i{background:var(--c-brand-soft);color:var(--c-info);border-left-color:var(--c-info);display:block}
+.st.s{background:var(--c-success-soft);color:var(--c-success);border-left-color:var(--c-success);display:block}
+.st.e{background:var(--c-danger-soft);color:var(--c-danger);border-left-color:var(--c-danger);display:block}
+
+/* === Button === */
+.btn{
+  display:inline-block;width:100%;padding:var(--s-3) var(--s-4);
+  background:var(--c-brand);color:var(--c-text-onbrand);border:none;
+  border-radius:var(--r-md);font-size:var(--fz-md);font-weight:var(--fw-m);
+  font-family:inherit;cursor:pointer;transition:background var(--dur-1) var(--ease);
+  margin-top:var(--s-3);
+}
+.btn:hover{background:var(--c-brand-hover)}
+.btn:focus-visible{outline:2px solid var(--c-brand);outline-offset:2px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* === Hide === */
+.hd{display:none!important}
+
+/* === Mobile === */
+@media(max-width:480px){
+  .card{padding:var(--s-5)}
+  .card-logo{width:48px;height:48px;font-size:24px}
+  .card-title{font-size:var(--fz-lg)}
+}
+</style>
+</head><body>
 <div class="card">
-<h1>ZCloud</h1><p>Đăng nhập Zalo</p>
-<div class="tabs"><button class="on" onclick="st('qr')">QR Code</button><button onclick="st('ck')">Cookie</button></div>
-<div id="tqr"><div class="qr-box" id="qb"><div class="loading">Đang tạo QR...</div></div><div id="qs" class="st"></div></div>
-<div id="tck" class="hd"><p style="font-size:13px;color:#666;margin-bottom:8px">Dán cookie từ Zalo Web (F12 > Cookies > chat.zalo.me)</p>
-<div class="tc"><textarea id="cki" placeholder="zpsid=...; zpw_sek=..."></textarea></div>
-<button class="btn" onclick="lc()">Đăng nhập</button><div id="cs" class="st"></div></div>
+  <div class="card-brand">
+    <div class="card-logo">💬</div>
+    <h1 class="card-title">ZCloud</h1>
+    <p class="card-sub">Đăng nhập tài khoản Zalo</p>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="on" onclick="st('qr')" role="tab">Quét QR</button>
+    <button onclick="st('ck')" role="tab">Cookie</button>
+  </div>
+
+  <div id="tqr">
+    <div class="qr-box" id="qb"><div class="qr-loading">Đang tạo mã QR…</div></div>
+    <div class="qr-hint">Mở Zalo trên điện thoại → <b>Cài đặt</b> → <b>Máy tính và tablet</b> → Quét mã QR bên trên.</div>
+    <div id="qs" class="st"></div>
+  </div>
+
+  <div id="tck" class="hd">
+    <div class="qr-hint" style="text-align:left;margin-bottom:var(--s-2)">
+      Dán cookie từ <b>Zalo Web</b> (F12 → Application → Cookies → chat.zalo.me).
+    </div>
+    <div class="tc">
+      <textarea id="cki" placeholder="zpsid=...; zpw_sek=..."></textarea>
+    </div>
+    <button class="btn" onclick="lc()">Đăng nhập</button>
+    <div id="cs" class="st"></div>
+  </div>
 </div>
+
 <script>
 var pt=null;
-function st(t){document.getElementById('tqr').classList.add('hd');document.getElementById('tck').classList.add('hd');
-document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('on')});
-if(t=='qr'){document.getElementById('tqr').classList.remove('hd');document.querySelector('.tabs button:first-child').classList.add('on');if(!pt)cq();}
-else{document.getElementById('tck').classList.remove('hd');document.querySelector('.tabs button:last-child').classList.add('on');if(pt){clearInterval(pt);pt=null;}}}
-async function cq(){try{var r=await fetch('/api/qr/create');var d=await r.json();
-if(d.ok){document.getElementById('qb').innerHTML='<img src="data:image/png;base64,'+d.data.image+'" alt="QR">';
-document.getElementById('qs').className='st i';document.getElementById('qs').textContent='Quét QR bằng Zalo trên điện thoại';
-var ex=d.data.expires*1000;
-pt=setInterval(async function(){
-if(Date.now()>ex){clearInterval(pt);pt=null;document.getElementById('qs').className='st e';document.getElementById('qs').textContent='QR hết hạn, tạo mã mới...';setTimeout(cq,2000);return;}
-try{var p=await fetch('/api/qr/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:d.data.token})});var p2=await p.json();
-if(p2.ok){clearInterval(pt);document.getElementById('qs').className='st s';document.getElementById('qs').textContent='Đăng nhập thành công!';setTimeout(function(){window.location.href='/chat'},1000);}
-else{document.getElementById('qs').className='st e';document.getElementById('qs').textContent='Lỗi: '+p2.error;if(p2.error.indexOf('hết hạn')>=0||p2.error.indexOf('expired')>=0){clearInterval(pt);pt=null;setTimeout(cq,2000);}}
-}catch(e){}},2000);}
-else{document.getElementById('qb').innerHTML='<div class="loading">Lỗi: '+d.error+'</div>';}
-}catch(e){document.getElementById('qb').innerHTML='<div class="loading">Lỗi kết nối</div>';}}
-async function lc(){var s=document.getElementById('cs');var c=document.getElementById('cki').value.trim();
-if(!c){s.textContent='Nhập cookie';s.className='st e';return}
-s.textContent='Đang đăng nhập...';s.className='st i';
-try{var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:c})});var d=await r.json();
-if(d.ok){s.textContent='Đăng nhập thành công!';s.className='st s';setTimeout(function(){window.location.href='/chat'},1000);}
-else{s.textContent='Lỗi: '+d.error;s.className='st e';}
-}catch(e){s.textContent='Lỗi kết nối';s.className='st e';}}
+function st(t){
+  document.getElementById('tqr').classList.toggle('hd',t!=='qr');
+  document.getElementById('tck').classList.toggle('hd',t!=='ck');
+  document.querySelectorAll('.tabs button').forEach(function(b,i){
+    b.classList.toggle('on',(t==='qr'&&i===0)||(t==='ck'&&i===1));
+    b.setAttribute('aria-selected',String((t==='qr'&&i===0)||(t==='ck'&&i===1)));
+  });
+  if(t==='qr'){if(!pt)cq();}
+  else{if(pt){clearInterval(pt);pt=null;}}
+}
+async function cq(){
+  var qb=document.getElementById('qb');var qs=document.getElementById('qs');
+  qb.innerHTML='<div class="qr-loading">Đang tạo mã QR…</div>';
+  qs.className='st';qs.textContent='';
+  try{
+    var r=await fetch('/api/qr/create');var d=await r.json();
+    if(!d.ok||!d.data){throw new Error(d.error||'Tạo QR thất bại')}
+    qb.innerHTML='<img src="data:image/png;base64,'+d.data.image+'" alt="QR Zalo">';
+    qs.className='st i';qs.textContent='Quét QR bằng Zalo trên điện thoại';
+    var ex=d.data.expires*1000;
+    pt=setInterval(async function(){
+      if(Date.now()>ex){
+        clearInterval(pt);pt=null;
+        qs.className='st e';qs.textContent='QR hết hạn, đang tạo mã mới…';
+        setTimeout(cq,2000);return;
+      }
+      try{
+        var p=await fetch('/api/qr/poll?token='+encodeURIComponent(d.data.token));var p2=await p.json();
+        if(p2.ok&&p2.data&&p2.data.accountId){
+          clearInterval(pt);qs.className='st s';qs.textContent='Đăng nhập thành công, đang chuyển…';
+          setTimeout(function(){window.location.href='/chat'},800);
+        }else if(!p2.ok){
+          if(p2.error&&(p2.error.indexOf('hết hạn')>=0||p2.error.indexOf('expired')>=0)){
+            clearInterval(pt);pt=null;qs.className='st e';
+            qs.textContent='QR hết hạn, đang tạo mã mới…';setTimeout(cq,2000);
+          }else{
+            qs.className='st e';qs.textContent='Lỗi: '+(p2.error||'không xác định');
+          }
+        }
+      }catch(e){}
+    },2000);
+  }catch(e){
+    qb.innerHTML='<div class="qr-loading">Lỗi kết nối: '+e.message+'</div>';
+  }
+}
+async function lc(){
+  var s=document.getElementById('cs');var c=document.getElementById('cki').value.trim();
+  if(!c){s.textContent='Vui lòng dán cookie vào ô trên';s.className='st e';return}
+  s.textContent='Đang đăng nhập…';s.className='st i';
+  try{
+    var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:c})});
+    var d=await r.json();
+    if(d.ok){s.textContent='Đăng nhập thành công, đang chuyển…';s.className='st s';
+      setTimeout(function(){window.location.href='/chat'},800);
+    }else{s.textContent='Lỗi: '+(d.error||'đăng nhập thất bại');s.className='st e';}
+  }catch(e){s.textContent='Lỗi kết nối';s.className='st e';}
+}
 cq();
-</script></body></html>
+</script>
+</body></html>
