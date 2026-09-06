@@ -158,3 +158,62 @@ log rõ lỗi trong `journalctl -u zcloud`. Tránh được tình trạng
 
 Với lỗi runtime/DOM: dùng curl test endpoint + đọc response, hoặc
 cài Playwright/Puppeteer nếu cần UI test thật (chưa có).
+
+
+
+## Lightpanda — headless browser cho verify UI
+
+Cài tại `/root/.local/bin/lightpanda` (binary). Dùng để thao tác / verify
+UI thật mà không cần Chromium đầy đủ (~120MB vs ~500MB).
+
+### 4 entry points
+
+| Lệnh | Dùng cho |
+|------|---------|
+| `lightpanda fetch <url>` | 1 lần lấy HTML/markdown sau JS |
+| `lightpanda serve` | CDP server port 9222 (Puppeteer/Playwright) |
+| `lightpanda run script.js` | PandaScript — automation reproducible |
+| `lightpanda mcp` | MCP stdio cho AI agent (Cursor/Claude Code/Codex) |
+| `lightpanda agent` | REPL tương tác natural language |
+
+### Verify scripts trong `scripts/`
+
+- **`check-js.sh`** — `node --check` trên từng `<script>` block trong HTML.
+  Phát hiện SyntaxError. Đã tích hợp vào watch mode (skip restart nếu fail).
+- **`check-ui.sh`** — Smoke test qua Lightpanda CDP: navigate `/chat`, check
+  DOM (title, CK_SCRIPT, mg-add, modal, cv count...). Tự bắt exceptionDetails
+  trong response của Runtime.evaluate (Lightpanda early version không emit
+  `Runtime.exceptionThrown` qua event).
+- **`lp-tests/chat-basic.js`** — PandaScript 3 test case: load /chat,
+  click + Thêm (QR load), switch tab Cookie.
+
+### MCP config
+
+- **Codex CLI**: `~/.codex/config.toml` có `[mcp_servers.lightpanda]`.
+  Cần **restart session Codex mới** để pick up (session đang chạy cache config).
+- **Claude Code**: `~/.claude.json` đã add. Verify `claude mcp list` → "Connected".
+- **Cursor / Windsurf**: thêm vào `.cursor/mcp.json` hoặc Cascade MCP settings.
+
+### Caveat quan trọng (Lightpanda 1.0.0-nightly)
+
+- KHÔNG emit `Runtime.exceptionThrown` qua CDP event → phải check
+  `exceptionDetails` trong response của `Runtime.evaluate`.
+- `window.onerror` không bắt được uncaught error từ script khác.
+- Để bắt mọi runtime error tự động → fallback Puppeteer + Chromium.
+
+### Verify nhanh
+
+```bash
+# 1. JS syntax
+./scripts/check-js.sh
+
+# 2. UI smoke test
+./scripts/check-ui.sh
+
+# 3. PandaScript test (cần zcloudd đang chạy)
+lightpanda run scripts/lp-tests/chat-basic.js
+
+# 4. MCP đã add cho Codex/Claude Code
+codex mcp list
+claude mcp list
+```
