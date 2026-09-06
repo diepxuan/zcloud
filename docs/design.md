@@ -6,10 +6,10 @@
 >
 > Lịch sử cập nhật:
 > - 2026-09-06: UI polish pass — sửa token self-reference (chat/login),
->   sửa CSS token self-reference, đổi layout `mg-item` sang 3 dòng (avatar
->   chiếm full height, tên / ID / badge+nút ở 3 dòng riêng), stats bar 3
->   dòng, empty state cho tab Quản lý, `switchAcc` đóng WS cũ để reconnect.
->   Bổ sung §B12–§B15.
+>   sửa CSS token self-reference, layout `mg-item` 3 dòng (avatar full
+>   height, tên / ID / badge+nút ở 3 dòng riêng), stats bar 3 dòng,
+>   empty state cho tab Quản lý, `switchAcc` đóng WS cũ để reconnect.
+>   Bổ sung §B12–§B16 (B16: Cookie tab guide 4 bước + auto-extract script).
 
 ---
 
@@ -506,6 +506,60 @@ function switchAcc(id){
   ca=id; uh(); sy(); st('ch');
 }
 ```
+
+
+### B16. Cookie tab guide — 4 bước + auto-extract script
+
+Tab Cookie trong modal Thêm tài khoản dùng **4 bước rõ ràng** + script JS
+auto-extract cookie từ `document.cookie` của `chat.zalo.me`. User copy script,
+paste vào Console của Zalo → cookie tự in ra + tự copy vào clipboard →
+user quay lại zcloud bấm **Dán cookie** để điền vào textarea.
+
+```
+┌──────────────────────────────────────────┐
+│ 1  Mở chat.zalo.me, F12 → Console        │
+│ 2  Bấm [Sao chép script], paste vào      │
+│    Console của Zalo, Enter                │
+│ 3  Console in dòng "zcloud_cookie:..."    │
+│    → tự copy vào clipboard                │
+│ 4  Quay lại đây, bấm [Dán cookie]        │
+└──────────────────────────────────────────┘
+[📋 Sao chép script]   (đổi thành ✓ Đã sao chép 1.5s)
+<details><summary>Xem script</summary><pre>...</pre></details>
+[📥 Dán cookie từ clipboard]
+[textarea                ]
+[🔵 Đăng nhập bằng Cookie]
+```
+
+**Script CK_SCRIPT (chạy trong Console của `chat.zalo.me`):**
+```js
+(()=>{const c=document.cookie;if(!c){console.log("zcloud_cookie: ");return}
+const pairs=c.split(";").map(p=>p.trim()).filter(p=>p);
+const out=pairs.filter(p=>/^(zpsid|zpw_sek|__zi|zpw_seck|__zpw_sek|app.event.id|clientId|isDark)=/.test(p));
+const line=out.join("; ");
+console.log("zcloud_cookie: "+line);
+try{navigator.clipboard.writeText(line)}catch(e){}})();
+```
+
+Chỉ lọc các cookie Zalo cần (`zpsid`, `zpw_sek`, `__zi`...), bỏ tracking.
+Format output: `name1=value1; name2=value2` — khớp `parseCookie()` server.
+
+**Component CSS:**
+- `.ck-guide` — container hướng dẫn: nền `surface-2`, border, radius md.
+- `.ck-step` — flex row, gap s-2; number circle `.ck-num` 20×20 pill brand.
+- `.ck-copy` — button outline brand; state `.ck-copy.ok` background success.
+- `.ck-code-wrap` — `<details>` mặc định đóng, summary "Xem script".
+- `.ck-code` — `<pre>` font mono, max-height 140px scroll dọc.
+
+**Paste logic:**
+- Match `/zcloud_cookie:\s*(.+)/` → lấy phần sau prefix.
+- Hoặc match `/zpsid=/` → lấy raw (user paste thủ công).
+- Không match → báo lỗi "Clipboard không có cookie zpsid".
+
+**Clipboard API:**
+- `navigator.clipboard.writeText` cần HTTPS hoặc localhost. Khi fail → fallback
+  select text trong `<pre>` để user Ctrl+C.
+- `navigator.clipboard.readText` tương tự; nếu fail → báo user dán thủ công.
 
 
 ## Phần C — Tham chiếu
