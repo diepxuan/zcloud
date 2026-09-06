@@ -534,6 +534,7 @@ body{
       <div id="qr-loading" class="qr-loading">Đang tạo mã QR…</div>
       <img id="qr-img" style="display:none" alt="QR Zalo">
       <div id="qr-expire" class="qr-expire" style="display:none">Mã QR hết hạn. Vui lòng tạo mới.</div>
+      <div id="qr-err" class="modal-err" style="display:none"></div>
       <div class="qr-hint">Mở Zalo điện thoại → <b>Cài đặt</b> → <b>Máy tính và tablet</b> → Quét mã QR.</div>
     </div>
     <div class="modal-body" id="cookie-pane" style="display:none">
@@ -542,7 +543,6 @@ body{
       <button class="modal-primary" onclick="submitCookie()">Đăng nhập bằng Cookie</button>
       <div id="cookie-err" class="modal-err" style="display:none"></div>
     </div>
-    <div id="qr-err" class="modal-err" style="display:none"></div>
   </div>
 </div>
 
@@ -668,7 +668,10 @@ async function createQR(){
 		setTimeout(pollQR,1500);
 	}catch(e){
 		document.getElementById('qr-loading').style.display='none';
-		var er=document.getElementById('qr-err');er.textContent=e.message||String(e);er.style.display='';
+		var er=document.getElementById('qr-err');
+		er.innerHTML='<div>'+esc(e.message||String(e))+'</div>'
+			+'<button class="modal-primary" style="margin-top:var(--s-2)" onclick="createQR()">↻ Tạo lại QR</button>';
+		er.style.display='';
 	}
 }
 // Poll QR. Khi thanh cong -> reload page.
@@ -683,9 +686,12 @@ async function pollQR(){
 			// Login thanh cong!
 			stopQRPoll();hideAddModal();window.location.reload();return;
 		}
-		// Loi: hien thi
+		// Loi: hien thi + cho nut tao lai
 		if(!d.ok){
-			document.getElementById('qr-expire').style.display='';
+			var ex=document.getElementById('qr-expire');
+			ex.innerHTML='<div>'+esc(d.error||'QR hết hạn hoặc bị lỗi')+'</div>'
+				+'<button class="modal-primary" style="margin-top:var(--s-2)" onclick="createQR()">↻ Tạo lại QR</button>';
+			ex.style.display='';
 			stopQRPoll();
 			return;
 		}
