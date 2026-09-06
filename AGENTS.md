@@ -23,6 +23,9 @@ Mỗi session startup, đọc theo thứ tự:
 - **Source code:** `src/zcloud/` (Go module `github.com/diepxuan/zcloud`)
 - **Task list + master plan + audit:** `docs/tasks.md`
 - **Thiết kế:** `docs/design.md`
+  - **Phần A**: Kiến trúc + quy ước code (đọc trước khi sửa backend).
+  - **Phần B**: Design system — tokens, components, layout (đọc trước khi sửa UI).
+  - **Phần C**: Tham chiếu.
 - **Chính sách push:** Em toàn quyền quyết định, push trực tiếp vào `main` sau mỗi subtask. Không cần review.
 - **Công nghệ:** Go core + server, SQLite + disk storage, vanilla JS web UI
 
@@ -38,6 +41,18 @@ Mỗi session startup, đọc theo thứ tự:
 - Công việc 02 (Android sync) đã tạm hoãn — không cần làm
 - Công việc cần làm kế tiếp: trong `docs/tasks.md` §5 "Tồn đọng cần làm tiếp"
 - **Mỗi lần code xong 1 subtask → commit + push vào `main` ngay, không cần hỏi**
+
+## Quy ước khi sửa Web UI (`internal/api/web/`)
+
+1. **Đọc `docs/design.md` Phần B** trước khi sửa HTML/CSS.
+2. **Dùng CSS variables** (`var(--c-brand)`, `var(--s-4)`, `var(--r-md)`...). KHÔNG hardcode màu/spacing.
+3. **Component lặp lại > 2 lần** → tách thành class dùng chung.
+4. **Mobile-first**: layout phải responsive từ 360px.
+5. **Không load dependency ngoài** (CDN, font, framework) — vanilla JS thuần, embed trong binary.
+6. **Tiếng Việt** cho user-facing text, **tiếng Anh** cho code/identifier.
+7. **Không tự ý thay đổi design tokens** (`--c-brand`, spacing scale...) — hỏi Sếp.
+8. **Build verify** sau khi sửa: `cd src/zcloud && go build ./...` phải pass.
+9. **Smoke test UI**: mở `/chat` + `/` qua browser, kiểm tra render.
 
 ## Giới hạn đỏ
 - Không sửa schema khi chưa được yêu cầu

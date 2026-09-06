@@ -30,12 +30,27 @@ Theo `SOUL.md §4` thứ tự boot:
 | File | Vai trò |
 |------|---------|
 | `docs/tasks.md` | **Single source of truth** — master plan + audit + trạng thái |
-| `docs/design.md` | Thiết kế kiến trúc + quy ước code (đọc trước khi code) |
+| `docs/design.md` | Thiết kế tổng (đọc trước khi code/sửa UI): |
+| &nbsp;&nbsp;&nbsp;&nbsp;Phần A | Kiến trúc + quy ước code (backend) |
+| &nbsp;&nbsp;&nbsp;&nbsp;Phần B | **Design system** — tokens, components, layout (Web UI) |
+| &nbsp;&nbsp;&nbsp;&nbsp;Phần C | Tham chiếu |
 | `docs/tasks/<id>-<tên>.md` | Chi tiết từng task (sub-plan, kiểm tra) |
 | `docs/database/schema.sql` | Schema DB — sync từ `store.go` |
 | `docs/references/` | Source tham khảo (zca-js, zcago, Za-go) |
 | `MEMORY.md` | Long-term memory (main session) |
 | `memory/YYYY-MM-DD.md` | Daily log |
+
+## Khi sửa Web UI (`internal/api/web/*.html`)
+
+**Đọc `docs/design.md` Phần B** trước khi sửa. Tóm tắt:
+
+1. **Design tokens** ở `:root` (CSS variables): `--c-brand`, `--c-text`, `--s-4`, `--r-md`, `--sh-2`...
+2. **KHÔNG hardcode màu/spacing** trong component — luôn `var(--c-...)`.
+3. **Component patterns**: button (primary/secondary/ghost/danger), input, card, modal, badge, chat bubble, image grid, lightbox.
+4. **Layout mobile-first**: breakpoint 768px, sidebar 60px, panel 320px, header 56px.
+5. **Tiếng Việt** cho user-facing, **tiếng Anh** cho code/identifier.
+6. **Không CDN, không framework** — vanilla JS + CSS thuần, embed trong binary.
+7. **Không tự ý đổi design tokens** — hỏi Sếp trước.
 
 ## Mục tiêu dự án
 
