@@ -634,8 +634,9 @@ async function restartListener(id){
 async function showAddModal(){
 	var m=document.getElementById('add-modal');if(!m)return;
 	m.style.display='flex';
+	// Chi goi switchAddTab de reset state va trigger createQR ben trong no.
+	// Khong goi createQR truc tiep de tranh 2 request song song.
 	switchAddTab('qr');
-	await createQR();
 }
 // An modal.
 function hideAddModal(){
@@ -661,7 +662,8 @@ async function createQR(){
 		var r=await fetch('/api/qr/create');var d=await r.json();
 		if(!d.ok||!d.data){throw new Error(d.error||'tao QR that bai')}
 		qrToken=d.data.token;
-		document.getElementById('qr-img').src=d.data.image;
+		// Phai co prefix data:image/png;base64, — neu khong browser khong hien thi.
+		document.getElementById('qr-img').src='data:image/png;base64,'+d.data.image;
 		document.getElementById('qr-img').style.display='';
 		document.getElementById('qr-loading').style.display='none';
 		// Poll sau 1.5s
@@ -984,3 +986,4 @@ function fc(q){var qr=rd(q);document.querySelectorAll('#pn-ch .cv').forEach(func
 function ff(q){var qr=rd(q);document.querySelectorAll('#pn-co .cv').forEach(function(c){c.style.display=rd(c.textContent).indexOf(qr)!==-1?'':'none'})}
 </script>
 </body></html>
+
