@@ -23,6 +23,15 @@ build() {
     cd "$PROJECT_ROOT"
 }
 
+# check_js: chay node --check tren cac <script> trong HTML. Neu fail → return 1.
+check_js() {
+    local SCRIPT_DIR="$(cd "$(dirname "$0")"; pwd)"
+    if [ -x "$SCRIPT_DIR/check-js.sh" ]; then
+        "$SCRIPT_DIR/check-js.sh" || return 1
+    fi
+    return 0
+}
+
 stop_binary() {
     if [ -n "$BINARY_PID" ] && kill -0 "$BINARY_PID" 2>/dev/null; then
         kill "$BINARY_PID" 2>/dev/null
@@ -47,7 +56,12 @@ while true; do
         "$SOURCE" \
         --exclude '(.git|.db|_test.go|.sum)' \
         2>/dev/null || sleep 2
-    info "Code thay đổi → build + restart"
+    info "Code thay đổi → check JS + build + restart"
+    # Check JS syntax truoc. Neu fail → giu binary cu chay, canh bao.
+    if ! check_js; then
+        info "JS syntax error — KHÔNG restart, giữ binary cũ. Xem loi ben tren."
+        continue
+    fi
     stop_binary
     build
     start_binary
