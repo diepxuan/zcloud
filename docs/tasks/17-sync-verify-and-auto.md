@@ -2,7 +2,7 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.3
-- **Trạng thái:** 🟡 Đang làm (đợt 09/2026)
+- **Trạng thái:** 🟢 Xong (đợt 09/2026)
 - **Phụ thuộc:** [10-sync-history.md](10-sync-history.md), [13-media-download.md](13-media-download.md)
 
 ## Mục tiêu
