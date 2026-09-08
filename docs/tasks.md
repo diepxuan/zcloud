@@ -187,10 +187,12 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 ---
 ## 5.3 Đang thực hiện (đợt 09/2026) — Đồng bộ dữ liệu (T1+T2+T3)
 
-Sếp yêu cầu làm 3 phần trước, ghi T11 làm sau:
+✅ **Hoàn thành đợt này (08/09/2026):**
 
-1. **T1 — Verify end-to-end + integration test sync**: chạy thật từ Zalo client khác gửi tin → zcloud nhận qua WS 510/511 → DB có row → broadcast browser WS. Thêm test mô phỏng WS payload cho `handleOldMessages` + `SaveMessage` dedupe.
-2. **T2 — Auto-sync nền**: scheduler chạy định kỳ (mặc định 10 phút) duyệt mọi conversation active của mọi account, gọi `RequestOldMessagesViaListener` với `lastId = max(message_id)` để kéo dần về DB kể cả khi UI không mở. Throttle + backoff.
-3. **T3 — Đồng bộ media kèm tin nhắn (task T2 cũ)**: trong `handleOldMessages` + `handleNewMessages`, sau khi `SaveMessage`, nếu `msgType` là media (image/video/file/voice/sticker) → enqueue job vào media worker → gọi `DownloadMedia`. Dedupe theo `media.id` + skip nếu file đã tồn tại trên disk.
+- **T1 — Verify + integration test**: test parse WS 510/511 (cá nhân + nhóm), test SaveMessage dedupe qua SQLite in-memory, test end-to-end parse → SaveMessage (`internal/core/sync_test.go`, `internal/store/store_test.go`).
+- **T2 — Auto-sync scheduler** (`internal/api/sync_scheduler.go`): goroutine quét account active mỗi 10 phút (env `ZC_AUTOSYNC_INTERVAL`, min 30s), throttle 500ms/conv, idempotent lock tránh overlap, truyền `lastId` từ `conv.LastMsgID` cho WS cmd 510/511. `RequestOldMessagesViaListener` nhận thêm `lastID`; `HandleSyncMessages` nhận `lastId` từ client (fallback `conv.LastMsgID`).
+- **T3 — Đồng bộ media đầy đủ** (`internal/api/ws.go`): `MsgType.IsMedia()` helper, `extractAllMedia` (dedupe URL), `downloadOneMedia` (skip nếu file tồn tại, retry 3 lần cho cả network error và HTTP 5xx, lưu meta qua `SaveMedia`, broadcast `media_downloaded`).
+
+**Smoke test còn lại** cần Sếp login QR (T7 block): gửi tin thật từ Zalo client khác → DB có row + media file trong `/storages/media/`.
 
 Sau khi 3 phần trên ổn định → làm T11 (PC desktop / cross-device sync).
