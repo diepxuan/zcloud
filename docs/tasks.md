@@ -156,6 +156,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | T8 | Verify end-to-end sau re-login | 🟡 Medium | Gửi tin qua Zalo client khác → DB có message + browser WS nhận event |
 | T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
 | T10 | WS AES-GCM + desktop command set | 🟢 Optional | PC bundle xác nhận AES-GCM layout và cmd 590-592/630-634 nếu làm cross-device/backup sync |
+| T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟢 Deferred | Làm sau khi T1+T2+T3 (verify + integration test, auto-sync nền, đồng bộ media kèm tin nhắn) hoàn thành. Xem chi tiết tại [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md) |
 
 ## 5.1. Đã hoàn thành trong đợt này (29/07/2026)
 
@@ -184,3 +185,12 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | Za-go | Go | 64★ | `docs/references/za-go/` |
 
 ---
+## 5.3 Đang thực hiện (đợt 09/2026) — Đồng bộ dữ liệu (T1+T2+T3)
+
+Sếp yêu cầu làm 3 phần trước, ghi T11 làm sau:
+
+1. **T1 — Verify end-to-end + integration test sync**: chạy thật từ Zalo client khác gửi tin → zcloud nhận qua WS 510/511 → DB có row → broadcast browser WS. Thêm test mô phỏng WS payload cho `handleOldMessages` + `SaveMessage` dedupe.
+2. **T2 — Auto-sync nền**: scheduler chạy định kỳ (mặc định 10 phút) duyệt mọi conversation active của mọi account, gọi `RequestOldMessagesViaListener` với `lastId = max(message_id)` để kéo dần về DB kể cả khi UI không mở. Throttle + backoff.
+3. **T3 — Đồng bộ media kèm tin nhắn (task T2 cũ)**: trong `handleOldMessages` + `handleNewMessages`, sau khi `SaveMessage`, nếu `msgType` là media (image/video/file/voice/sticker) → enqueue job vào media worker → gọi `DownloadMedia`. Dedupe theo `media.id` + skip nếu file đã tồn tại trên disk.
+
+Sau khi 3 phần trên ổn định → làm T11 (PC desktop / cross-device sync).
