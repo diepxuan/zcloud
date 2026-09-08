@@ -524,6 +524,7 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccountID string `json:"accountId"`
 		ConvID    string `json:"convId"`
+		LastID    string `json:"lastId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, 400, "invalid body")
@@ -537,10 +538,14 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	synced := 0
 	// Gửi request old messages qua WS listener nền
 	convType := 0
+	lastID := req.LastID
 	if conv != nil {
 		convType = conv.ConvType
+		if lastID == "" {
+			lastID = conv.LastMsgID
+		}
 	}
-	if RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType) {
+	if RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType, lastID) {
 		synced++
 	}
 

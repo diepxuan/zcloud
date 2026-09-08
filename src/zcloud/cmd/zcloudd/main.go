@@ -132,6 +132,20 @@ func main() {
 		}
 	}()
 
+	// Auto-sync scheduler — định kỳ kéo tin nhắn cũ cho mọi conversation.
+	// Tần suất: env ZC_AUTOSYNC_INTERVAL (Go duration), mặc định 10 phút.
+	syncInterval := 10 * time.Minute
+	if v := os.Getenv("ZC_AUTOSYNC_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 30*time.Second {
+			syncInterval = d
+		}
+	}
+	scheduler := api.NewSyncScheduler(db, logger, syncInterval)
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	scheduler.Start(schedulerCtx)
+	defer scheduler.Stop()
+	logger.Printf("auto-sync: scheduler started (interval=%s)", syncInterval)
+
 	<-done
 	logger.Println("Đang tắt server...")
 
@@ -141,6 +155,7 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Fatalf("Shutdown error: %v", err)
 	}
+	schedulerCancel()
 
 	logger.Println("Server đã tắt.")
 }

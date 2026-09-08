@@ -160,7 +160,8 @@ const (
 
 // StartZaloListener khởi động Zalo WebSocket listener cho account
 // RequestOldMessagesViaListener gửi yêu cầu old messages qua WS listener nền
-func RequestOldMessagesViaListener(accountID, convID string, convType int) bool {
+// lastID = "" → listener dùng sentinel lấy batch mới nhất.
+func RequestOldMessagesViaListener(accountID, convID string, convType int, lastID string) bool {
 	zaloListenerMu.Lock()
 	entry := zaloListeners[accountID]
 	zaloListenerMu.Unlock()
@@ -179,7 +180,7 @@ func RequestOldMessagesViaListener(accountID, convID string, convType int) bool 
 		tt = core.ThreadGroup
 	}
 	fmt.Printf("[zcloud] ws-sync: sending RequestOldMessages cmd=%d\n", 510+int(tt))
-	if err := client.WS.RequestOldMessages(context.Background(), tt, ""); err != nil {
+	if err := client.WS.RequestOldMessages(context.Background(), tt, lastID); err != nil {
 		fmt.Printf("[zcloud] ws-sync: request err=%v\n", err)
 		return false
 	}
