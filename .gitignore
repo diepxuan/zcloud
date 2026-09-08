@@ -54,3 +54,4 @@ docs/references/*/.git/
 
 # RE scripts
 scripts/re/node_modules/
+storages/
