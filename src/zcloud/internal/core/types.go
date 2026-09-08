@@ -21,6 +21,14 @@ const (
 	MsgTypeLocation MsgType = 9
 )
 
+// IsMedia trả về true nếu message type có attachment media cần tải về disk.
+func (t MsgType) IsMedia() bool {
+	switch t {
+	case MsgTypeImage, MsgTypeSticker, MsgTypeFile, MsgTypeVoice, MsgTypeVideo:
+		return true
+	}
+	return false
+}
 // EventType represents WebSocket event types
 type EventType int
 

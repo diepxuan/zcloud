@@ -464,69 +464,124 @@ type mediaDownloadInfo struct {
 	MsgID    string
 }
 
-func extractMediaFromAttachments(atts []core.Attachment) mediaDownloadInfo {
-	if len(atts) == 0 {
-		return mediaDownloadInfo{}
-	}
-	a := atts[0]
-	if a.URL == "" {
-		return mediaDownloadInfo{}
-	}
-	ext := ""
-	if i := strings.LastIndex(a.FileName, "."); i >= 0 {
-		ext = a.FileName[i+1:]
-	}
-	if ext == "" {
-		u, err := url.Parse(a.URL)
-		if err == nil {
-			ext = strings.TrimPrefix(path.Ext(u.Path), ".")
+// extractAllMedia duyệt toàn bộ attachments, trả về thông tin download cho
+// từng cái có URL. Bỏ qua các variant URL phụ (chỉ lấy URL chính, không
+// lấy thumb/oriUrl duplicate).
+func extractAllMedia(atts []core.Attachment) []mediaDownloadInfo {
+	var out []mediaDownloadInfo
+	seen := make(map[string]bool)
+	for _, a := range atts {
+		if a.URL == "" {
+			continue
 		}
+		// Dedupe theo URL — attachment đôi khi có nhiều variant (normal/hd/ori)
+		// nhưng cùng file gốc. Giữ URL đầu tiên.
+		if seen[a.URL] {
+			continue
+		}
+		seen[a.URL] = true
+		ext := ""
+		if i := strings.LastIndex(a.FileName, "."); i >= 0 {
+			ext = a.FileName[i+1:]
+		}
+		if ext == "" {
+			u, err := url.Parse(a.URL)
+			if err == nil {
+				ext = strings.TrimPrefix(path.Ext(u.Path), ".")
+			}
+		}
+		if ext == "" {
+			ext = "bin"
+		}
+		out = append(out, mediaDownloadInfo{
+			URL: a.URL, FileName: a.FileName, FileExt: ext, MsgID: a.ID,
+		})
 	}
-	if ext == "" {
-		ext = "bin"
-	}
-	return mediaDownloadInfo{
-		URL: a.URL, FileName: a.FileName, FileExt: ext, MsgID: a.ID,
-	}
+	return out
 }
+
+const mediaDownloadRetries = 3
 
 func maybeAutoDownloadMedia(ctx context.Context, st *store.Store, accountID string, msg *core.Message, logger *log.Logger) {
 	if st == nil || msg == nil || len(msg.Attachments) == 0 {
 		return
 	}
-	info := extractMediaFromAttachments(msg.Attachments)
-	if info.URL == "" {
+	if !msg.Type.IsMedia() {
 		return
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, "GET", info.URL, nil)
-	if err != nil {
-		logger.Printf("zalo-ws: media request err=%v", err)
+	items := extractAllMedia(msg.Attachments)
+	if len(items) == 0 {
 		return
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Printf("zalo-ws: media download err=%v", err)
-		return
+	for _, info := range items {
+		downloadOneMedia(ctx, st, accountID, msg, info, logger)
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Printf("zalo-ws: media read err=%v", err)
-		return
-	}
-	if len(data) == 0 {
-		return
-	}
+}
+
+// downloadOneMedia tải 1 file với retry. Skip nếu file đã tồn tại trên disk.
+func downloadOneMedia(ctx context.Context, st *store.Store, accountID string, msg *core.Message, info mediaDownloadInfo, logger *log.Logger) {
 	mediaDir := st.MediaDir(accountID, msg.ConvID)
 	fileID := info.MsgID
 	if fileID == "" {
 		fileID = msg.ID
 	}
 	if fileID == "" {
-		fileID = fmt.Sprintf("%d", time.Now().UnixMilli())
+		fileID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	filePath := filepath.Join(mediaDir, fileID+"."+info.FileExt)
+	// Dedupe: nếu file đã tồn tại trên disk, không tải lại.
+	if _, err := os.Stat(filePath); err == nil {
+		return
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	var data []byte
+	for attempt := 1; attempt <= mediaDownloadRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "GET", info.URL, nil)
+		if err != nil {
+			logger.Printf("zalo-ws: media request err=%v", err)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Printf("zalo-ws: media download err=%v (attempt %d/%d)", err, attempt, mediaDownloadRetries)
+			if attempt < mediaDownloadRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
+			}
+			return
+		}
+		if resp.StatusCode >= 400 {
+			_ = resp.Body.Close()
+			logger.Printf("zalo-ws: media http %d (attempt %d/%d)", resp.StatusCode, attempt, mediaDownloadRetries)
+			if attempt < mediaDownloadRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
+			}
+			return
+		}
+		buf, rerr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if rerr != nil {
+			logger.Printf("zalo-ws: media read err=%v (attempt %d/%d)", rerr, attempt, mediaDownloadRetries)
+			if attempt < mediaDownloadRetries {
+				time.Sleep(time.Duration(attempt) * time.Second)
+				continue
+			}
+			return
+		}
+		if len(buf) == 0 {
+			return
+		}
+		data = buf
+		break
+	}
+	if len(data) == 0 {
+		return
+	}
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		logger.Printf("zalo-ws: media mkdir err=%v", err)
+		return
+	}
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		logger.Printf("zalo-ws: media save err=%v", err)
 		return
