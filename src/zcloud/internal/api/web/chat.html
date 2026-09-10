@@ -852,13 +852,13 @@ function renderMsg(m){
     return renderAck(m);
   }
   var dv=document.createElement('div');dv.className='msg '+(m.fromId===me?'out':'in');dv.dataset.msg=m.id;
-  var imgsOnly=!!(m.attachments&&m.attachments.length)&&!((m.content||'').trim());
-  if(imgsOnly) dv.classList.add('img-only');
+  var attHtml=renderAttachments(m.attachments||[],m.id,m.convId||cc,m.content);
+  if(attHtml.indexOf('data-only-imgs="1"')>=0) dv.classList.add('img-only');
   var t=new Date(m.timestamp);
   var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
   var fn=(m.fromName&&m.fromId!==me)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
   var body='';
-  body+=renderAttachments(m.attachments||[],m.id,m.convId||cc);
+  body+=attHtml;
   body+=esc(m.content||'');
   dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';
   return dv;
@@ -885,7 +885,7 @@ function localMediaUrl(url){
 // Ảnh: <img> grid (1 ảnh max 320px, 2-3 ảnh 2 cột vuông, 4+ ảnh 3 cột).
 //       URL Zalo CDN → auto POST /api/media/download để proxy về /media/.
 // Video: <video controls>. File khác: <a> tải về.
-function renderAttachments(atts,msgId,convId){
+function renderAttachments(atts,msgId,convId,content){
   if(!atts||!atts.length) return '';
   var imgs=[],vids=[],files=[];
   for(var i=0;i<atts.length;i++){
@@ -900,7 +900,10 @@ function renderAttachments(atts,msgId,convId){
     else{files.push({url:a.url,fileName:a.fileName,fileSize:a.fileSize,id:id})}
   }
   var html='';
-  if(imgs.length){html+=renderImageGrid(imgs,msgId,convId)}
+  if(imgs.length){
+    var onlyImgs=!(content||'').trim()&&!vids.length&&!files.length;
+    html+=renderImageGrid(imgs,msgId,convId,onlyImgs);
+  }
   for(var j=0;j<vids.length;j++){
     var v=vids[j];
     var vSrc=localMediaUrl(v.url)||v.url;
@@ -924,9 +927,12 @@ function humanSize(n){
   return (n/1024/1024/1024).toFixed(1)+'GB';
 }
 // renderImageGrid: render 1-n ảnh theo layout responsive.
-function renderImageGrid(imgs,msgId,convId){
+// onlyImgs=true → grid đánh dấu data-only-imgs để bubble cha gắn class 'img-only'
+// (full-bleed, không padding/border-radius).
+function renderImageGrid(imgs,msgId,convId,onlyImgs){
   var cls='imgs imgs-'+(imgs.length<=1?'1':imgs.length<=3?'2-3':'4p');
-  var html='<div class="'+cls+'">';
+  var flag=onlyImgs?' data-only-imgs="1"':'';
+  var html='<div class="'+cls+'"'+flag+'>';
   for(var i=0;i<imgs.length;i++){
     var a=imgs[i];
     var local=localMediaUrl(a.url);
