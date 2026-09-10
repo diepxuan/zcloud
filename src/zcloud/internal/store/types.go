@@ -12,6 +12,7 @@ import (
 type Account struct {
 	ID          string    `json:"id"`
 	DisplayName string    `json:"displayName"`
+	UserID      string    `json:"userId"`
 	Avatar      string    `json:"avatar"`
 	AccountType int       `json:"accountType"` // 1: Zalo User, 2: Zalo OA
 	Status      int       `json:"status"`

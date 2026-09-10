@@ -14,10 +14,11 @@ import (
 // upsertAccountSQL: SQLite dùng INSERT OR REPLACE, Postgres dùng ON CONFLICT.
 func (s *Store) upsertAccountSQL() string {
 	if s.backend == BackendPostgres {
-		return `INSERT INTO accounts (id, display_name, account_type) VALUES ($1, $2, $3)
+		return `INSERT INTO accounts (id, display_name, account_type, user_id)
+			VALUES ($1, $2, $3, '')
 			ON CONFLICT (id) DO NOTHING`
 	}
-	return "INSERT OR IGNORE INTO accounts (id, display_name, account_type) VALUES (?, ?, ?)"
+	return "INSERT OR IGNORE INTO accounts (id, display_name, account_type, user_id) VALUES (?, ?, ?, '')"
 }
 
 func (s *Store) updateAccountSQL() string {
@@ -25,6 +26,13 @@ func (s *Store) updateAccountSQL() string {
 		return "UPDATE accounts SET display_name = $1, avatar = $2, updated_at = NOW() WHERE id = $3"
 	}
 	return "UPDATE accounts SET display_name = ?, avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+}
+
+func (s *Store) setAccountUserIDSQL() string {
+	if s.backend == BackendPostgres {
+		return "UPDATE accounts SET user_id = $1, updated_at = NOW() WHERE id = $2"
+	}
+	return "UPDATE accounts SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
 }
 
 // ====================================
@@ -41,13 +49,18 @@ func (s *Store) UpdateAccount(id, displayName, avatar string) error {
 	return err
 }
 
+func (s *Store) SetAccountUserID(id, userID string) error {
+	_, err := s.db.Exec(s.setAccountUserIDSQL(), userID, id)
+	return err
+}
+
 func (s *Store) GetAccount(id string) (*Account, error) {
 	a := &Account{}
-	q := "SELECT id, display_name, avatar, account_type, status, note, created_at, updated_at FROM accounts WHERE id = ?"
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, created_at, updated_at FROM accounts WHERE id = ?"
 	if s.backend == BackendPostgres {
-		q = "SELECT id, display_name, avatar, account_type, status, note, created_at, updated_at FROM accounts WHERE id = $1"
+		q = "SELECT id, display_name, user_id, avatar, account_type, status, note, created_at, updated_at FROM accounts WHERE id = $1"
 	}
-	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt)
+	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -55,7 +68,7 @@ func (s *Store) GetAccount(id string) (*Account, error) {
 }
 
 func (s *Store) ListAccounts(accountType int) ([]Account, error) {
-	q := "SELECT id, display_name, avatar, account_type, status, note, created_at, updated_at FROM accounts"
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, created_at, updated_at FROM accounts"
 	args := []interface{}{}
 	if accountType > 0 {
 		if s.backend == BackendPostgres {
@@ -75,7 +88,7 @@ func (s *Store) ListAccounts(accountType int) ([]Account, error) {
 	var accounts []Account
 	for rows.Next() {
 		var a Account
-		if err := rows.Scan(&a.ID, &a.DisplayName, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, a)

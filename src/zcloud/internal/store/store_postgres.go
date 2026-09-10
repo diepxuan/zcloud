@@ -30,7 +30,10 @@ func (s *Store) migratePostgres() error {
 			return fmt.Errorf("postgres migration failed: %w\nSQL: %s", err, m[:min(80, len(m))])
 		}
 	}
-	return s.ensureSessionServiceMapPG()
+	if err := s.ensureSessionServiceMapPG(); err != nil {
+		return err
+	}
+	return s.ensureAccountUserIDPG()
 }
 
 // ensureSessionServiceMapPG thêm cột service_map nếu thiếu.
@@ -69,6 +72,26 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );`
+
+// ensureAccountUserIDPG thêm cột user_id vào accounts nếu thiếu.
+func (s *Store) ensureAccountUserIDPG() error {
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'accounts' AND column_name = 'user_id'
+		)`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.user_id: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT ''`); err != nil {
+		return fmt.Errorf("add accounts.user_id: %w", err)
+	}
+	return nil
+}
 
 const migrationSessionsPG = `
 CREATE TABLE IF NOT EXISTS sessions (

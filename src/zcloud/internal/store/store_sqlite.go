@@ -27,7 +27,45 @@ func (s *Store) migrateSQLite() error {
 			return fmt.Errorf("migration failed: %w\nSQL: %s", err, m[:min(80, len(m))])
 		}
 	}
-	return s.ensureSessionServiceMapSQLite()
+	if err := s.ensureSessionServiceMapSQLite(); err != nil {
+		return err
+	}
+	return s.ensureAccountUserIDSQLite()
+}
+
+// ensureAccountUserIDSQLite thêm cột user_id vào accounts nếu thiếu (Postgres
+// đã có trong migrationAccountsPG).
+func (s *Store) ensureAccountUserIDSQLite() error {
+	rows, err := s.db.Query(`PRAGMA table_info(accounts)`)
+	if err != nil {
+		return fmt.Errorf("accounts pragma: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull int
+		var dflt, pk interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return fmt.Errorf("accounts pragma scan: %w", err)
+		}
+		if name == "user_id" {
+			return nil
+		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT ''`); err != nil {
+		return fmt.Errorf("accounts add user_id: %w", err)
+	}
+	// Backfill user_id từ session active gần nhất cho từng account (chạy 1 lần
+	// cho account đã có sẵn trước khi cột user_id được thêm).
+	_, _ = s.db.Exec(`UPDATE accounts
+		SET user_id = (
+			SELECT user_id FROM sessions
+			WHERE sessions.account_id = accounts.id AND sessions.is_active = 1
+			ORDER BY sessions.created_at DESC LIMIT 1
+		)
+		WHERE user_id = '' OR user_id IS NULL`)
+	return nil
 }
 
 // ensureSessionServiceMapSQLite thêm cột service_map nếu thiếu.
