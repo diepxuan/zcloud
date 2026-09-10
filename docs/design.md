@@ -126,6 +126,27 @@ src/zcloud/
 
 WS cmds: 501/521 (new msg), 510/511 (old msg), 1 (ping).
 
+### A6.1 Desktop sync (PC cross-device / backup)
+
+Phần lõi Web vẫn giữ nguyên. Khi task T11 cần mở rộng ra các endpoint và
+WS cmds desktop, các helper mới ở `internal/core/desktop_sync.go` chỉ build
+request theo payload thật Zalo PC 26.8.10; wire schema đầy đủ cần handshake
+trust device / WASM để active flow.
+
+| Method | Path | Helper | Ghi chú |
+|--------|------|--------|---------|
+| GET | `/api/message/get_crossdb` | `Client.GetCrossDB` | params encrypted |
+| GET | `/api/message/pull_mobile_msg` | `Client.PullMobileMsg` | pc_name/public_key/seq_id |
+| GET | `/api/message/cancel_pull_mobile_msg` | `Client.CancelPullMobileMsg` | huỷ session sync |
+| GET | `/api/transfer-sync-v2/request-sync` | `Client.RequestTransferSync` | reqId + data |
+| GET | `/api/message/get_backupmsginfo` | `Client.GetBackupMsgInfo` | thông tin backup |
+
+WS cmds desktop (`internal/core/websocket.go`): 590 RequestSyncMessage,
+591 AckDeleteSyncSession, 592 RequestMobileWakeUp, 630 InitBackupSession,
+631 CreateBackupSession, 632 GetBackupPcMetadata, 633 SignalRestoreOnMobile,
+634 GetBackupConfigs. Frames 590-592/630-634 đi qua `WSClient.handleDesktopSync`
+chỉ log payload (chưa parse message model vì schema chưa đủ).
+
 ### A6.2 Media queue (auto-download bền vững)
 
 Cấu trúc đường đi mới thay cho goroutine download tức thì trong WS event:
