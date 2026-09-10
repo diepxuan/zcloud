@@ -142,3 +142,25 @@ CREATE TABLE IF NOT EXISTS oa_webhook_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_oa_logs ON oa_webhook_logs(oa_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_oa_pending ON oa_webhook_logs(processed) WHERE processed = 0;
+
+-- ====================================
+-- Media jobs — queue tải media bền vững (T11)
+-- ====================================
+CREATE TABLE IF NOT EXISTS media_jobs (
+    id              TEXT NOT NULL,
+    account_id      TEXT NOT NULL REFERENCES accounts(id),
+    conv_id         TEXT DEFAULT '',
+    msg_id          TEXT DEFAULT '',
+    file_name       TEXT DEFAULT '',
+    file_ext        TEXT DEFAULT '',
+    source_url      TEXT NOT NULL,
+    local_path      TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempts        INTEGER DEFAULT 0,
+    max_attempts    INTEGER DEFAULT 3,
+    last_error      TEXT DEFAULT '',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, account_id)
+);
+CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status, created_at);

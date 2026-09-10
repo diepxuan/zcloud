@@ -21,6 +21,7 @@ func (s *Store) migrateSQLite() error {
 		migrationMedia,
 		migrationOA,
 		migrationOAWebhook,
+		migrationMediaJobs,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
@@ -242,3 +243,22 @@ CREATE INDEX IF NOT EXISTS idx_oa_pending ON oa_webhook_logs(processed) WHERE pr
 // Đảm bảo import sql được dùng (cho compiler)
 // ====================================
 var _ = sql.ErrNoRows
+
+const migrationMediaJobs = `
+CREATE TABLE IF NOT EXISTS media_jobs (
+    id              TEXT NOT NULL,
+    account_id      TEXT NOT NULL REFERENCES accounts(id),
+    conv_id         TEXT DEFAULT '',
+    msg_id          TEXT DEFAULT '',
+    file_name       TEXT DEFAULT '',
+    file_ext        TEXT DEFAULT '',
+    source_url      TEXT NOT NULL,
+    local_path      TEXT DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    attempts        INTEGER DEFAULT 0,
+    max_attempts    INTEGER DEFAULT 3,
+    last_error      TEXT DEFAULT '',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, account_id)
+);`

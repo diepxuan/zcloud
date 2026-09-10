@@ -72,3 +72,44 @@ func TestSaveMessageDistinctAccounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaJobLifecycle(t *testing.T) {
+	s := newTestStore(t)
+	job := &MediaJob{
+		ID: "job-1", AccountID: "acc-1", ConvID: "c-1", MsgID: "m-1",
+		FileName: "a.jpg", FileExt: "jpg", SourceURL: "https://example.com/a.jpg",
+	}
+	if err := s.SaveMediaJob(job); err != nil {
+		t.Fatalf("SaveMediaJob: %v", err)
+	}
+	if err := s.SaveMediaJob(job); err != nil {
+		t.Fatalf("SaveMediaJob duplicate should be ignored: %v", err)
+	}
+	pending, err := s.ListPendingMediaJobs("acc-1", 10)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].Status != MediaJobPending {
+		t.Fatalf("pending = %+v", pending)
+	}
+	if err := s.MarkMediaJobRunning(job.ID, job.AccountID, 1, ""); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	got, err := s.GetMediaJob(job.ID, job.AccountID)
+	if err != nil || got == nil {
+		t.Fatalf("GetMediaJob: %v", err)
+	}
+	if got.Status != MediaJobRunning || got.Attempts != 1 {
+		t.Fatalf("running = %+v", got)
+	}
+	if err := s.MarkMediaJobDone(job.ID, job.AccountID, "acc-1/c-1/job-1.jpg"); err != nil {
+		t.Fatalf("MarkDone: %v", err)
+	}
+	jobs, err := s.ListMediaJobs("acc-1", 10)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != MediaJobDone {
+		t.Fatalf("jobs = %+v", jobs)
+	}
+}

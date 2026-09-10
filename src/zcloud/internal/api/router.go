@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,8 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/account", s.HandleAccount)
 	mux.HandleFunc("GET /api/account/list", s.HandleAccountList)
 	mux.HandleFunc("POST /api/account/restart", s.HandleAccountRestart)
+	mux.HandleFunc("GET /api/media/jobs", s.HandleMediaJobs)
+	mux.HandleFunc("POST /api/media/redownload", s.HandleMediaRedownload)
 	mux.HandleFunc("GET /api/qr/create", s.HandleCreateQR)
 	mux.HandleFunc("POST /api/qr/poll", s.HandlePollQR)
 	mux.HandleFunc("POST /api/login/cookie", s.HandleCookieLogin)
@@ -51,6 +54,65 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	// ====================================
 	mux.Handle("GET /media/", http.StripPrefix("/media/", http.HandlerFunc(s.HandleMedia)))
 	mux.HandleFunc("POST /api/media/download", s.HandleMediaDownload)
+}
+
+func (s *Server) HandleMediaJobs(w http.ResponseWriter, r *http.Request) {
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		fail(w, http.StatusBadRequest, "missing accountId")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	jobs, err := s.Store.ListMediaJobs(accountID, limit)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "list media jobs: "+err.Error())
+		return
+	}
+	ok(w, jobs)
+}
+
+func (s *Server) HandleMediaRedownload(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"accountId"`
+		ConvID    string `json:"convId"`
+		MsgID     string `json:"msgId"`
+		FileID    string `json:"fileId"`
+		FileName  string `json:"fileName"`
+		FileExt   string `json:"fileExt"`
+		URL       string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.AccountID == "" || req.URL == "" {
+		fail(w, http.StatusBadRequest, "missing accountId/url")
+		return
+	}
+	if req.FileID == "" {
+		req.FileID = req.MsgID
+	}
+	if req.FileID == "" {
+		req.FileID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	if req.FileExt == "" {
+		req.FileExt = "bin"
+	}
+	// Force re-download: remove an existing local file before queueing.
+	_ = os.Remove(s.Store.MediaFilePath(req.AccountID, req.ConvID, req.FileID, req.FileExt))
+	job := &store.MediaJob{
+		ID: req.FileID, AccountID: req.AccountID, ConvID: req.ConvID,
+		MsgID: req.MsgID, FileName: req.FileName, FileExt: req.FileExt,
+		SourceURL: req.URL, Status: store.MediaJobPending,
+	}
+	if err := s.Store.SaveMediaJob(job); err != nil {
+		fail(w, http.StatusInternalServerError, "enqueue media job: "+err.Error())
+		return
+	}
+	if existing, _ := s.Store.GetMediaJob(req.FileID, req.AccountID); existing != nil {
+		_ = s.Store.ResetMediaJobPending(req.FileID, req.AccountID)
+	}
+	ok(w, job)
 }
 
 // HandleMediaDownload tải media từ Zalo URL về local

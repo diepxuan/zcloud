@@ -113,3 +113,20 @@ type OAWebhookLog struct {
 	ErrorMsg  string    `json:"errorMsg"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+type MediaJob struct {
+	ID          string    `json:"id"`
+	AccountID   string    `json:"accountId"`
+	ConvID      string    `json:"convId"`
+	MsgID       string    `json:"msgId"`
+	FileName    string    `json:"fileName"`
+	FileExt     string    `json:"fileExt"`
+	SourceURL   string    `json:"sourceUrl"`
+	LocalPath   string    `json:"localPath"`
+	Status      string    `json:"status"`
+	Attempts    int       `json:"attempts"`
+	MaxAttempts int       `json:"maxAttempts"`
+	LastError   string    `json:"lastError"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}

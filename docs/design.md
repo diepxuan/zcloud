@@ -126,6 +126,32 @@ src/zcloud/
 
 WS cmds: 501/521 (new msg), 510/511 (old msg), 1 (ping).
 
+### A6.2 Media queue (auto-download bền vững)
+
+Cấu trúc đường đi mới thay cho goroutine download tức thì trong WS event:
+
+```
+Zalo WS → api.handleZaloEvent
+        → api.enqueueMessageMediaJobs → store.SaveMediaJob (bảng media_jobs)
+                                          ↓
+                       api.MediaWorker.loop (mỗi 5s)
+                        → ListPendingMediaJobs(accountID)
+                        → processJob: download HTTP + retry → SaveMedia meta
+                                          ↓
+                       globalWS.Broadcast("media_downloaded")
+```
+
+- Bảng `media_jobs`: lưu `pending/running/done/failed`, `attempts`,
+  `max_attempts` (mặc định 3), `last_error`, `local_path`.
+- API vận hành:
+  - `GET /api/media/jobs?accountId=&limit=` — liệt kê job gần nhất.
+  - `POST /api/media/redownload` body `{accountId, convId, msgId, fileId,
+    fileName, fileExt, url}` — xoá file đã có, `ResetMediaJobPending`,
+    worker sẽ tải lại.
+- Khi nhận WS message có attachment media, `handleZaloEvent` gọi
+  `enqueueMessageMediaJobs` (thay cho `maybeAutoDownloadMedia` cũ). Nếu job
+  cũ `failed` hoặc `done` mà file không còn → `ResetMediaJobPending`.
+
 ### A7. Data flow
 
 #### Login

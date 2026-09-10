@@ -363,7 +363,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 
 		// Lưu vào database
 		attJSON, _ := json.Marshal(msg.Attachments)
-		go maybeAutoDownloadMedia(context.Background(), st, accountID, msg, logger)
+		go enqueueMessageMediaJobs(st, accountID, msg, logger)
 		st.SaveMessage(&store.Message{
 			ID:          msg.ID,
 			AccountID:   accountID,
@@ -433,7 +433,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		om := event.Message
 		logger.Printf("zalo-ws: old msg from %s in %s", om.FromID, om.ConvID)
 		oaJSON, _ := json.Marshal(om.Attachments)
-		go maybeAutoDownloadMedia(context.Background(), st, accountID, om, logger)
+		go enqueueMessageMediaJobs(st, accountID, om, logger)
 		st.SaveMessage(&store.Message{
 			ID: om.ID, AccountID: accountID, ConvID: om.ConvID,
 			FromID: om.FromID, FromName: om.FromName,
@@ -464,15 +464,85 @@ type mediaDownloadInfo struct {
 	MsgID    string
 }
 
+const storeMediaDefaultAttempts = 3
+
+// enqueueMessageMediaJobs ghi mỗi media attachment của message vào bảng
+// media_jobs. MediaWorker nền sẽ tải về disk + retry + broadcast.
+func enqueueMessageMediaJobs(st *store.Store, accountID string, msg *core.Message, logger *log.Logger) {
+	if st == nil || msg == nil || len(msg.Attachments) == 0 {
+		return
+	}
+	if accountID == "" || msg.ConvID == "" {
+		logger.Printf("zalo-ws: skip media enqueue, missing account/conv (msg=%s)", msg.ID)
+		return
+	}
+	if !msg.Type.IsMedia() {
+		return
+	}
+	items := extractAllMedia(msg.Attachments)
+	if len(items) == 0 {
+		return
+	}
+	for _, info := range items {
+		fileID := info.MsgID
+		if fileID == "" {
+			fileID = msg.ID
+		}
+		if fileID == "" {
+			continue
+		}
+		job := &store.MediaJob{
+			ID: fileID, AccountID: accountID, ConvID: msg.ConvID,
+			MsgID: msg.ID, FileName: info.FileName, FileExt: info.FileExt,
+			SourceURL: info.URL, Status: store.MediaJobPending,
+			MaxAttempts: storeMediaDefaultAttempts,
+		}
+		if err := st.SaveMediaJob(job); err != nil {
+			logger.Printf("zalo-ws: enqueue media job %s: %v", fileID, err)
+			continue
+		}
+		existing, _ := st.GetMediaJob(fileID, accountID)
+		if existing == nil {
+			continue
+		}
+		needReset := existing.Status == store.MediaJobFailed
+		if existing.Status == store.MediaJobDone && !fileExists(st, accountID, msg.ConvID, fileID, info.FileExt) {
+			needReset = true
+		}
+		if needReset {
+			if err := st.ResetMediaJobPending(fileID, accountID); err != nil {
+				logger.Printf("zalo-ws: reset media job %s: %v", fileID, err)
+			}
+		}
+	}
+}
+
+func fileExists(st *store.Store, accountID, convID, fileID, ext string) bool {
+	if _, err := os.Stat(st.MediaFilePath(accountID, convID, fileID, ext)); err != nil {
+		return false
+	}
+	return true
+}
+
 // extractAllMedia duyệt toàn bộ attachments, trả về thông tin download cho
 // từng cái có URL. Bỏ qua các variant URL phụ (chỉ lấy URL chính, không
 // lấy thumb/oriUrl duplicate).
 func extractAllMedia(atts []core.Attachment) []mediaDownloadInfo {
 	var out []mediaDownloadInfo
 	seen := make(map[string]bool)
+	// Dedupe theo MsgID (attachment.ID). Zalo gửi cùng 1 file với nhiều variant
+	// URL (normalUrl/hdUrl/oriUrl/thumbUrl/thumb) — chỉ giữ URL đầu để 1 job /
+	// attachment, tránh mỗi variant tạo job riêng có thể đè ConvID/FileName.
+	seenID := make(map[string]bool)
 	for _, a := range atts {
 		if a.URL == "" {
 			continue
+		}
+		if a.ID != "" {
+			if seenID[a.ID] {
+				continue
+			}
+			seenID[a.ID] = true
 		}
 		// Dedupe theo URL — attachment đôi khi có nhiều variant (normal/hd/ori)
 		// nhưng cùng file gốc. Giữ URL đầu tiên.

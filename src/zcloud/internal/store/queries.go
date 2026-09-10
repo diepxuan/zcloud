@@ -457,6 +457,182 @@ func (s *Store) MarkMediaProcessed(id, accountID, ocrText, aiTags string, confid
 }
 
 // ====================================
+// Media job operations
+// ====================================
+
+const (
+	MediaJobPending = "pending"
+	MediaJobRunning = "running"
+	MediaJobDone    = "done"
+	MediaJobFailed  = "failed"
+
+	mediaJobDefaultMaxAttempts = 3
+)
+
+func (s *Store) SaveMediaJob(j *MediaJob) error {
+	if j.Status == "" {
+		j.Status = MediaJobPending
+	}
+	if j.MaxAttempts == 0 {
+		j.MaxAttempts = mediaJobDefaultMaxAttempts
+	}
+	q := s.upsertMediaJobSQL()
+	_, err := s.db.Exec(q, j.ID, j.AccountID, j.ConvID, j.MsgID, j.FileName,
+		j.FileExt, j.SourceURL, j.Status, j.Attempts, j.MaxAttempts, j.LastError)
+	return err
+}
+
+func (s *Store) upsertMediaJobSQL() string {
+	if s.backend == BackendPostgres {
+		return `INSERT INTO media_jobs
+			(id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+			 status, attempts, max_attempts, last_error, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+			ON CONFLICT (id, account_id) DO NOTHING`
+	}
+	return `INSERT OR IGNORE INTO media_jobs
+		(id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+		 status, attempts, max_attempts, last_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+}
+
+func (s *Store) ListPendingMediaJobs(accountID string, limit int) ([]MediaJob, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	q := `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+		local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+		FROM media_jobs WHERE account_id = ? AND status = ? ORDER BY created_at ASC LIMIT ?`
+	if s.backend == BackendPostgres {
+		q = `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+			local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+			FROM media_jobs WHERE account_id = $1 AND status = $2 ORDER BY created_at ASC LIMIT $3`
+	}
+	rows, err := s.db.Query(q, accountID, MediaJobPending, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []MediaJob
+	for rows.Next() {
+		var j MediaJob
+		if err := rows.Scan(&j.ID, &j.AccountID, &j.ConvID, &j.MsgID, &j.FileName,
+			&j.FileExt, &j.SourceURL, &j.LocalPath, &j.Status, &j.Attempts,
+			&j.MaxAttempts, &j.LastError, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+func (s *Store) GetMediaJob(id, accountID string) (*MediaJob, error) {
+	j := &MediaJob{}
+	q := `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+		local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+		FROM media_jobs WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+			local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+			FROM media_jobs WHERE id = $1 AND account_id = $2`
+	}
+	err := s.db.QueryRow(q, id, accountID).Scan(&j.ID, &j.AccountID, &j.ConvID,
+		&j.MsgID, &j.FileName, &j.FileExt, &j.SourceURL, &j.LocalPath,
+		&j.Status, &j.Attempts, &j.MaxAttempts, &j.LastError, &j.CreatedAt, &j.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return j, err
+}
+
+func (s *Store) MarkMediaJobRunning(id, accountID string, attempts int, errMsg string) error {
+	q := `UPDATE media_jobs SET status = ?, attempts = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `UPDATE media_jobs SET status = $1, attempts = $2, last_error = $3, updated_at = NOW()
+			WHERE id = $4 AND account_id = $5`
+	}
+	_, err := s.db.Exec(q, MediaJobRunning, attempts, errMsg, id, accountID)
+	return err
+}
+
+func (s *Store) MarkMediaJobDone(id, accountID, localPath string) error {
+	q := `UPDATE media_jobs SET status = ?, local_path = ?, last_error = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `UPDATE media_jobs SET status = $1, local_path = $2, last_error = '', updated_at = NOW()
+			WHERE id = $3 AND account_id = $4`
+	}
+	_, err := s.db.Exec(q, MediaJobDone, localPath, id, accountID)
+	return err
+}
+
+func (s *Store) MarkMediaJobFailed(id, accountID, errMsg string) error {
+	q := `UPDATE media_jobs SET status = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `UPDATE media_jobs SET status = $1, last_error = $2, updated_at = NOW()
+			WHERE id = $3 AND account_id = $4`
+	}
+	_, err := s.db.Exec(q, MediaJobFailed, errMsg, id, accountID)
+	return err
+}
+
+func (s *Store) ResetMediaJobPending(id, accountID string) error {
+	q := `UPDATE media_jobs SET status = ?, attempts = 0, local_path = '', last_error = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `UPDATE media_jobs SET status = $1, attempts = 0, local_path = '', last_error = '', updated_at = NOW()
+			WHERE id = $2 AND account_id = $3`
+	}
+	_, err := s.db.Exec(q, MediaJobPending, id, accountID)
+	return err
+}
+
+func (s *Store) RetryMediaJob(id, accountID string, attempts int, errMsg string) error {
+	q := `UPDATE media_jobs SET status = ?, attempts = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND account_id = ?`
+	if s.backend == BackendPostgres {
+		q = `UPDATE media_jobs SET status = $1, attempts = $2, last_error = $3, updated_at = NOW()
+			WHERE id = $4 AND account_id = $5`
+	}
+	_, err := s.db.Exec(q, MediaJobPending, attempts, errMsg, id, accountID)
+	return err
+}
+
+func (s *Store) ListMediaJobs(accountID string, limit int) ([]MediaJob, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	q := `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+		local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+		FROM media_jobs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`
+	if s.backend == BackendPostgres {
+		q = `SELECT id, account_id, conv_id, msg_id, file_name, file_ext, source_url,
+			local_path, status, attempts, max_attempts, last_error, created_at, updated_at
+			FROM media_jobs WHERE account_id = $1 ORDER BY created_at DESC LIMIT $2`
+	}
+	rows, err := s.db.Query(q, accountID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []MediaJob
+	for rows.Next() {
+		var j MediaJob
+		if err := rows.Scan(&j.ID, &j.AccountID, &j.ConvID, &j.MsgID, &j.FileName,
+			&j.FileExt, &j.SourceURL, &j.LocalPath, &j.Status, &j.Attempts,
+			&j.MaxAttempts, &j.LastError, &j.CreatedAt, &j.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+// ====================================
 // OA operations
 // ====================================
 

@@ -146,6 +146,13 @@ func main() {
 	defer scheduler.Stop()
 	logger.Printf("auto-sync: scheduler started (interval=%s)", syncInterval)
 
+	// Media worker — quét pending media jobs và tải file về disk theo queue.
+	mediaWorker := api.NewMediaWorker(db, logger, 5*time.Second, 20)
+	mediaCtx, mediaCancel := context.WithCancel(context.Background())
+	mediaWorker.Start(mediaCtx)
+	defer mediaWorker.Stop()
+	logger.Printf("media-worker: started (interval=5s)")
+
 	<-done
 	logger.Println("Đang tắt server...")
 
@@ -156,6 +163,7 @@ func main() {
 		logger.Fatalf("Shutdown error: %v", err)
 	}
 	schedulerCancel()
+	mediaCancel()
 
 	logger.Println("Server đã tắt.")
 }
