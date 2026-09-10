@@ -952,6 +952,14 @@ type DeliveryAck struct {
 	UIDFrom        int64  `json:"uidFrom"`
 	UIDTo          int64  `json:"uidTo"`
 	DestID         int64  `json:"destId"`
+	// Echo khi Sếp vừa gửi tin (chưa có ack delivery chính thức):
+	// Zalo wrap {globalMsgId, cliMsgId, deleteMsg, srcId, destId}.
+	// globalMsgId=0 → server chưa gán id, hiển thị "Đã gửi (chưa rõ)".
+	GlobalMsgID    int64  `json:"globalMsgId"`
+	CliMsgID       int64  `json:"cliMsgId"`
+	DeleteMsg      int    `json:"deleteMsg"`
+	SrcID          int64  `json:"srcId"`
+	IsEcho         bool   `json:"-"`
 }
 
 // ParseDeliveryAck thử parse content làm DeliveryAck.
@@ -961,11 +969,8 @@ func ParseDeliveryAck(content string) *DeliveryAck {
 	if len(content) == 0 || content[0] != '[' && content[0] != '{' {
 		return nil
 	}
-	// Zalo wrap action JSON trong content. Hình dạng có thể là:
-	//   - Array 1 phần tử: [{"actionType":0,"globalDelMsgId":8216...}]
-	//   - Object trực tiếp: {"actionType":0,"globalDelMsgId":8216...}
-	// actionType có thể = 0 (delivered) hoặc các giá trị khác, nên
-	// ta dùng globalDelMsgId > 0 làm dấu hiệu nhận dạng chắc chắn.
+	// Dạng 1: ack chính thức (server confirm gửi/nhận/xem).
+	// {"actionType":0,"globalDelMsgId":8216...,...} — globalDelMsgId > 0.
 	var ack DeliveryAck
 	if err := json.Unmarshal([]byte(content), &ack); err == nil && ack.GlobalDelMsgID > 0 {
 		return &ack
@@ -973,6 +978,14 @@ func ParseDeliveryAck(content string) *DeliveryAck {
 	var arr []DeliveryAck
 	if err := json.Unmarshal([]byte(content), &arr); err == nil && len(arr) > 0 && arr[0].GlobalDelMsgID > 0 {
 		return &arr[0]
+	}
+	// Dạng 2: echo khi Sếp vừa gửi tin (server chưa confirm).
+	// {"globalMsgId":0,"cliMsgId":1788...,"deleteMsg":0,"srcId":...,"destId":0}
+	// — có globalMsgId hoặc cliMsgId.
+	var echo DeliveryAck
+	if err := json.Unmarshal([]byte(content), &echo); err == nil && (echo.GlobalMsgID > 0 || echo.CliMsgID > 0) {
+		echo.IsEcho = true
+		return &echo
 	}
 	return nil
 }
@@ -1003,6 +1016,16 @@ func MarkDeliveryAck(m *Message) bool {
 		return false
 	}
 	m.IsDeliveryAck = true
-	m.AckStatus = "sent"
+	if ack.IsEcho {
+		// Echo khi Sếp vừa gửi tin. globalMsgId=0 → server chưa gán id (pending).
+		// globalMsgId>0 → server đã nhận và gán id (delivered).
+		if ack.GlobalMsgID > 0 {
+			m.AckStatus = "delivered"
+		} else {
+			m.AckStatus = "sent"
+		}
+	} else {
+		m.AckStatus = "sent"
+	}
 	return true
 }

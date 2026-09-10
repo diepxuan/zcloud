@@ -70,3 +70,39 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestParseDeliveryAckEcho(t *testing.T) {
+	content := `{"globalMsgId":0,"cliMsgId":1788945611776,"deleteMsg":0,"srcId":6160773363708017691,"destId":0}`
+	ack := ParseDeliveryAck(content)
+	if ack == nil {
+		t.Fatal("expected echo ack, got nil")
+	}
+	if !ack.IsEcho {
+		t.Fatal("expected IsEcho=true")
+	}
+	if ack.CliMsgID != 1788945611776 || ack.SrcID != 6160773363708017691 {
+		t.Fatalf("echo fields wrong: cli=%d src=%d", ack.CliMsgID, ack.SrcID)
+	}
+}
+
+func TestMarkDeliveryAckEchoPending(t *testing.T) {
+	// globalMsgId=0 → "sent" (pending, server chưa gán id).
+	m := &Message{Content: `{"globalMsgId":0,"cliMsgId":1788945611776,"deleteMsg":0,"srcId":6160773363708017691,"destId":0}`}
+	if !MarkDeliveryAck(m) {
+		t.Fatal("expected true")
+	}
+	if m.AckStatus != "sent" {
+		t.Fatalf("pending echo: expected 'sent', got %q", m.AckStatus)
+	}
+}
+
+func TestMarkDeliveryAckEchoAssigned(t *testing.T) {
+	// globalMsgId>0 → "delivered" (server đã nhận và gán id).
+	m := &Message{Content: `{"globalMsgId":8244133396486,"cliMsgId":1788945611776,"deleteMsg":0,"srcId":6160773363708017691,"destId":0}`}
+	if !MarkDeliveryAck(m) {
+		t.Fatal("expected true")
+	}
+	if m.AckStatus != "delivered" {
+		t.Fatalf("assigned echo: expected 'delivered', got %q", m.AckStatus)
+	}
+}
