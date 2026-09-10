@@ -96,6 +96,11 @@ func main() {
 		}
 	}()
 
+	// Dọn tin 1-1 bị gom nhầm vào thread mang uid của chính account (bug cũ ở
+	// wsMessage.toMessage). Chạy trước listener để lịch sử đúng thread ngay từ
+	// lần render đầu; idempotent nên lần khởi động sau không làm gì.
+	repairSelfThreads(db, logger)
+
 	// Boot Zalo listener cho mọi account đang active — listener chạy độc lập,
 	// luôn kết nối Zalo để nhận tin nhắn real-time và lưu lịch sử.
 	activeIDs, err := db.ListActiveAccountIDs()
@@ -171,6 +176,40 @@ func main() {
 // ====================================
 // Middleware
 // ====================================
+
+// repairSelfThreads chuyển tin đến bị lưu nhầm vào thread mang uid của chính
+// account về đúng thread người gửi. Chỉ chạy cho account có user_id (uid thuần
+// lấy từ session), và im lặng khi không còn gì để dọn.
+func repairSelfThreads(db *store.Store, logger *log.Logger) {
+	accounts, err := db.ListAccounts(0)
+	if err != nil {
+		logger.Printf("repair-thread: list accounts err=%v", err)
+		return
+	}
+	for _, a := range accounts {
+		if a.UserID == "" {
+			continue
+		}
+		n, err := db.CountSelfThreadMessages(a.ID, a.UserID)
+		if err != nil {
+			logger.Printf("repair-thread: count %s err=%v", a.ID, err)
+			continue
+		}
+		if n == 0 {
+			continue
+		}
+		rep, err := db.RepairSelfThreadMessages(a.ID, a.UserID)
+		if err != nil {
+			logger.Printf("repair-thread: %s err=%v", a.ID, err)
+			continue
+		}
+		logger.Printf("repair-thread: %s — messages=%d media=%d jobs=%d files=%d",
+			a.ID, rep.Messages, rep.Media, rep.MediaJobs, rep.MovedFiles)
+		for _, e := range rep.FileErrors {
+			logger.Printf("repair-thread: %s file err=%s", a.ID, e)
+		}
+	}
+}
 
 func loggingMiddleware(next http.Handler, logger *log.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
