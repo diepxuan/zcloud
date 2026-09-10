@@ -856,6 +856,9 @@ func (m wsMessage) contentText() string {
 	}
 	var obj map[string]any
 	if json.Unmarshal(m.Content, &obj) == nil {
+		// Metadata JSON kèm theo message (vd echo ack/globalMsgId) — không phải text user gõ.
+		if _, ok := obj["globalMsgId"]; ok { return "" }
+		if _, ok := obj["cliMsgId"]; ok { return "" }
 		if s, ok := obj["text"].(string); ok {
 			return s
 		}
