@@ -262,6 +262,9 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 	if avatar != "" {
 		s.Store.UpdateAccount(accountID, displayName, avatar)
 	}
+	if err := s.Store.SetAccountUserID(accountID, session.UserID); err != nil {
+		s.Logger.Printf("set account user_id %s: %v", accountID, err)
+	}
 
 	cookiesJSON, _ := json.Marshal(session.Cookies)
 	wsList := session.WSURLs
@@ -681,6 +684,9 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	s.Store.CreateAccount(accountID, displayName, 1)
 	if avatar != "" {
 		s.Store.UpdateAccount(accountID, displayName, avatar)
+	}
+	if err := s.Store.SetAccountUserID(accountID, session.UserID); err != nil {
+		s.Logger.Printf("set account user_id %s: %v", accountID, err)
 	}
 	cj, _ := json.Marshal(session.Cookies)
 	wj, _ := json.Marshal(session.WSURLs)
