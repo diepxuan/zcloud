@@ -217,12 +217,8 @@ func (w *WSClient) nextRequestID() uint64 {
 // thuộc trạng thái PC bundle, chưa đủ thông tin để parse thành message model.
 func (w *WSClient) handleDesktopSync(payload []byte, cmd uint16, subCmd uint8) {
 	dec := w.decryptPayload(payload)
-	preview := string(dec)
-	if len(preview) > 300 {
-		preview = preview[:300] + "..."
-	}
 	fmt.Printf("[zcloud] ws desktop-sync: cmd=%d sub=%d len=%d payload=%s\n",
-		cmd, subCmd, len(dec), preview)
+		cmd, subCmd, len(dec), truncateForLog(dec, 300))
 }
 
 // ====================================
@@ -739,19 +735,34 @@ func (m wsMessage) toMessage(session *Session) *Message {
 	if msgID == "" {
 		msgID = m.CliMsgID
 	}
-	convID := firstNonEmpty(m.ConvID, m.Grid, m.IDTo, m.ToID, m.UID)
 	fromID := m.FromUID
 	if fromID == "" {
 		fromID = m.UID
 	}
-	if session != nil && fromID == "0" {
-		fromID = session.UserID
+	selfUID := ""
+	if session != nil {
+		selfUID = session.UserID
 	}
-	if session != nil && m.IDTo == "0" {
-		convID = session.UserID
+	// Zalo dùng "0" làm sentinel cho chính account đang đăng nhập:
+	// uidFrom="0" là tin mình gửi, idTo="0" là tin gửi đến mình.
+	isSelf := fromID == "0" || (selfUID != "" && fromID == selfUID)
+	if fromID == "0" && selfUID != "" {
+		fromID = selfUID
 	}
-	if session != nil && m.IDTo == "0" && m.ToID != "" {
-		convID = m.ToID
+	// Thread của tin 1-1 luôn là phía đối phương (xem zca-js UserMessage):
+	// mình gửi thì thread là người nhận, mình nhận thì thread là người gửi.
+	// Tin nhóm luôn dùng `grid`.
+	convID := skipZero(m.Grid)
+	if convID == "" {
+		if isSelf {
+			convID = firstNonEmptyID(m.IDTo, m.ToID, m.ConvID)
+		} else {
+			convID = firstNonEmptyID(fromID, m.IDTo, m.ToID, m.ConvID)
+		}
+	}
+	// Không xác định được đối phương (vd tin tự gửi cho chính mình).
+	if convID == "" {
+		convID = selfUID
 	}
 	msg := &Message{
 		ID: msgID, ConvID: convID, FromID: fromID, FromName: m.DName,
@@ -938,4 +949,30 @@ func firstNonEmpty(values ...interface{}) string {
 		}
 	}
 	return ""
+}
+
+// skipZero coi sentinel "0" của Zalo như giá trị rỗng.
+func skipZero(v string) string {
+	if v == "0" {
+		return ""
+	}
+	return v
+}
+
+// firstNonEmptyID trả về id đầu tiên khác rỗng và khác sentinel "0".
+func firstNonEmptyID(values ...string) string {
+	for _, v := range values {
+		if s := skipZero(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// truncateForLog cắt payload log cho gọn (dùng bởi handleDesktopSync).
+func truncateForLog(b []byte, max int) string {
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "..."
 }

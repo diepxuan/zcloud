@@ -188,7 +188,8 @@ func TestDecodeWSEventPlainAndGzip(t *testing.T) {
 }
 
 func TestWSMessageParseAndMedia(t *testing.T) {
-	raw := `[{"msgId":"m1","cliMsgId":"c1","uidFrom":"u1","idTo":"u2","dName":"User","ts":"1700000000000","msgType":"chat.photo","content":{"normalUrl":"https://example.com/a.jpg","fileName":"a.jpg","fileId":"f1","width":640,"height":480}}]`
+	// Tin đến: u1 gửi cho mình ("me") → thread phải là u1.
+	raw := `[{"msgId":"m1","cliMsgId":"c1","uidFrom":"u1","idTo":"me","dName":"User","ts":"1700000000000","msgType":"chat.photo","content":{"normalUrl":"https://example.com/a.jpg","fileName":"a.jpg","fileId":"f1","width":640,"height":480}}]`
 	var msgs []wsMessage
 	if err := json.Unmarshal([]byte(raw), &msgs); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -197,7 +198,7 @@ func TestWSMessageParseAndMedia(t *testing.T) {
 		t.Fatalf("len=%d", len(msgs))
 	}
 	msg := msgs[0].toMessage(&Session{UserID: "me"})
-	if msg.ID != "m1" || msg.ConvID != "u2" || msg.Type != MsgTypeImage {
+	if msg.ID != "m1" || msg.ConvID != "u1" || msg.Type != MsgTypeImage {
 		t.Fatalf("bad msg: %+v", msg)
 	}
 	if len(msg.Attachments) == 0 || msg.Attachments[0].URL != "https://example.com/a.jpg" {
