@@ -295,6 +295,13 @@ body{
 .msg .imgs.imgs-1 .img{width:auto;height:auto;max-width:320px;max-height:320px}
 .msg .imgs.imgs-2-3 .img{width:calc(50% - 2px);height:160px}
 .msg .imgs.imgs-4p .img{width:calc(33.333% - 3px);height:120px}
+/* Tin chi co anh: full-bleed, khong bubble, khong border-radius */
+.msg.img-only{padding:0;background:transparent;box-shadow:none}
+.msg.img-only .imgs{margin-top:0}
+.msg.img-only .imgs .img{border-radius:0}
+.msg.img-only .tm{margin-top:var(--s-1)}
+.msg.in.img-only{align-self:flex-start}
+.msg.out.img-only{align-self:flex-end}
 .msg .imgs .img-spinner,.msg .imgs .img-err{
   width:160px;height:160px;display:flex;align-items:center;
   justify-content:center;background:var(--c-surface-2);border-radius:var(--r-md);
@@ -845,6 +852,8 @@ function renderMsg(m){
     return renderAck(m);
   }
   var dv=document.createElement('div');dv.className='msg '+(m.fromId===me?'out':'in');dv.dataset.msg=m.id;
+  var imgsOnly=!!(m.attachments&&m.attachments.length)&&!((m.content||'').trim());
+  if(imgsOnly) dv.classList.add('img-only');
   var t=new Date(m.timestamp);
   var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
   var fn=(m.fromName&&m.fromId!==me)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
