@@ -3,12 +3,14 @@ package core
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -1032,3 +1034,141 @@ func MarkDeliveryAck(m *Message) bool {
 	}
 	return true
 }
+
+// ====================================
+// ====================================
+// Host fallback (T9.2)
+// ====================================
+
+// isHostError phát hiện lỗi DNS/connection (host không resolve được,
+// connection refused, timeout). Khi ServiceMap cũ trỏ tới host đã Zalo
+// rotate, các lỗi này xảy ra — caller dùng để trigger re-login hoặc
+// fallback sang URL kế tiếp trong ServiceMap list.
+func isHostError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, marker := range []string{
+		"no such host",
+		"connection refused",
+		"connection reset",
+		"i/o timeout",
+		"network is unreachable",
+		"tls: ",
+		"certificate",
+	} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	var sysErr *os.SyscallError
+	if errors.As(err, &sysErr) {
+		return true
+	}
+	return false
+}
+
+// fallbackHost trả URL kế tiếp trong ServiceMap list (index >= 0).
+// Trả về "" nếu hết list hoặc list rỗng.
+func fallbackHost(session *Session, key string, idx int) string {
+	if session == nil || session.ServiceMap == nil {
+		return ""
+	}
+	hosts, ok := session.ServiceMap[key]
+	if !ok || idx >= len(hosts) {
+		return ""
+	}
+	return strings.TrimRight(hosts[idx], "/")
+}
+
+// HostRetry thực hiện HTTP request với retry tự động khi host fail.
+// Thử các host trong ServiceMap[key] theo thứ tự, nếu hết thì trả
+// error cuối cùng cho caller. Không dùng keyOrder (đơn giản: thử hết list
+// ở 1 key, sau đó trả error).
+//
+// Ví dụ:
+//
+//	resp, err := c.HostRetry(ctx, "GET", u, nil, nil)
+//	if err != nil { return err }
+//	defer resp.Body.Close()
+func (c *Client) HostRetry(ctx context.Context, method string, u *url.URL, body io.Reader, headers map[string]string) (*http.Response, error) {
+	hc := &hostChooser{session: c.Session, key: "chat", idx: 0}
+	for {
+		host, ok := hc.next()
+		if !ok {
+			return nil, fmt.Errorf("host retry exhausted for %s: %w", u.Path, hc.lastErr)
+		}
+		target := host + u.Path
+		if u.RawQuery != "" {
+			target += "?" + u.RawQuery
+		}
+		req, _ := http.NewRequestWithContext(ctx, method, target, body)
+		c.setHeaders(req)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := c.client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if !isHostError(err) {
+			return resp, err
+		}
+		hc.lastErr = err
+		fmt.Fprintf(os.Stderr, "[zcloud] host fail %s — %v; trying next\n", target, err)
+	}
+}
+
+// hostChooser quản lý việc chọn host cho 1 service key + retry khi fail.
+type hostChooser struct {
+	session *Session
+	key     string
+	idx     int
+	lastErr error
+}
+
+// next trả URL kế tiếp trong ServiceMap[key], false khi hết list.
+func (hc *hostChooser) next() (string, bool) {
+	for {
+		url := fallbackHost(hc.session, hc.key, hc.idx)
+		if url != "" {
+			hc.idx++
+			return url, true
+		}
+		return "", false
+	}
+}
+
+// Thử host kế tiếp qua nhiều service keys (vd ["chat", "profile"]).
+// Nếu key "chat" hết list → chuyển "profile".
+type multiKeyChooser struct {
+	session *Session
+	keys    []string
+	keyIdx  int
+	hostIdx int
+	lastErr error
+}
+
+func (mc *multiKeyChooser) next() (string, bool) {
+	for mc.keyIdx < len(mc.keys) {
+		hosts, ok := mc.session.ServiceMap[mc.keys[mc.keyIdx]]
+		if !ok || mc.hostIdx >= len(hosts) {
+			mc.keyIdx++
+			mc.hostIdx = 0
+			continue
+		}
+		url := strings.TrimRight(hosts[mc.hostIdx], "/")
+		mc.hostIdx++
+		return url, true
+	}
+	return "", false
+}
+
+// Tham chiếu các struct/func để tránh unused.
+var (
+	_ = isHostError
+	_ = fallbackHost
+	_ = (*hostChooser)(nil)
+	_ = (*multiKeyChooser)(nil)
+)
