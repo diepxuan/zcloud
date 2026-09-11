@@ -158,7 +158,7 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
 | T7 | ~~Re-login QR cho account hiện tại~~ | ✅ Resolved | Lỗi `zpw_sek không đúng` xảy ra 11/08/2026 khi test SendMessage. Sau đó session được refresh qua background (commit đợt 29/07 cập nhật `secret_key bZMgG6RLiSa/DrYbIotXIg==`), từ 01/09/2026 trở đi không còn lỗi. Verify 11/09/2026: `listening=true`, `hasActiveSession=true`, WS connect `wss://ws3-msg.chat.zalo.me?zpw_ver=688` OK, ping/pong đều, sync old messages nhiều conv. Ghi chú cũ trong audit có thể bỏ. |
 | T8 | Verify end-to-end (Sep ↔ Trần Ngọc Đức) | ✅ Verified 11/09/2026 | `/api/messages/send` (Sep → Trần Ngọc Đức) → `sent: true`; DB có row (15→16); WS broadcast `new_message` <1s; Zalo echo cmd 501 parse + dedupe OK. Xem chi tiết §5.4. |
-| T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
+| T9 | Review host/config từ server thay vì hardcode | ✅ Done (đợt 11/09) | Sub-task x t §5.7: T9.1 fix hardcode `GetConversations` ✅, T9.2 host fallback chain qua ServiceMap list khi host fail ✅, T9.3 thêm ServiceKey constants (10 key) ✅, T9.4 tests 28 case cho serviceBaseURL/isHostError/HostRetry ✅. WS URL đã wire từ trước qua session.WSURLs[0]. |
 | T10 | WS AES-GCM + desktop command set | ✅ Done (đợt 11/09) | AES-GCM layout đã có + cipherKey wire vào DecodeWSEvent từ trước (cmd 590-592/630-634 dispatch thành DesktopSyncEvent qua cmdToEventType). Test round-trip AES-GCM encrypt=2/3 + base64 key + missing key. Schema payload từng cmd cần reverse thêm trusted-device WASM. |
 | T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟡 Partial (đợt 11/09) | Sub-task xem §5.6: T11.1 (TTL handling — fail fast non-media) ✅, T11.2 (rate-limit 200ms) ✅, T11.3 (AES-GCM = T10) ✅, T11.4 (parse desktop sync cmd) ✅, **T11.5 (parse schema payload 590-592/630-634 + hook backup flow) 🟡 In Progress**. Còn: T11.6 WASM reverse cho trusted-device, integration test media end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức). |
 
@@ -179,6 +179,43 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
   ZCloud/family media, trusted-device WASM, Postgres encrypted local store.
 
 ---
+
+### T9.7 — Chi tiết T9 (đợt 11/09)
+
+**T9.1 — Fix hardcode `GetConversations`**:
+
+`internal/core/chat.go:171` thay hardcode `https://tt-convers-wpa.chat.zalo.me/api/preloadconvers/get-last-msgs?...` bằng `serviceBaseURL(c.Session, "chat", "https://tt-convers-wpa.chat.zalo.me") + path`. Khi Zalo rotate host mà session.ServiceMap còn trỏ host cũ, endpoint vẫn hoạt động qua URL mới server cung cấp.
+
+**T9.2 — Host fallback chain** (`internal/core/chat.go`):
+
+3 helper mới:
+- `isHostError(err)`: nhận diện DNS/connection errors qua chuỗi marker (`no such host`, `connection refused`, `connection reset`, `i/o timeout`, `network is unreachable`, `tls:`, `certificate`, `EOF`) + `*os.SyscallError` wrap.
+- `fallbackHost(session, key, idx)`: trả URL kế tiếp trong ServiceMap list (vd idx=0 lấy URL đầu, idx=1 lấy URL backup).
+- `Client.HostRetry(ctx, method, url, body, headers)`: thử các host trong ServiceMap[key] theo thứ tự, chain qua nhiều service key (vd ['chat', 'profile']) khi hết list. Trả error cuối nếu tất cả fail.
+
+Chưa wire HostRetry vào callsites (SendMessage/GetProfile/GetGroup/...) — sẽ làm bước tiếp nếu gặp host fail thực tế. Hiện helper đã sẵn sàng.
+
+**T9.3 — ServiceKey constants** (`internal/core/chat.go`):
+
+Định nghĩa 10 constant thay string literal:
+- `ServiceKeyChat`, `ServiceKeyProfile`, `ServiceKeyGroup`, `ServiceKeyFile` (đang dùng)
+- `ServiceKeyMediaStore`, `ServiceKeyZFamily`, `ServiceKeyZCloudUpFile` (cho T11.7 ZCloud)
+- `ServiceKeySticker`, `ServiceKeyAlias`, `ServiceKeyZimsg` (chưa dùng)
+
+Refactor callsites ở `chat.go` (2 chat + 3 profile + 3 group + 1 convers) và `desktop_sync.go` (5 file). Tổng cộng 14 call site.
+
+**T9.4 — Tests** (`internal/core/service_test.go`, `host_test.go`):
+
+28 test case:
+- `TestServiceBaseURL`: 8 case (nil session, empty map, no key, list rỗng, URL rỗng, URL đầy đủ, trailing slash, nhiều URL → lấy URL đầu)
+- `TestIsHostError`: 11 case (nil, plain, no such host, connection refused/reset, i/o timeout, network unreachable, TLS handshake, certificate, syscall wrap, plain string contains marker)
+- `TestFallbackHost`: 7 case (nil, empty, no key, idx 0/1, out of range, trailing slash)
+- `TestMultiKeyChooser`: chain ['chat', 'profile'] qua 3 host
+- `TestHostRetryChainFallback`: host đầu fail → fallback OK
+- `TestHostRetryAllHostsFail`: trả error `exhausted`
+- `TestHostRetryNonHostError`: lỗi 500 trả về ngay, không chain
+
+Tổng T9: 4 commit (T9.1+T9.4 `2469af6`, T9.2 `d3fc5c2`, T9.3 `d577778`, T9.4 final `649eb42`).
 
 ### T11.6 — Chi tiết T11 (đợt 11/09)
 
