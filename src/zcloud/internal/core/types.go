@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ====================================
 // Zalo Data Types
@@ -39,6 +42,17 @@ func (t MsgType) IsMedia() bool {
 func (t MsgType) IsLink() bool {
 	return t == MsgTypeLink
 }
+// DesktopSyncEvent chứa payload parsed từ WS cmd 590-592 / 630-634.
+// Data là JSON đã giải mã (raw map hoặc struct tuỳ schema Zalo trả về).
+// Schema đầy đủ cần reverse thêm trusted-device WASM flow — hiện chỉ lưu
+// raw payload để handler downstream xử lý / debug.
+type DesktopSyncEvent struct {
+	Cmd     uint16 `json:"cmd"`
+	SubCmd  uint8  `json:"subCmd"`
+	Type    EventType `json:"type"`
+	RawData json.RawMessage `json:"rawData,omitempty"`
+}
+
 // EventType represents WebSocket event types
 type EventType int
 
@@ -52,7 +66,81 @@ const (
 	EventReconnect
 	EventUploadAttachment
 	EventError
+	// Desktop sync events (cmd 590-592 / 630-634) — xem docs/protocol/pc-desktop.md.
+	EventRequestSync      // cmd 590: server yêu cầu client gửi msg cross-device
+	EventAckDeleteSession // cmd 591: xác nhận xoá session sync
+	EventMobileWakeUp     // cmd 592: đánh thức mobile để sync
+	EventInitBackup       // cmd 630: init session backup
+	EventCreateBackup     // cmd 631: tạo session backup
+	EventBackupMeta       // cmd 632: metadata backup từ PC
+	EventRestoreMobile    // cmd 633: báo mobile khôi phục backup
+	EventBackupConfigs    // cmd 634: lấy cấu hình backup
 )
+
+// CmdToEventType ánh WS cmd/subCmd sang EventType để dispatch đến handler.
+// Trả EventError nếu cmd không thuộc nhóm desktop sync.
+func CmdToEventType(cmd uint16, subCmd uint8) EventType {
+	switch cmd {
+	case 590:
+		return EventRequestSync
+	case 591:
+		return EventAckDeleteSession
+	case 592:
+		return EventMobileWakeUp
+	case 630:
+		return EventInitBackup
+	case 631:
+		return EventCreateBackup
+	case 632:
+		return EventBackupMeta
+	case 633:
+		return EventRestoreMobile
+	case 634:
+		return EventBackupConfigs
+	}
+	return EventError
+}
+
+// String trả về tên event để log + broadcast (UI/browser nhận diện).
+func (e EventType) String() string {
+	switch e {
+	case EventNewMessage:
+		return "new_message"
+	case EventOldMessages:
+		return "old_messages"
+	case EventDelivered:
+		return "delivered"
+	case EventSeen:
+		return "seen"
+	case EventTyping:
+		return "typing"
+	case EventReaction:
+		return "reaction"
+	case EventReconnect:
+		return "reconnect"
+	case EventUploadAttachment:
+		return "upload_attachment"
+	case EventError:
+		return "error"
+	case EventRequestSync:
+		return "request_sync"
+	case EventAckDeleteSession:
+		return "ack_delete_session"
+	case EventMobileWakeUp:
+		return "mobile_wake_up"
+	case EventInitBackup:
+		return "init_backup"
+	case EventCreateBackup:
+		return "create_backup"
+	case EventBackupMeta:
+		return "backup_meta"
+	case EventRestoreMobile:
+		return "restore_mobile"
+	case EventBackupConfigs:
+		return "backup_configs"
+	}
+	return "unknown"
+}
 
 // ConvType represents conversation type
 type ConvType int
@@ -163,10 +251,13 @@ type Session struct {
 
 // Event represents a WebSocket event from Zalo
 type Event struct {
-	Type    EventType `json:"type"`
-	Message *Message  `json:"message,omitempty"`
-	FileID  string    `json:"fileId,omitempty"`
-	Error   error     `json:"error,omitempty"`
+	Type        EventType        `json:"type"`
+	Message     *Message         `json:"message,omitempty"`
+	FileID      string           `json:"fileId,omitempty"`
+	Error       error            `json:"error,omitempty"`
+	// DesktopSync chiếm khi Type là 1 trong EventRequestSync ... EventBackupConfigs.
+	// Schema đầy đủ của Zalo PC bundle cần reverse thêm WASM flow.
+	DesktopSync *DesktopSyncEvent `json:"desktopSync,omitempty"`
 }
 
 // OldMessages represents a batch of old messages loaded via WebSocket

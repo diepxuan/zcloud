@@ -217,6 +217,21 @@ func (w *WSClient) nextRequestID() uint64 {
 // thuộc trạng thái PC bundle, chưa đủ thông tin để parse thành message model.
 func (w *WSClient) handleDesktopSync(payload []byte, cmd uint16, subCmd uint8) {
 	dec := w.decryptPayload(payload)
+	// Dispatch structured event để caller (api/ws.go) có thể hook vào backup
+	// flow. Data để dạng RawMessage (JSON parse) để schema chi tiết có thể
+	// được reverse thêm mà không phá Event struct.
+	evType := CmdToEventType(cmd, subCmd)
+	var raw json.RawMessage
+	if err := json.Unmarshal(dec, &raw); err != nil {
+		raw = dec
+	}
+	select {
+	case w.msgChan <- Event{Type: evType, Message: nil, DesktopSync: &DesktopSyncEvent{
+		Cmd: cmd, SubCmd: subCmd, Type: evType, RawData: raw,
+	}}:
+	default:
+		// channel đầy — bỏ qua, không block WS read loop.
+	}
 	fmt.Printf("[zcloud] ws desktop-sync: cmd=%d sub=%d len=%d payload=%s\n",
 		cmd, subCmd, len(dec), truncateForLog(dec, 300))
 }

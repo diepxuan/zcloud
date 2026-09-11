@@ -455,6 +455,23 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 
 	case core.EventReconnect:
 		logger.Printf("zalo-ws: reconnected %s", accountID)
+
+	default:
+		// Desktop sync events (cmd 590-592 / 630-634) và các event khác
+		// chưa được xử lý cụ thể: log + broadcast cho browser nếu có payload.
+		if event.DesktopSync != nil {
+			ds := event.DesktopSync
+			logger.Printf("zalo-ws: desktop-sync cmd=%d sub=%d", ds.Cmd, ds.SubCmd)
+			globalWS.Broadcast(accountID, BrowserMessage{
+				Type: "desktop_sync",
+				Data: map[string]interface{}{
+					"cmd":     ds.Cmd,
+					"subCmd":  ds.SubCmd,
+					"event":   ds.Type.String(),
+					"rawData": ds.RawData,
+				},
+			})
+		}
 	}
 }
 
