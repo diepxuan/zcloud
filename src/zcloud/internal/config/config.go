@@ -30,16 +30,10 @@ type ServerConfig struct {
 	DevMode bool   `yaml:"dev_mode"`
 }
 
-// DatabaseConfig — chọn backend sqlite hoặc postgres.
+// DatabaseConfig — cấu hình Postgres. zcloud chỉ hỗ trợ Postgres, không có
+// SQLite backend nữa (xem docs/tasks.md §4.3).
 type DatabaseConfig struct {
-	Backend   string         `yaml:"backend"` // "sqlite" hoặc "postgres"
-	SQLite    SQLiteConfig   `yaml:"sqlite"`
-	Postgres  PostgresConfig `yaml:"postgres"`
-}
-
-// SQLiteConfig — file path.
-type SQLiteConfig struct {
-	Path string `yaml:"path"`
+	Postgres PostgresConfig `yaml:"postgres"`
 }
 
 // PostgresConfig — kết nối qua pgx.
@@ -103,7 +97,7 @@ func LoadYAML(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// defaults trả về Config với giá trị mặc định, khớp hành vi cũ.
+// defaults trả về Config với giá trị mặc định — Postgres-only.
 func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
@@ -112,10 +106,6 @@ func defaults() *Config {
 			DevMode: false,
 		},
 		Database: DatabaseConfig{
-			Backend: "sqlite",
-			SQLite: SQLiteConfig{
-				Path: filepath.Join(".", "storages", "database", "zcloud.db"),
-			},
 			Postgres: PostgresConfig{
 				Host:         "127.0.0.1",
 				Port:         5432,
@@ -147,8 +137,6 @@ func Parse() *Config {
 	flag.IntVar(&cfg.Server.Port, "port", envInt("ZCLOUD_PORT", cfg.Server.Port), "HTTP server port")
 	flag.StringVar(&cfg.Server.Domain, "domain", envStr("ZCLOUD_DOMAIN", cfg.Server.Domain), "Domain name")
 	flag.BoolVar(&cfg.Server.DevMode, "dev", envBool("ZCLOUD_DEV", cfg.Server.DevMode), "Development mode")
-	flag.StringVar(&cfg.Database.Backend, "db-backend", envStr("ZCLOUD_DB_BACKEND", cfg.Database.Backend), "DB backend: sqlite | postgres")
-	flag.StringVar(&cfg.Database.SQLite.Path, "db-path", envStr("ZCLOUD_DB_PATH", cfg.Database.SQLite.Path), "SQLite database file path")
 	flag.StringVar(&cfg.Media.Dir, "media-dir", envStr("ZCLOUD_MEDIA_DIR", cfg.Media.Dir), "Media storage directory")
 	flag.IntVar(&cfg.Log.Level, "log-level", envInt("ZCLOUD_LOG_LEVEL", cfg.Log.Level), "Log level: 0=info, 1=debug, 2=verbose")
 	flag.StringVar(&cfg.Database.Postgres.Host, "pg-host", envStr("ZCLOUD_PG_HOST", cfg.Database.Postgres.Host), "Postgres host")
@@ -165,9 +153,6 @@ func Parse() *Config {
 			cfg.Database.Postgres.Password = v
 		}
 	}
-	if cfg.Database.Backend == "" {
-		cfg.Database.Backend = "sqlite"
-	}
 	return cfg
 }
 
@@ -179,9 +164,6 @@ func (c *Config) HTTPEndpoint() string { return fmt.Sprintf("http://%s:%d", c.Se
 
 // WSEndpoint trả về URL WebSocket cho browser.
 func (c *Config) WSEndpoint() string { return fmt.Sprintf("ws://%s:%d/ws", c.Server.Domain, c.Server.Port) }
-
-// DBPath trả về đường dẫn DB (chỉ dùng khi backend=sqlite).
-func (c *Config) DBPath() string { return c.Database.SQLite.Path }
 
 // MediaDirPath trả về thư mục media.
 func (c *Config) MediaDirPath() string { return c.Media.Dir }

@@ -22,7 +22,6 @@ func main() {
 	// Logger
 	logger := log.New(os.Stdout, "[zcloud] ", log.LstdFlags|log.Lshortfile)
 	logger.Printf("Khởi động zcloud daemon — %s", cfg.HTTPEndpoint())
-	logger.Printf("Database backend: %s", cfg.Database.Backend)
 	logger.Printf("Media dir: %s", cfg.MediaDirPath())
 
 	// ====================================
