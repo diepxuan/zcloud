@@ -39,7 +39,7 @@ src/zcloud/bin/
 *.out
 coverage.out
 *.prof
-zcloudd
+/zcloudd
 
 # Database files (moved to storages/)
 *.db
