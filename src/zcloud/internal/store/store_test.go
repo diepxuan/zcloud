@@ -1,32 +1,10 @@
+//go:build testdb
+
 package store
 
 import (
-	"path/filepath"
 	"testing"
 )
-
-// newTestStore tạo SQLite store trong thư mục tạm, an toàn cho test song song.
-func newTestStore(t *testing.T) *Store {
-	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	mediaPath := filepath.Join(dir, "media")
-	s, err := NewSQLite(dbPath, mediaPath)
-	if err != nil {
-		t.Fatalf("NewSQLite: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	// Tạo account mặc định để thỏa FK từ messages/account_id.
-	if err := s.CreateAccount("acc-1", "Test Account", 1); err != nil {
-		t.Fatalf("CreateAccount: %v", err)
-	}
-	return s
-}
-
-// newTestStoreFull mở SQLite ở dir chỉ định (dùng cho test ở package khác).
-func newTestStoreFull(dir string) (*Store, error) {
-	return NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-}
 
 func TestSaveMessageDedupe(t *testing.T) {
 	s := newTestStore(t)

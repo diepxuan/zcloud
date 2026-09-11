@@ -1,3 +1,5 @@
+//go:build testdb
+
 package api
 
 import (
@@ -9,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/diepxuan/zcloud/internal/core"
-	"github.com/diepxuan/zcloud/internal/store"
 )
 
 func TestExtractAllMedia(t *testing.T) {
@@ -46,11 +47,7 @@ func TestDownloadOneMedia_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 	if err := st.CreateAccount("acc-1", "Test", 1); err != nil {
 		t.Fatalf("account: %v", err)
@@ -80,8 +77,7 @@ func TestDownloadOneMedia_SkipExisting(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	_ = st.CreateAccount("acc-1", "T", 1)
 
@@ -115,8 +111,7 @@ func TestDownloadOneMedia_RetryOnError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	_ = st.CreateAccount("acc-1", "T", 1)
 

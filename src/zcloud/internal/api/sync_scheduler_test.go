@@ -1,10 +1,11 @@
+//go:build testdb
+
 package api
 
 import (
 	"io"
 	"log"
 	"context"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,11 +15,7 @@ import (
 
 // TestSyncSchedulerSkipWhenRunning: tick lần 2 khi lần 1 chưa xong phải bị skip.
 func TestSyncSchedulerSkipWhenRunning(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 
 	// Chưa có account active → tick phải chạy nhanh và return.
@@ -44,11 +41,7 @@ func TestSyncSchedulerSkipWhenRunning(t *testing.T) {
 
 // TestSyncSchedulerNewDefaults: interval quá nhỏ → ép về default 10 phút.
 func TestSyncSchedulerNewDefaults(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 
 	sched := NewSyncScheduler(st, testLogger(), 5*time.Second) // < min
@@ -64,11 +57,7 @@ func TestSyncSchedulerNewDefaults(t *testing.T) {
 // TestSyncSchedulerLastTick: ghi nhận lastTick sau khi syncAccount chạy xong
 // (phải có ít nhất 1 conv).
 func TestSyncSchedulerLastTick(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 	if err := st.CreateAccount("acc-1", "Test", 1); err != nil {
 		t.Fatalf("account: %v", err)
@@ -96,11 +85,7 @@ func TestSyncSchedulerLastTick(t *testing.T) {
 
 // TestSyncSchedulerStop tránh goroutine leak.
 func TestSyncSchedulerStop(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 
 	sched := NewSyncScheduler(st, testLogger(), 30*time.Second)

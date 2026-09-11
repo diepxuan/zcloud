@@ -1,9 +1,10 @@
+//go:build testdb
+
 package core
 
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,10 +157,7 @@ func TestOldMessagesFlow_ParseAndSave(t *testing.T) {
 	]}`)
 	w.handleOldMessages(payload, ThreadGroup)
 
-	s, err := store.NewSQLite(filepath.Join(t.TempDir(), "test.db"), t.TempDir())
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	s := newTestStore(t)
 	defer s.Close()
 	if err := s.CreateAccount("acc-1", "Test", 1); err != nil {
 		t.Fatalf("account: %v", err)

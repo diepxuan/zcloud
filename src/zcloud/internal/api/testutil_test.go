@@ -1,0 +1,51 @@
+//go:build testdb
+
+package api
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/diepxuan/zcloud/internal/store"
+)
+
+// newTestStore mở Postgres + schema riêng cho test trong package api.
+func newTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	dsn := os.Getenv("ZCLOUD_TEST_DSN")
+	if dsn == "" {
+		t.Skip("ZCLOUD_TEST_DSN chưa được set — chạy với -tags testdb và set env.")
+	}
+	name := strings.ReplaceAll(t.Name(), "/", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	schema := "zcloud_t_" + name
+
+	dir := t.TempDir()
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("admin open: %v", err)
+	}
+	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		_ = admin.Close()
+		t.Fatalf("create schema: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		_ = admin.Close()
+	})
+
+	st, err := store.NewPostgres(dsn, filepath.Join(dir, "media"), 4, 2)
+	if err != nil {
+		t.Fatalf("NewPostgres: %v", err)
+	}
+	if _, err := st.DB().Exec("SET search_path TO " + schema); err != nil {
+		t.Fatalf("set search_path: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}

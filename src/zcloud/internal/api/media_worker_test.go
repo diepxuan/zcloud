@@ -1,3 +1,5 @@
+//go:build testdb
+
 package api
 
 import (
@@ -14,11 +16,7 @@ import (
 )
 
 func TestEnqueueMessageMediaJobsWritesJobsAndIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 	if err := st.CreateAccount("acc-1", "T", 1); err != nil {
 		t.Fatal(err)
@@ -43,8 +41,7 @@ func TestEnqueueMessageMediaJobsWritesJobsAndIsIdempotent(t *testing.T) {
 }
 
 func TestEnqueueMessageMediaJobsSkipsNonMedia(t *testing.T) {
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	_ = st.CreateAccount("acc-1", "T", 1)
 	msg := &core.Message{ID: "m-1", ConvID: "c-1", Type: core.MsgTypeText,
@@ -57,8 +54,7 @@ func TestEnqueueMessageMediaJobsSkipsNonMedia(t *testing.T) {
 }
 
 func TestEnqueueMessageMediaJobsResetsWhenFileMissing(t *testing.T) {
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	_ = st.CreateAccount("acc-1", "T", 1)
 	job := &store.MediaJob{
@@ -80,8 +76,7 @@ func TestEnqueueMessageMediaJobsResetsWhenFileMissing(t *testing.T) {
 }
 
 func TestFileExistsHelper(t *testing.T) {
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	if fileExists(st, "acc-1", "c-1", "missing", "jpg") {
 		t.Fatal("missing file should return false")
@@ -105,11 +100,7 @@ func TestMediaWorkerProcessJob(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	st, err := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := newTestStore(t)
 	defer st.Close()
 	if err := st.CreateAccount("acc-1", "Test", 1); err != nil {
 		t.Fatal(err)
@@ -148,8 +139,7 @@ func TestMediaWorkerSkipsExistingFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	_ = st.CreateAccount("acc-1", "T", 1)
 	mediaDir := st.MediaDir("acc-1", "c-1")
@@ -173,8 +163,7 @@ func TestMediaWorkerSkipsExistingFile(t *testing.T) {
 }
 
 func TestMediaWorkerStartStop(t *testing.T) {
-	dir := t.TempDir()
-	st, _ := store.NewSQLite(filepath.Join(dir, "test.db"), filepath.Join(dir, "media"))
+	st := newTestStore(t)
 	defer st.Close()
 	w := NewMediaWorker(st, testLogger(), time.Hour, 10)
 	ctx, cancel := context.WithCancel(context.Background())

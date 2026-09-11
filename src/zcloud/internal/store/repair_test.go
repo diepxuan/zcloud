@@ -1,3 +1,5 @@
+//go:build testdb
+
 package store
 
 import (
