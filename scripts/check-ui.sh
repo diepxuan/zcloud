@@ -128,7 +128,7 @@ async function check(name, expr, expected) {
 
 await check('document.title', 'document.title', 'ZCloud Chat');
 // CK_SCRIPT đã bị bỏ ở T18.5 (cookie UI dùng 2 ô input, không còn script trong DevTools).
-await check('typeof ca', 'typeof ca', 'string');
+// ca (current account) đã bỏ — composer tự chọn account theo conv qua backend.
 await check('typeof accounts', 'typeof accounts', 'object');
 await check('add-modal exists', '!!document.getElementById("add-modal")', true);
 await check('#mg-add text', 'document.getElementById("mg-add")?.textContent', '+ Thêm');

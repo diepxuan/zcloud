@@ -624,15 +624,14 @@ body{
 </div>
 
 <script>
-var ca='',cu=0,ld=false,pt=null,cvCache={};
+var cu=0,ld=false,pt=null,cvCache={};
 // me: userId (uid thuần) của account đang chọn, dùng để so sánh m.fromId.
-var me='';
+var ccAccountId='';var ccAccountMe='';
+// Browser WS đã bỏ — backend tự broadcast new_message qua API endpoint
+// (TODO: thay bằng SSE hoặc polling nếu cần realtime). Composer tự
+// load messages khi gửi xong.
 var wsr=null;
-document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();wc()});
-function wc(){if(!ca||wsr)return;wsr=new WebSocket('ws://'+location.host+'/ws?accountId='+ca);
-wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;if(cc&&m.convId&&m.convId!==cc){return;}var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);scrollLastMessage(ml,dv,false);
-}else if(d.type=='media_downloaded'){applyMediaDownloaded(d.data,cc)}}catch(ex){}};
-wsr.onclose=function(){wsr=null;setTimeout(wc,3000)}}
+document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();});
 // accounts: cache list account cho tab Quan ly. Reload khi can.
 var accounts=[];
 // qrPollTimer: interval id cua QR poll loop.
@@ -641,7 +640,7 @@ var qrPollTimer=null;
 var qrToken='';
 
 // loadAccounts lay danh sach account tu server (kem status listening/hasActiveSession).
-async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();if(!ca&&accounts.length>0){ca=accounts[0].id;me=(accounts[0].userId||'');uh()}return true}return false}catch(e){return false}}
+async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();return true}return false}catch(e){return false}}
 
 // renderAccounts ve lai danh sach account theo cache + filter search.
 function renderAccounts(){
@@ -660,13 +659,13 @@ function renderAccounts(){
 	}
 	filtered.forEach(function(a){
 		var dv=document.createElement('div');dv.className='mg-item';
-		if(a.id===ca) dv.className+=' cur';
+		// Không còn 'ca' để highlight — bỏ .cur.
 		var stClass=a.listening?'on':(a.hasActiveSession?'err':'off');
 		var stTitle=a.listening?'WS đang nghe':(a.hasActiveSession?'Session OK, listener chưa chạy':'Không có session active');
 		var uId=esc(a.id);
 		var showBadge;
-		if(a.enabled && a.id===ca){showBadge='<span class="mg-cur">Đang dùng</span>'}
-		else{showBadge=''}
+		// Không còn 'ca' — bỏ badge 'Đang dùng'.
+		showBadge='';
 		dv.innerHTML='<div class="mg-enabled-wrap">'
 			+'<input type="checkbox" class="mg-enabled" '
 			+(a.enabled?'checked':'')+' '
@@ -706,46 +705,34 @@ function renderStats(){
 	s.textContent=total+' tài khoản • '+shown+' hiển thị • '+on+' đang nghe WS';
 }
 
-// switchAcc chuyen sang account (khong F5).
-function switchAcc(id){
-	// Dong WS cu neu dang mo de wc() reconnect cho account moi.
-	if(wsr){try{wsr.onclose=null;wsr.close()}catch(e){}wsr=null;}
-	var acc=accounts.find(function(a){return a.id===id});
-	me=acc?acc.userId||'':'';
-	ca=id;uh();sy();st('ch');
-}
+// switchAcc: deprecated — composer không cần biết account nào đang chat.
+// Vẫn giữ để không break code khác; chỉ làm noop.
+function switchAcc(id){sy();st('ch');}
 
-// toggleAccountEnabled bật/tắt flag enabled qua API. Auto-switch ca nếu tắt account đang chat.
+// toggleAccountEnabled bật/tắt flag enabled qua API. Composer tự chọn account
+// theo conv → không cần auto-switch 'ca'.
 async function toggleAccountEnabled(id,enabled){
 	try{
 		var r=await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id,enabled:enabled})});
 		var d=await r.json();
 		if(!d.ok){console.log('toggle enabled err',d.error);return;}
 	}catch(e){console.log('toggle enabled network err',e);return;}
-	// Cập nhật cache client trước khi reload để UI không nhảy.
 	var acc=accounts.find(function(a){return a.id===id});
 	if(acc) acc.enabled=enabled;
-	// Nếu tắt account đang chat → chuyển sang account enabled đầu tiên khác.
-	if(!enabled && ca===id){
-		var next=accounts.find(function(a){return a.id!==id && a.enabled});
-		if(next) switchAcc(next.id);
-		else ca='';
-	}
+	// Nếu conv hiện tại thuộc account bị tắt → đóng conv.
+	if(!enabled && ccAccountId===id){cc='';ccAccountId='';ccAccountMe='';}
 	await loadAccounts();
 	renderAccounts();renderStats();
 	sy();loadFriends();
 }
 
-// toggleAllEnabled bật/tắt tất cả cùng lúc — nếu tất cả đang enabled thì tắt hết
-// (trừ account đang chat), ngược lại bật hết.
+// toggleAllEnabled bật/tắt tất cả cùng lúc.
 async function toggleAllEnabled(){
 	var allEnabled=accounts.length>0 && accounts.every(function(a){return a.enabled});
 	var wantEnabled=!allEnabled;
 	for(var i=0;i<accounts.length;i++){
 		var a=accounts[i];
 		if(a.enabled===wantEnabled) continue;
-		// Không tắt account đang chat — tránh ca bị rỗng.
-		if(!wantEnabled && a.id===ca) continue;
 		try{
 			await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:a.id,enabled:wantEnabled})});
 			a.enabled=wantEnabled;
@@ -856,8 +843,10 @@ async function submitCookie(){
 
 // Backward compat: la() goi loadAccounts de giu signature cu.
 async function la(){return loadAccounts()}
-function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}var idEl=document.getElementById('ctt-id');if(idEl)idEl.textContent=ca||''}).catch(function(){})}
-function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
+// uh() deprecated — header không còn hiển thị account đang chat (composer
+// tự chọn account theo conv qua backend).
+function uh(){}
+function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co')loadFriends();if(t=='mg'){la()}}
 function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 // renderAck trả về badge cho delivery ack (tin server chỉ xác nhận gửi/nhận/xem).
@@ -886,12 +875,12 @@ function renderMsg(m){
   if(m.isAck||(m.content&&m.content.charAt(0)==='['&&m.content.indexOf('actionType')>=0)){
     return renderAck(m);
   }
-  var dv=document.createElement('div');dv.className='msg '+(m.fromId===me?'out':'in');dv.dataset.msg=m.id;
+  var dv=document.createElement('div');dv.className='msg '+(m.fromId===ccAccountMe?'out':'in');dv.dataset.msg=m.id;
   var attHtml=renderAttachments(m.attachments||[],m.id,m.convId||cc,m.content);
   if(attHtml.indexOf('data-only-imgs="1"')>=0) dv.classList.add('img-only');
   var t=new Date(m.timestamp);
   var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-  var fn=(m.fromName&&m.fromId!==me)?m.fromName:(cvCache[ca+'|'+m.fromId]?cvCache[ca+'|'+m.fromId].name:'');
+  var fn=(m.fromName&&m.fromId!==ccAccountMe)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
   var body='';
   body+=attHtml;
   body+=esc(m.content||'');
@@ -988,7 +977,7 @@ function imgErr(img){
   var ph=document.createElement('div');ph.className='img-spinner';ph.textContent='Đang tải...';
   img.parentNode.insertBefore(ph,img);img.style.display='none';
   fetch('/api/media/download',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({accountId:ca,convId:cid,url:url,fileName:fname,fileExt:ext,msgId:mid})
+    body:JSON.stringify({convId:cid,url:url,fileName:fname,fileExt:ext,msgId:mid})
   }).then(function(r){return r.json()}).then(function(d){
     if(d.ok&&d.data&&d.data.url){
       var local=d.data.url;
@@ -1055,19 +1044,19 @@ async function loadFriends(){
 			+'<div class="cv-n">'+(u.name||u.id)+'</div>'
 			+accLabel
 			+'</div>';
-		dv.onclick=function(){switchAcc(u._accountId);sc(u.id,u.name,u.avatar);};
+		dv.onclick=function(){var acc=accounts.find(function(a){return a.id===u._accountId;});sc(u.id,u._accountId,(acc&&acc.userId)||'',u.name,u.avatar);};
 		el('fl').appendChild(dv);
 	});
 }
 async function sy(){
-	// Nếu chưa có ca → chọn account enabled đầu tiên (nếu có).
-	if(!ca){
-		var first=accounts.find(function(a){return a.enabled});
-		if(first){ca=first.id;me=first.userId||'';uh();}
-		else{el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return;}
+	// Không còn state 'ca' — backend tự tìm account theo convId khi gửi/nhận.
+	if(!accounts.some(function(a){return a.enabled;})){
+		el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return;
 	}
-	// Sync conversations cho account đang chat (kích hoạt fetch mới nhất từ Zalo).
-	try{await fetch('/api/conversations/sync?accountId='+ca);}catch(e){}
+	// Sync conversations cho từng enabled account (background).
+	accounts.filter(function(a){return a.enabled;}).forEach(function(a){
+		try{fetch('/api/conversations/sync?accountId='+a.id);}catch(e){}
+	});
 	// Load convs DB cho TẤT CẢ enabled accounts, merge + sort theo lastMsgAt DESC.
 	var enabled=accounts.filter(function(a){return a.enabled});
 	var allConvs=[];
@@ -1090,7 +1079,7 @@ async function sy(){
 	el('cl','');
 	if(!allConvs.length){el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có hội thoại</div>');return;}
 	allConvs.forEach(function(c){
-		cvCache[c.id+'|'+c._accountId]={name:c.name,avatar:c.avatar};
+		cvCache[c.id]={name:c.name,avatar:c.avatar};
 		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;dv.dataset.accountId=c._accountId;
 		var accLabel=enabled.length>1?'<div class="cv-acc">'+esc(c._accountLabel)+'</div>':'';
 		dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
@@ -1099,7 +1088,7 @@ async function sy(){
 			+'<div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div>'
 			+accLabel
 			+'</div>';
-		dv.onclick=function(){switchAcc(c._accountId);sc(c.id,c.name,c.avatar);};
+		dv.onclick=function(){var acc=accounts.find(function(a){return a.id===c._accountId;});sc(c.id,c._accountId,(acc&&acc.userId)||'',c.name,c.avatar);};
 		el('cl').appendChild(dv);
 	});
 }
@@ -1128,17 +1117,17 @@ function scrollLastMessage(ml, smooth){
 }
 
 
-function sc(id,nm,av){cc=id;cvCache[ca+'|'+id]={name:nm,avatar:av};cu=0;cuEnd=false;
+function sc(id,accId,accMe,nm,av){cc=id;ccAccountId=accId;ccAccountMe=accMe;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
 el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
-fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
+fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
 // lm(manual) — load thêm tin cũ. manual=true khi user click button.
 // Khi cuộn lên đầu thread (scrollTop <= 80px) sẽ tự gọi.
 // Giữ vị trí scroll: trước khi append lưu scrollHeight, sau khi append
 // bù lại phần chênh lệch để tin đang đọc không bị giật.
 async function lm(manual){
-  if(!cc||ld||!ca||cuEnd)return;
+  if(!cc||ld||cuEnd)return;
   ld=true;
   var ml=document.getElementById('ml');
   var btn=document.getElementById('lm-btn');
@@ -1151,7 +1140,7 @@ async function lm(manual){
     if(!load){load=document.createElement('div');load.id='lm-load';load.className='lm-load';load.textContent='Đang tải...';ml.insertBefore(load,ml.firstChild);}
   }
   try{
-    var r=await fetch('/api/messages?accountId='+ca+'&convId='+cc+'&cursor='+cu+'&limit=30');
+    var r=await fetch('/api/messages?convId='+cc+'&cursor='+cu+'&limit=30');
     var d=await r.json();
     if(d.ok&&d.data&&d.data.length>0){
       var oldH=ml.scrollHeight,oldT=ml.scrollTop;
@@ -1202,8 +1191,8 @@ document.addEventListener('DOMContentLoaded',function(){
     if(ml.scrollTop<=80&&!ld&&!cuEnd&&cc){lm(false);}
   });
 });
-async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc||!ca)return;inp.value='';
-try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:ca,to:cc,content:c})});var d=await r.json();
+async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc)return;inp.value='';
+try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:cc,content:c})});var d=await r.json();
 if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);
