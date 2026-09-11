@@ -164,7 +164,10 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 	query.Set("zpw_ver", fmt.Sprintf("%d", c.Session.APIVersion))
 	query.Set("zpw_type", fmt.Sprintf("%d", c.Session.APIType))
 	query.Set("params", paramsEnc)
-	apiURL := "https://tt-convers-wpa.chat.zalo.me/api/preloadconvers/get-last-msgs?" + query.Encode()
+	// Domain lấy từ ServiceMap["chat"] (server cung cấp qua zpw_service_map_v3);
+	// fallback tt-convers-wpa.chat.zalo.me để giữ behavior cũ nếu map rỗng.
+	apiURL := serviceBaseURL(c.Session, "chat", "https://tt-convers-wpa.chat.zalo.me") +
+		"/api/preloadconvers/get-last-msgs?" + query.Encode()
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	c.setHeaders(req)
