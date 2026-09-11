@@ -5,6 +5,10 @@
 > file này trước để khớp với codebase hiện có.
 >
 > Lịch sử cập nhật:
+> - 2026-09-11: Drop SQLite backend — zcloud giờ chỉ hỗ trợ Postgres.
+>   Xoá `internal/store/store_sqlite.go`, `NewSQLite`, `BackendSQLite`,
+>   dialect branches trong `queries.go`, `Database.Backend` config field.
+>   Default `database.postgres.*` thay cho `database.sqlite.*`.
 > - 2026-09-06: UI polish pass — sửa token self-reference (chat/login),
 >   sửa CSS token self-reference, layout `mg-item` 3 dòng (avatar full
 >   height, tên / ID / badge+nút ở 3 dòng riêng), stats bar 3 dòng,
@@ -24,9 +28,9 @@ tin nhắn + media lâu dài, đồng bộ theo chuẩn Zalo (WS cmd 510/511).
 
 | Lớp | Tech |
 |-----|------|
-| Core | Go 1.25+, `modernc.org/sqlite`, `github.com/coder/websocket`, `github.com/jackc/pgx/v5` |
+| Core | Go 1.25+, `github.com/jackc/pgx/v5`, `github.com/coder/websocket` |
 | HTTP | `net/http` + `http.ServeMux` (Go 1.22 pattern routing) |
-| Storage | SQLite (mặc định, file local) hoặc Postgres (self-hosted) + disk media files |
+| Storage | PostgreSQL (pgx) + disk media files |
 | Web UI | Vanilla JS ES6+, HTML/CSS thuần, `go:embed` |
 | Process | systemd service + `scripts/zcloudd.sh` watch mode |
 
@@ -49,11 +53,10 @@ src/zcloud/
 │   │   ├── ws.go          # Browser WS + Zalo listener nền
 │   │   ├── embed.go       # //go:embed web/*
 │   │   └── web/           # login.html, chat.html, favicon.svg
-│   ├── store/             # DB layer (sqlite + postgres)
-│   │   ├── store.go       # Struct Store + NewSQLite/NewPostgres
-│   │   ├── queries.go     # Dialect-aware CRUD queries
-│   │   ├── store_sqlite.go    # SQLite migration
-│   │   ├── store_postgres.go  # Postgres migration
+│   ├── store/             # DB layer (Postgres only)
+│   │   ├── store.go       # Struct Store + NewPostgres
+│   │   ├── queries.go     # Postgres CRUD queries (constants only)
+│   │   ├── store_postgres.go  # Postgres migrations + ensureAccountUserID
 │   │   └── types.go       # Domain types
 │   └── config/            # Config loader (YAML + CLI + env)
 └── examples/              # Test programs
@@ -89,11 +92,17 @@ src/zcloud/
 - Response chuẩn: `APIResponse{OK bool, Data, Error, Code}`.
 - Status: 200 OK, 400 input, 401 auth, 404 not found, 500 server.
 
-#### A4.6 Database
-- Tất cả schema trong `internal/store/store_sqlite.go` + `store_postgres.go` dạng `const migrationX`.
-- Thêm bảng = thêm `const` + push vào slice `migrations`.
-- Queries dialect-aware trong `queries.go` qua `if s.backend == BackendPostgres`.
+#### A4.6 Database (Postgres only)
+- Tất cả schema trong `internal/store/store_postgres.go` dạng `const migrationXPG`.
+- Thêm bảng/cột = thêm `const` + push vào slice `migrations` + viết `ensure*PG`
+  helper nếu cần thêm cột idempotent (xem `ensureAccountUserIDPG`).
+- Queries là hằng số package-level (vd `upsertAccountSQL`) — không còn nhánh
+  dialect; `$1/$2/...` placeholders.
 - Không sửa schema khi chưa được yêu cầu (xem SOUL.md §3).
+- Integration test cần Postgres chạy qua `-tags testdb` với env
+  `ZCLOUD_TEST_DSN`; helper ở `internal/store/testutil.go`,
+  `internal/api/testutil_test.go`, `internal/core/testutil_test.go` tạo schema
+  riêng (`zcloud_t_<TestName>`) và drop khi test xong.
 
 #### A4.7 WebSocket (browser)
 - Endpoint: `GET /ws?accountId=…`.
@@ -220,12 +229,25 @@ cd src/zcloud && go build -o ../../zcloudd ./cmd/zcloudd/
 #### Env / Config
 - File YAML: `~/.config/ductn/zcloud.yml` (override path qua `ZCLOUD_CONFIG`).
 - Thứ tự ưu tiên: defaults < YAML < env vars < CLI flags.
-- Env: `ZCLOUD_PORT`, `ZCLOUD_DB_PATH`, `ZCLOUD_DB_BACKEND`, `ZCLOUD_DB_PASSWORD`,
-  `ZCLOUD_PG_HOST`, `ZCLOUD_PG_PORT`, … (xem `internal/config/config.go`).
+- Env (Postgres-only):
+  `ZCLOUD_PORT`, `ZCLOUD_DB_PASSWORD`, `ZCLOUD_PG_HOST`, `ZCLOUD_PG_PORT`,
+  `ZCLOUD_PG_USER`, `ZCLOUD_PG_DBNAME`, `ZCLOUD_PG_SSLMODE`, `ZCLOUD_PG_PASSWORD`,
+  `ZCLOUD_MEDIA_DIR`, `ZCLOUD_LOG_LEVEL`, `ZCLOUD_DOMAIN`, `ZCLOUD_DEV`,
+  `ZCLOUD_TEST_DSN` (cho test), `ZCLOUD_CONFIG` (override YAML path).
+  Xem `internal/config/config.go` để biết giá trị mặc định.
+  **Không còn** `ZCLOUD_DB_BACKEND` / `ZCLOUD_DB_PATH` — đã bỏ từ 11/09/2026.
 
 #### Backend DB
-- `sqlite` (mặc định) — file tại `~/.config/ductn/zcloud.yml > database.sqlite.path`.
-- `postgres` — set `database.backend: postgres` + điền `database.postgres.*`.
+- **Postgres (chỉ backend)** — cấu hình trong `~/.config/ductn/zcloud.yml`
+  dưới `database.postgres.*`. Cần `pg_hba.conf` cho phép user `zcloud`
+  kết nối tới db `zcloud`.
+- Tạo user/db nếu chưa có:
+  ```bash
+  sudo -u postgres createuser -s zcloud
+  sudo -u postgres createdb -O zcloud zcloud
+  ```
+- Password nên set qua env `ZCLOUD_DB_PASSWORD` (tham chiếu trong YAML là
+  `${ZCLOUD_DB_PASSWORD}`) thay vì hardcode.
 
 #### Restart
 - `systemctl restart zcloud` — KHÔNG start binary tay.
@@ -239,11 +261,26 @@ cd src/zcloud && go build -o ../../zcloudd ./cmd/zcloudd/
 
 ### A9. Testing
 
-- Hiện có: `internal/core/encrypt_test.go` (AES-CBC + PKCS7), `chat_ack_test.go`.
+- Unit test (luôn chạy, không cần DB):
+  - `internal/core/encrypt_test.go` — AES-CBC + PKCS7.
+  - `internal/core/chat_ack_test.go` — ack parsing.
+- Integration test (cần Postgres, `-tags testdb`):
+  - `internal/store/store_test.go` — SaveMessage dedupe, MediaJob lifecycle.
+  - `internal/store/repair_test.go` — RepairSelfThreadMessages.
+  - `internal/core/sync_test.go` — WS 510/511 → SaveMessage round-trip.
+  - `internal/api/{media,media_worker,sync_scheduler}_test.go` — worker +
+    scheduler với DB thật.
+- Cách chạy:
+  ```bash
+  go test ./...                                       # unit only
+  ZCLOUD_TEST_DSN="postgres://..." go test -tags testdb ./...  # + Postgres
+  ```
+- Mỗi integration test tạo schema riêng (`zcloud_t_<TestName>`) qua helper
+  `testutil.go` / `testutil_test.go` và drop khi test xong → chạy song song
+  an toàn, không đụng DB thật.
 - Cần thêm (xem `docs/tasks.md` §5 T3):
-  - `internal/core/chat_test.go` — SendMessage mock.
-  - `internal/store/store_test.go` — migrations + CRUD.
   - `internal/api/handlers_test.go` — HTTP API với `httptest`.
+  - `internal/core/chat_test.go` — SendMessage mock với Postgres.
 
 ### A10. Conventions khi viết code mới
 
