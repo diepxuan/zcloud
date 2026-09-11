@@ -10,7 +10,7 @@
 
 1. **URL cho Sếp đăng nhập bằng QR code** — `http://zcloud.diepxuan.corp:8080`
 2. **Chat real-time với user Zalo khác** — gửi/nhận qua core API + WS push
-3. **Lưu lịch sử chat và media lâu dài** — SQLite messages + disk media
+3. **Lưu lịch sử chat và media lâu dài** — PostgreSQL messages + disk media
 4. **Đồng bộ lịch sử theo chuẩn Zalo** — WebSocket cmd 510/511
 
 **Chiến lược:** Dùng Web API (chat.zalo.me), Go cho toàn bộ logic.
@@ -35,7 +35,7 @@
                                  │  │ └─────────────────────────┘ │ │
                                  │  │ ┌─────────────────────────┐ │ │
                                  │  │ │ Store (DB + Media)      │ │ │
-                                 │  │ │ - SQLite (multi-user)   │ │ │
+                                 │  │ │ - Postgres (multi-user)  │ │ │
                                  │  │ │ - media files on disk   │ │ │
                                  │  │ └─────────────────────────┘ │ │
                                  │  └─────────────────────────────┘ │
@@ -114,6 +114,10 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 
 ### 4.3 Database & Store (`internal/store/`)
 
+**Backend: PostgreSQL (pgx), single backend từ 11/09/2026.** SQLite code đã
+bỏ hoàn toàn (`store_sqlite.go`, `NewSQLite`, `BackendSQLite`, dialect
+branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
+
 | Bảng | Trạng thái |
 |------|:----------:|
 | accounts | ✅ Multi-user |
@@ -172,7 +176,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 - **Tài liệu**: `docs/protocol/pc-desktop.md` + case
   `work/reverse-zalo-pc-20260811/evidence/E-REPORT.md`.
 - **Kết luận**: Web API core khớp zcloud; desktop thêm cross-device/backup sync,
-  ZCloud/family media, trusted-device WASM, SQLite encrypted local store.
+  ZCloud/family media, trusted-device WASM, Postgres encrypted local store.
 
 ---
 
@@ -189,7 +193,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 
 ✅ **Hoàn thành đợt này (08/09/2026):**
 
-- **T1 — Verify + integration test**: test parse WS 510/511 (cá nhân + nhóm), test SaveMessage dedupe qua SQLite in-memory, test end-to-end parse → SaveMessage (`internal/core/sync_test.go`, `internal/store/store_test.go`).
+- **T1 — Verify + integration test**: test parse WS 510/511 (cá nhân + nhóm), test SaveMessage dedupe qua Postgres (schema riêng mỗi test), test end-to-end parse → SaveMessage (`internal/core/sync_test.go`, `internal/store/store_test.go`). Chạy với `ZCLOUD_TEST_DSN=... go test -tags testdb ./...`.
 - **T2 — Auto-sync scheduler** (`internal/api/sync_scheduler.go`): goroutine quét account active mỗi 10 phút (env `ZC_AUTOSYNC_INTERVAL`, min 30s), throttle 500ms/conv, idempotent lock tránh overlap, truyền `lastId` từ `conv.LastMsgID` cho WS cmd 510/511. `RequestOldMessagesViaListener` nhận thêm `lastID`; `HandleSyncMessages` nhận `lastId` từ client (fallback `conv.LastMsgID`).
 - **T3 — Đồng bộ media đầy đủ** (`internal/api/ws.go`): `MsgType.IsMedia()` helper, `extractAllMedia` (dedupe URL), `downloadOneMedia` (skip nếu file tồn tại, retry 3 lần cho cả network error và HTTP 5xx, lưu meta qua `SaveMedia`, broadcast `media_downloaded`).
 
