@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/diepxuan/zcloud/internal/core"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -138,6 +139,15 @@ func (s *Server) HandleMediaDownload(w http.ResponseWriter, r *http.Request) {
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil { fail(w, 500, "read: "+err.Error()); return }
+
+	// Bắt URL die trả về HTML/text (vd photo không tòn tại, token hết hạn).
+	// Nếu không phải media binary, trả lỗi 502 để UI fallback / retry thay vì
+	// lưu file HTML thành .bin vĩnh viễn trên disk.
+	if !core.IsMediaContent(data) {
+		ctype := resp.Header.Get("Content-Type")
+		fail(w, http.StatusBadGateway, "non-media response (Content-Type="+ctype+", len="+strconv.Itoa(len(data))+")")
+		return
+	}
 
 	// Lưu file và metadata
 	mediaDir := s.Store.MediaDir(req.AccountID, req.ConvID)

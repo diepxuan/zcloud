@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/diepxuan/zcloud/internal/core"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -184,6 +185,16 @@ func (w *MediaWorker) download(ctx context.Context, url string, attempts int) ([
 		_ = resp.Body.Close()
 		if readErr != nil {
 			lastErr = readErr
+			if attempt < attempts {
+				time.Sleep(time.Duration(attempt) * time.Second)
+			}
+			continue
+		}
+		// Phát hiện URL die trả về HTML/text (vd photo không tòn tại).
+		// Không phải media binary → tránh lưu file HTML thành .bin 185KB.
+		if !core.IsMediaContent(data) {
+			ctype := resp.Header.Get("Content-Type")
+			lastErr = fmt.Errorf("non-media response (Content-Type=%q, len=%d)", ctype, len(data))
 			if attempt < attempts {
 				time.Sleep(time.Duration(attempt) * time.Second)
 			}
