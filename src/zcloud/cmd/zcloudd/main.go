@@ -26,24 +26,16 @@ func main() {
 	logger.Printf("Media dir: %s", cfg.MediaDirPath())
 
 	// ====================================
-	// Initialize database
+	// Initialize database (Postgres-only)
 	// ====================================
 
-	var db *store.Store
-	var err error
-	switch cfg.Database.Backend {
-	case "postgres", "postgresql", "pg":
-		dsn := cfg.PostgresDSN()
-		if dsn == "" {
-			logger.Fatalf("Postgres backend được chọn nhưng DSN rỗng — kiểm tra host/user/dbname trong config")
-		}
-		logger.Printf("Postgres: %s@%s:%d/%s", cfg.Database.Postgres.User, cfg.Database.Postgres.Host, cfg.Database.Postgres.Port, cfg.Database.Postgres.DBName)
-		db, err = store.NewPostgres(dsn, cfg.MediaDirPath(),
-			cfg.Database.Postgres.MaxOpenConns, cfg.Database.Postgres.MaxIdleConns)
-	default:
-		logger.Printf("SQLite: %s", cfg.DBPath())
-		db, err = store.NewSQLite(cfg.DBPath(), cfg.MediaDirPath())
+	dsn := cfg.PostgresDSN()
+	if dsn == "" {
+		logger.Fatalf("Postgres DSN rỗng — kiểm tra host/user/dbname trong config")
 	}
+	logger.Printf("Postgres: %s@%s:%d/%s", cfg.Database.Postgres.User, cfg.Database.Postgres.Host, cfg.Database.Postgres.Port, cfg.Database.Postgres.DBName)
+	db, err := store.NewPostgres(dsn, cfg.MediaDirPath(),
+		cfg.Database.Postgres.MaxOpenConns, cfg.Database.Postgres.MaxIdleConns)
 	if err != nil {
 		logger.Fatalf("Database init error: %v", err)
 	}
