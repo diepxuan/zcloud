@@ -122,7 +122,7 @@ body{
 }
 .sp.on{display:flex}
 
-.sr{padding:var(--s-3) var(--s-4);border-bottom:1px solid var(--c-border);flex-shrink:0}
+.sr{height:var(--hdr-h);padding:0 var(--s-4);border-bottom:1px solid var(--c-border);flex-shrink:0;display:flex;align-items:center}
 .sr input{
   width:100%;height:36px;padding:0 var(--s-3);
   border:1px solid var(--c-border-2);border-radius:var(--r-md);
@@ -246,6 +246,7 @@ body{
   display:flex;align-items:center;flex-shrink:0;
 }
 .ch h2{font-size:var(--fz-md);font-weight:var(--fw-m);color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch-id{margin-left:var(--s-3);font-family:var(--ff-mono);font-size:var(--fz-xs);color:var(--c-text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .ms{
   flex:1;overflow-y:auto;padding:var(--s-5);
@@ -555,7 +556,7 @@ body{
   </aside>
 
   <main class="ca" role="main">
-    <div class="ch"><h2 id="ctt">Chọn hội thoại</h2></div>
+    <div class="ch"><h2 id="ctt">Chọn hội thoại</h2><span class="ch-id" id="ctt-id"></span></div>
     <div class="ms" id="ml">
       <div class="em">
         <div>💬</div>
@@ -823,7 +824,7 @@ async function submitCookie(){
 
 // Backward compat: la() goi loadAccounts de giu signature cu.
 async function la(){return loadAccounts()}
-function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}}).catch(function(){})}
+function uh(){if(!ca)return;fetch('/api/account?accountId='+ca).then(function(r){return r.json()}).then(function(d){if(d.ok&&d.data){var img=document.getElementById('himg');if(d.data.avatar){img.src=d.data.avatar;img.style.display=''}else{img.style.display='none'}document.getElementById('hdn').textContent=d.data.displayName||''}var idEl=document.getElementById('ctt-id');if(idEl)idEl.textContent=ca||''}).catch(function(){})}
 function st(t){document.querySelectorAll('.sp').forEach(function(e){e.classList.remove('on')});document.querySelectorAll('.sb-btn').forEach(function(b){b.classList.remove('on')});document.getElementById('pn-'+t).classList.add('on');document.querySelector('.sb-btn[onclick*="'+t+'"]').classList.add('on');if(t=='co'&&ca)loadFriends();if(t=='mg'){la()}}
 function el(i,h){var e=document.getElementById(i);if(h!==undefined)e.innerHTML=h;return e}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
