@@ -518,6 +518,23 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 		FromID: sessRec.UserID, FromName: "", Content: msg.Content,
 		MsgType: int(msg.Type), Timestamp: msg.Timestamp,
 	})
+	// Broadcast tới browser WS (cùng shape với handleZaloEvent) để tab chat
+	// đang mở thấy tin ngay, không cần reload/refetch.
+	globalWS.Broadcast(req.AccountID, BrowserMessage{
+		Type: "new_message",
+		Data: map[string]interface{}{
+			"id":          msg.ID,
+			"convId":      msg.ConvID,
+			"fromId":      sessRec.UserID,
+			"fromName":    "",
+			"content":     msg.Content,
+			"timestamp":   msg.Timestamp,
+			"type":        msg.Type,
+			"attachments": msg.Attachments,
+			"isAck":       msg.IsDeliveryAck,
+			"ackStatus":   msg.AckStatus,
+		},
+	})
 	ok(w, map[string]interface{}{"sent": true, "msgId": msg.ID, "content": msg.Content, "timestamp": msg.Timestamp})
 }
 
