@@ -191,14 +191,11 @@ func (w *MediaWorker) download(ctx context.Context, url string, attempts int) ([
 			continue
 		}
 		// Phát hiện URL die trả về HTML/text (vd photo không tòn tại).
-		// Không phải media binary → tránh lưu file HTML thành .bin 185KB.
+		// Không phải media binary → fail ngay, KHÔNG retry (retry vô ích vì URL
+		// Zalo CDN không thể 'hồi sinh'). Tránh lưu file HTML thành .bin 185KB.
 		if !core.IsMediaContent(data) {
 			ctype := resp.Header.Get("Content-Type")
-			lastErr = fmt.Errorf("non-media response (Content-Type=%q, len=%d)", ctype, len(data))
-			if attempt < attempts {
-				time.Sleep(time.Duration(attempt) * time.Second)
-			}
-			continue
+			return nil, fmt.Errorf("non-media response (Content-Type=%q, len=%d, url expired)", ctype, len(data))
 		}
 		return data, nil
 	}
