@@ -157,7 +157,7 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
 | T7 | ~~Re-login QR cho account hiện tại~~ | ✅ Resolved | Lỗi `zpw_sek không đúng` xảy ra 11/08/2026 khi test SendMessage. Sau đó session được refresh qua background (commit đợt 29/07 cập nhật `secret_key bZMgG6RLiSa/DrYbIotXIg==`), từ 01/09/2026 trở đi không còn lỗi. Verify 11/09/2026: `listening=true`, `hasActiveSession=true`, WS connect `wss://ws3-msg.chat.zalo.me?zpw_ver=688` OK, ping/pong đều, sync old messages nhiều conv. Ghi chú cũ trong audit có thể bỏ. |
-| T8 | Verify end-to-end | 🟢 Optional | Đã verify một phần ngày 11/09: `/api/conversations` + `/api/messages` trả data thật. Smoke test cuối (gửi tin thật + media download) cần Sếp chủ động từ Zalo client khác — không block. |
+| T8 | Verify end-to-end (Sep ↔ Trần Ngọc Đức) | ✅ Verified 11/09/2026 | `/api/messages/send` (Sep → Trần Ngọc Đức) → `sent: true`; DB có row (15→16); WS broadcast `new_message` <1s; Zalo echo cmd 501 parse + dedupe OK. Xem chi tiết §5.4. |
 | T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
 | T10 | WS AES-GCM + desktop command set | 🟢 Optional | PC bundle xác nhận AES-GCM layout và cmd 590-592/630-634 nếu làm cross-device/backup sync |
 | T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟢 Deferred | Làm sau khi T1+T2+T3 (verify + integration test, auto-sync nền, đồng bộ media kèm tin nhắn) hoàn thành. Xem chi tiết tại [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md) |
@@ -200,3 +200,29 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 **Smoke test còn lại** (optional): gửi tin thật từ Zalo client khác → DB có row + media file trong `/storages/media/`. T7 đã resolve, không còn chặn.
 
 Sau khi 3 phần trên ổn định → làm T11 (PC desktop / cross-device sync).
+
+---
+
+## 5.4 Quy ước test gửi/nhận
+
+**Mọi test gửi/nhận (cả end-to-end live lẫn smoke) PHẢI thực hiện với Trần Ngọc Đức** (conv_id `4866700441106275565`, tên hiển thị `Trần Ngọc Đức`). Lý do:
+
+- Là Sếp (Duc Tran) — đối tượng test duy nhất Sếp cho phép dùng để smoke mà không sợ ảnh hưởng khách hàng.
+- Là thread 1-1 (convType=0), đã có lịch sử test trước đó (Sep đã gửi tin test UI ack ngày 02/09).
+- Tin nhận/gửi có thể verify ngay trên điện thoại Sếp nếu cần đối chiếu cuối.
+
+**Các thread KHÔNG dùng cho test** (giữ nguyên hành vi khách hàng):
+
+- `7957954460977268756` Linh Bui — khách hàng gối.
+- `5280163336123324706` Phandaitrang — khách hàng ảnh.
+- Mọi thread còn lại (ThangMT, Cam Tu, Phan Xuan, Tran Thi Le Thuy, Nga Tran, Tran Cong Diep, …) đều không được spam bằng tin test.
+
+**Marker cho tin test**: prefix `[T8-...]`, `[T2-...]`, `[smoke-...]` + epoch timestamp để dễ lọc lại khi cần dọn DB.
+
+**Verify T8 (11/09/2026)** — Sep gửi `[T8-1789096483] end-to-end toi Tran Ngoc Duc` tới conv `4866700441106275565`:
+
+- `POST /api/messages/send` → `sent: true`, msgId `1789096483961`.
+- DB: messages=15 → 16, content match, fromId `559609701372941728`, convId `4866700441106275565`.
+- WS `/ws`: nhận `new_message` event với payload đầy đủ trong <1s.
+- Zalo server echo: frame `01f50100...` (cmd 501 subCmd 01) → zcloud parse qua `EventNewMessage` + dedupe (cùng msgId, INSERT OR IGNORE không lưu row mới).
+- Server response: `error_code: 0, error_message: Successful`.

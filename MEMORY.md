@@ -92,3 +92,11 @@
 - `docs/database/schema.sql` — schema DB (sync từ store.go).
 - `CLAUDE.md` — hướng dẫn cho Claude Code, debug workflow.
 - `AGENTS.md` — quy tắc workspace, boot sequence.
+
+## Quy ước test gửi/nhận
+
+Mọi test gửi/nhận (live smoke + integration end-to-end) PHẢI dùng thread **Trần Ngọc Đức**
+(conv `4866700441106275565`, displayName `Trần Ngọc Đức`). Tuyệt đối KHÔNG spam test vào
+các thread khách hàng (Linh Bui, Phandaitrang, ThangMT, Cam Tu, Phan Xuan, …).
+Marker tin test: prefix `[T8-...]` / `[T2-...]` / `[smoke-...]` + epoch timestamp.
+Xem `docs/tasks.md` §5.4 để biết chi tiết + lý do.
