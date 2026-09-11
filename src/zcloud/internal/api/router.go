@@ -35,7 +35,7 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/media/jobs", s.HandleMediaJobs)
 	mux.HandleFunc("POST /api/media/redownload", s.HandleMediaRedownload)
 	mux.HandleFunc("GET /api/qr/create", s.HandleCreateQR)
-	mux.HandleFunc("POST /api/qr/poll", s.HandlePollQR)
+	mux.HandleFunc("GET /api/qr/poll", s.HandlePollQR)
 	mux.HandleFunc("POST /api/login/cookie", s.HandleCookieLogin)
 
 	// ====================================
