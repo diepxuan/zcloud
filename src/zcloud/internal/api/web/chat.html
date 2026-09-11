@@ -247,6 +247,13 @@ body{
 }
 .mg-item .mg-enabled:disabled{opacity:.4;cursor:not-allowed}
 
+/* === Account disabled (enabled=false): avatar + text grayscale, opacity giảm === */
+.mg-item.disabled{opacity:.6}
+.mg-item.disabled .mg-av{filter:grayscale(1);opacity:.5}
+.mg-item.disabled .mg-n,.mg-item.disabled .mg-meta,.mg-item.disabled .mg-st{opacity:.6}
+.mg-item.disabled:hover{background:var(--c-surface-2)}
+
+
 /* === cv-acc: badge account trong conv/friend khi multi-account === */
 .cv-acc{
   font-size:var(--fz-xs);color:var(--c-text-3);
@@ -666,6 +673,7 @@ function renderAccounts(){
 	}
 	filtered.forEach(function(a){
 		var dv=document.createElement('div');dv.className='mg-item';
+		if(!a.enabled) dv.className+=' disabled';
 		// Không còn 'ca' để highlight — bỏ .cur.
 		var stClass=a.listening?'on':(a.hasActiveSession?'err':'off');
 		var stTitle=a.listening?'WS đang nghe':(a.hasActiveSession?'Session OK, listener chưa chạy':'Không có session active');
