@@ -605,23 +605,8 @@ func extFromFileOrURL(fileName, rawURL string) string {
 
 const mediaDownloadRetries = 3
 
-func maybeAutoDownloadMedia(ctx context.Context, st *store.Store, accountID string, msg *core.Message, logger *log.Logger) {
-	if st == nil || msg == nil || len(msg.Attachments) == 0 {
-		return
-	}
-	if !msg.Type.IsMedia() {
-		return
-	}
-	items := extractAllMedia(msg.Attachments)
-	if len(items) == 0 {
-		return
-	}
-	for _, info := range items {
-		downloadOneMedia(ctx, st, accountID, msg, info, logger)
-	}
-}
-
 // downloadOneMedia tải 1 file với retry. Skip nếu file đã tồn tại trên disk.
+// Còn được dùng bởi test (TestDownloadOneMedia_Success và test khác trong media_test.go).
 func downloadOneMedia(ctx context.Context, st *store.Store, accountID string, msg *core.Message, info mediaDownloadInfo, logger *log.Logger) {
 	mediaDir := st.MediaDir(accountID, msg.ConvID)
 	fileID := info.MsgID
