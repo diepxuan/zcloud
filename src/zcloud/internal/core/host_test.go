@@ -1,11 +1,18 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestIsHostError: nhận diện DNS/connection errors.
@@ -103,4 +110,102 @@ func TestMultiKeyChooser(t *testing.T) {
 		mc.lastErr = fmt.Errorf("test error") // set manually để check
 	}
 	_ = mc.lastErr
+}
+
+// TestHostRetryChainFallback: HostRetry chain qua nhiều host trong ServiceMap
+// khi host đầu fail.
+func TestHostRetryChainFallback(t *testing.T) {
+	// Mock 2 server: server1 fail (close immediately), server2 OK.
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Force close để tạo connection refused.
+		hj, _ := w.(http.Hijacker)
+		if hj != nil {
+			conn, _, _ := hj.Hijack()
+			conn.Close()
+			return
+		}
+		http.Error(w, "boom", 500)
+	}))
+	defer server1.Close()
+
+	server2Called := false
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server2Called = true
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server2.Close()
+
+	sess := &Session{
+		ServiceMap: map[string][]string{
+			ServiceKeyChat: {server1.URL, server2.URL},
+		},
+	}
+	c := &Client{Session: sess, client: http.DefaultClient}
+
+	u, _ := url.Parse("/api/test?foo=bar")
+	resp, err := c.HostRetry(context.Background(), http.MethodGet, u, nil, nil)
+	if err != nil {
+		t.Fatalf("HostRetry: %v", err)
+	}
+	defer resp.Body.Close()
+	if !server2Called {
+		t.Error("server2 (fallback) should be called after server1 fail")
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"ok":true`) {
+		t.Errorf("body = %s, want contains ok:true", string(body))
+	}
+}
+
+// TestHostRetryAllHostsFail: cả 2 host fail → trả error.
+func TestHostRetryAllHostsFail(t *testing.T) {
+	sess := &Session{
+		ServiceMap: map[string][]string{
+			ServiceKeyChat: {"http://127.0.0.1:1", "http://127.0.0.1:2"}, // port không ai listen
+		},
+	}
+	c := &Client{Session: sess, client: &http.Client{Timeout: 1 * time.Second}}
+
+	u, _ := url.Parse("/api/test")
+	_, err := c.HostRetry(context.Background(), http.MethodGet, u, nil, nil)
+	if err == nil {
+		t.Error("expected error when all hosts fail")
+	}
+	if !strings.Contains(err.Error(), "exhausted") {
+		t.Errorf("err = %v, want contains 'exhausted'", err)
+	}
+}
+
+// TestHostRetryNonHostError: lỗi không phải host (vd 500) → fail ngay.
+func TestHostRetryNonHostError(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		http.Error(w, "boom", 500)
+	}))
+	defer srv.Close()
+
+	sess := &Session{
+		ServiceMap: map[string][]string{
+			ServiceKeyChat: {srv.URL},
+		},
+	}
+	c := &Client{Session: sess, client: http.DefaultClient}
+
+	u, _ := url.Parse("/api/test")
+	resp, err := c.HostRetry(context.Background(), http.MethodGet, u, nil, nil)
+	if err != nil {
+		t.Fatalf("HostRetry: %v", err)
+	}
+	defer resp.Body.Close()
+	if !called {
+		t.Error("server should be called")
+	}
+	if resp.StatusCode != 500 {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
 }

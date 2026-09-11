@@ -1057,6 +1057,7 @@ func isHostError(err error) bool {
 		"network is unreachable",
 		"tls: ",
 		"certificate",
+		"EOF", // server close connection ngay (vd hijack + close)
 	} {
 		if strings.Contains(s, marker) {
 			return true
