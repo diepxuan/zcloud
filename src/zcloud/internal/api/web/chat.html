@@ -251,9 +251,16 @@ body{
 .cv-acc{
   font-size:var(--fz-xs);color:var(--c-text-3);
   margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  padding-left:1px;
+  padding-left:1px;display:flex;align-items:center;gap:var(--s-1);
 }
-.cv-acc::before{content:"@ ";color:var(--c-text-3);opacity:.6}
+.cv-acc::before{content:"@ ";color:var(--c-text-3);opacity:.6;flex-shrink:0}
+.cv-shared{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:18px;height:18px;padding:0 4px;
+  background:var(--c-brand-soft);color:var(--c-brand);
+  border-radius:var(--r-pill);font-size:var(--fz-xs);font-weight:var(--fw-m);
+  flex-shrink:0;
+}
 
 /* === mg-toggle-all: nút bật/tắt tất cả === */
 #mg-toggle-all{
@@ -1019,32 +1026,56 @@ function applyMediaDownloaded(data,curConv){
 }
 
 async function loadFriends(){
-	// Load friends cho TẤT CẢ enabled accounts, merge + dedupe theo id.
+	// Load friends cho TẤT CẢ enabled accounts, merge theo (id) + đếm số account
+	// có contact này. Sắp xếp: contact chung (xuất hiện ở nhiều account) trước,
+	// sau đó alphabet displayName. Mỗi contact hiển thị 1 entry với badge
+	// tất cả account đang có contact (vd 'Sep + Chăn Ga').
 	var enabled=accounts.filter(function(a){return a.enabled});
 	if(!enabled.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return}
 	el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
-	var seen={};var all=[];
+	// Map id → {names, avatars, accounts: [{id, label, avatar}]}
+	var merged={};
 	for(var i=0;i<enabled.length;i++){
 		var acc=enabled[i];
 		try{
 			var r=await fetch('/api/friends?accountId='+acc.id);
 			var d=await r.json();
 			if(d.ok&&d.data){
-				d.data.forEach(function(u){u._accountId=acc.id;u._accountLabel=acc.displayName||acc.id;if(!seen[u.id]){seen[u.id]=true;all.push(u);}});
+				d.data.forEach(function(u){
+					if(!merged[u.id]){merged[u.id]={id:u.id,name:u.name||u.id,avatar:u.avatar||'',accounts:[]};}
+					merged[u.id].accounts.push({id:acc.id,label:acc.displayName||acc.id});
+					// Ưu tiên tên + avatar từ account có userId khớp (chính chủ).
+					if(!merged[u.id]._picked && u.name){merged[u.id].name=u.name;merged[u.id]._picked=true;}
+					if(!merged[u.id].avatar && u.avatar){merged[u.id].avatar=u.avatar;}
+				});
 			}
 		}catch(e){console.log('friends load err',acc.id,e);}
 	}
+	var all=Object.values(merged);
 	if(!all.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Không có bạn bè</div>');return;}
+	// Sort: ưu tiên chung (accountCount DESC), sau đó alphabet.
+	var collator=new Intl.Collator('vi',{sensitivity:'base'});
+	all.sort(function(a,b){
+		if(b.accounts.length!==a.accounts.length){return b.accounts.length-a.accounts.length;}
+		return collator.compare(a.name||'',b.name||'');
+	});
 	el('fl','');
 	all.forEach(function(u){
-		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;dv.dataset.accountId=u._accountId;
-		var accLabel=enabled.length>1?'<div class="cv-acc">'+esc(u._accountLabel)+'</div>':'';
+		// primary account = đầu tiên trong list (để click → mở conv).
+		var primary=u.accounts[0];
+		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;dv.dataset.accountId=primary.id;
+		var labels=u.accounts.map(function(a){return esc(a.label);}).join(' + ');
+		var shared=u.accounts.length>1?' <span class="cv-shared" title="Xuất hiện ở '+u.accounts.length+' tài khoản">×'+u.accounts.length+'</span>':'';
+		var accLabel=labels?'<div class="cv-acc">'+labels+shared+'</div>':'';
 		dv.innerHTML='<div class="cv-a"><img src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
 			+'<div class="cv-b">'
-			+'<div class="cv-n">'+(u.name||u.id)+'</div>'
+			+'<div class="cv-n">'+esc(u.name)+'</div>'
 			+accLabel
 			+'</div>';
-		dv.onclick=function(){var acc=accounts.find(function(a){return a.id===u._accountId;});sc(u.id,u._accountId,(acc&&acc.userId)||'',u.name,u.avatar);};
+		dv.onclick=function(){
+			var acc=accounts.find(function(a){return a.id===primary.id;});
+			sc(u.id,primary.id,(acc&&acc.userId)||'',u.name,u.avatar);
+		};
 		el('fl').appendChild(dv);
 	});
 }
