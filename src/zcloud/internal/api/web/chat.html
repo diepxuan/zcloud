@@ -665,8 +665,7 @@ function renderAccounts(){
 		var stTitle=a.listening?'WS đang nghe':(a.hasActiveSession?'Session OK, listener chưa chạy':'Không có session active');
 		var uId=esc(a.id);
 		var showBadge;
-		if(!a.enabled){showBadge='<span class="mg-cur" style="color:var(--c-text-3);border-color:var(--c-text-3)">Đã ẩn</span>'}
-		else if(a.id===ca){showBadge='<span class="mg-cur">Đang dùng</span>'}
+		if(a.enabled && a.id===ca){showBadge='<span class="mg-cur">Đang dùng</span>'}
 		else{showBadge=''}
 		dv.innerHTML='<div class="mg-enabled-wrap">'
 			+'<input type="checkbox" class="mg-enabled" '
