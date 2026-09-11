@@ -85,7 +85,7 @@ func (c *Client) GetCrossDB(ctx context.Context, pcName, syncSession string) ([]
 		}
 	}
 	q.Set("params", enc)
-	return c.desktopGet(ctx, serviceBaseURL(c.Session, "file", "https://files-wpa.chat.zalo.me"), "/api/message/get_crossdb", q)
+	return c.desktopGet(ctx, serviceBaseURL(c.Session, ServiceKeyFile, "https://files-wpa.chat.zalo.me"), "/api/message/get_crossdb", q)
 }
 
 // PullMobileMsg calls /api/message/pull_mobile_msg.
@@ -111,7 +111,7 @@ func (c *Client) PullMobileMsg(ctx context.Context, pcName, publicKey string, fr
 		}
 	}
 	q.Set("params", enc)
-	return c.desktopGet(ctx, serviceBaseURL(c.Session, "file", "https://files-wpa.chat.zalo.me"), "/api/message/pull_mobile_msg", q)
+	return c.desktopGet(ctx, serviceBaseURL(c.Session, ServiceKeyFile, "https://files-wpa.chat.zalo.me"), "/api/message/pull_mobile_msg", q)
 }
 
 // CancelPullMobileMsg calls /api/message/cancel_pull_mobile_msg.
@@ -129,7 +129,7 @@ func (c *Client) CancelPullMobileMsg(ctx context.Context, pcName, publicKey stri
 		}
 	}
 	q.Set("params", enc)
-	return c.desktopGet(ctx, serviceBaseURL(c.Session, "file", "https://files-wpa.chat.zalo.me"), "/api/message/cancel_pull_mobile_msg", q)
+	return c.desktopGet(ctx, serviceBaseURL(c.Session, ServiceKeyFile, "https://files-wpa.chat.zalo.me"), "/api/message/cancel_pull_mobile_msg", q)
 }
 
 // RequestTransferSync calls /api/transfer-sync-v2/request-sync.
@@ -145,12 +145,12 @@ func (c *Client) RequestTransferSync(ctx context.Context, reqID string, data any
 		}
 	}
 	q.Set("params", enc)
-	return c.desktopGet(ctx, serviceBaseURL(c.Session, "file", "https://files-wpa.chat.zalo.me"), "/api/transfer-sync-v2/request-sync", q)
+	return c.desktopGet(ctx, serviceBaseURL(c.Session, ServiceKeyFile, "https://files-wpa.chat.zalo.me"), "/api/transfer-sync-v2/request-sync", q)
 }
 
 // GetBackupMsgInfo calls /api/message/get_backupmsginfo.
 func (c *Client) GetBackupMsgInfo(ctx context.Context) ([]byte, error) {
-	return c.desktopGet(ctx, serviceBaseURL(c.Session, "file", "https://files-wpa.chat.zalo.me"), "/api/message/get_backupmsginfo", mustParseQuery(c.desktopParams()))
+	return c.desktopGet(ctx, serviceBaseURL(c.Session, ServiceKeyFile, "https://files-wpa.chat.zalo.me"), "/api/message/get_backupmsginfo", mustParseQuery(c.desktopParams()))
 }
 
 func mustJSON(v any) string {

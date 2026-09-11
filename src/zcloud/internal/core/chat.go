@@ -94,7 +94,7 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "chat", "https://tt-chat4-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyChat, "https://tt-chat4-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/message/sms?zpw_ver=%d&zpw_type=%d&nretry=0",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	form := url.Values{}
@@ -168,7 +168,7 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 	query.Set("params", paramsEnc)
 	// Domain lấy từ ServiceMap["chat"] (server cung cấp qua zpw_service_map_v3);
 	// fallback tt-convers-wpa.chat.zalo.me để giữ behavior cũ nếu map rỗng.
-	apiURL := serviceBaseURL(c.Session, "chat", "https://tt-convers-wpa.chat.zalo.me") +
+	apiURL := serviceBaseURL(c.Session, ServiceKeyChat, "https://tt-convers-wpa.chat.zalo.me") +
 		"/api/preloadconvers/get-last-msgs?" + query.Encode()
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
@@ -360,7 +360,7 @@ func resolveNames(c *Client, convs []Conversation) {
 		return
 	}
 
-	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyProfile, "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getprofiles/v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -457,7 +457,7 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyProfile, "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getprofiles/v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -571,7 +571,7 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "profile", "https://profile-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyProfile, "https://profile-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/social/friend/getfriends?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
@@ -668,7 +668,7 @@ func (c *Client) GetGroupInfo(ctx context.Context, groupIDs []string) (map[strin
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "group", "https://group-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyGroup, "https://group-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/group/getmg-v2?zpw_ver=%d&zpw_type=%d",
 		baseURL, c.Session.APIVersion, c.Session.APIType)
 	bodyStr := "params=" + url.QueryEscape(enc)
@@ -749,7 +749,7 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "group", "https://tt-group-cm.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyGroup, "https://tt-group-cm.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/cm/getrecentv2?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
@@ -832,7 +832,7 @@ func (c *Client) GetGroupHistoryV2(ctx context.Context, groupID string, count in
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, "group", "https://group-wpa.chat.zalo.me")
+	baseURL := serviceBaseURL(c.Session, ServiceKeyGroup, "https://group-wpa.chat.zalo.me")
 	serviceURL := fmt.Sprintf("%s/api/group/history?params=%s&zpw_ver=%d&zpw_type=%d",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
@@ -1171,4 +1171,25 @@ var (
 	_ = fallbackHost
 	_ = (*hostChooser)(nil)
 	_ = (*multiKeyChooser)(nil)
+)
+
+// ====================================
+// Service key constants (T9.3)
+// ====================================
+//
+// Zalo cung cấp ~30 key qua zpw_service_map_v3. Zcloud đang dùng 4
+// (chat, profile, group, file) — định nghĩa ở đây để tránh typo và dễ
+// thêm key mới khi cần. Xem docs/references/zca-js/src/context.ts để xem
+// danh sách đầy đủ.
+const (
+	ServiceKeyChat         = "chat"          // SendMessage, GetConversations, GetLastMsgs
+	ServiceKeyProfile      = "profile"       // GetMyProfile, GetFriends
+	ServiceKeyGroup        = "group"         // GetGroupInfo, GetGroupHistory
+	ServiceKeyFile         = "file"          // Desktop sync (get_crossdb, pull_mobile_msg, ...)
+	ServiceKeyMediaStore   = "media_store"   // ZCloud media store (liên quan T11.7)
+	ServiceKeyZFamily      = "zfamily"       // Zalo Family album
+	ServiceKeyZCloudUpFile = "zcloud_up_file" // ZCloud upload file
+	ServiceKeySticker      = "sticker"       // downloadStickerUrl
+	ServiceKeyAlias        = "alias"         // alias service (chưa dùng)
+	ServiceKeyZimsg        = "zimsg"         // zimsg (chưa dùng)
 )
