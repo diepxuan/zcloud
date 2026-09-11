@@ -767,7 +767,11 @@ function stopQRPoll(){if(qrPollTimer){clearTimeout(qrPollTimer);qrPollTimer=null
 
 // Script extract cookie Zalo PC tu document.cookie. User paste vao Console
 // cua chat.zalo.me roi Enter. Se in dong bat dau bang "zcloud_cookie:".
-var CK_SCRIPT = String.raw`(()=>{const c=document.cookie;if(!c){console.log("zcloud_cookie: ");return}const pairs=c.split(";").map(p=>p.trim()).filter(p=>p);const out=pairs.filter(p=>/^(zpsid|zpw_sek|__zi|zpw_seck|__zpw_sek|app\.event\.id|clientId|isDark)=/.test(p));const line=out.join("; ");console.log("zcloud_cookie: "+line);try{navigator.clipboard.writeText(line)}catch(e){}})();`;
+// Script chỉ in dòng "zcloud_cookie: ..." ra console — user tự select+copy
+// (Ctrl+C hoặc chuột phải → Copy). Không gọi navigator.clipboard.writeText
+// vì browser yêu cầu document focused; khi DevTools mở detached / user
+// click sang tab khác thì clipboard write fail với NotAllowedError.
+var CK_SCRIPT = String.raw`(()=>{const c=document.cookie;if(!c){console.log("zcloud_cookie: ");return}const pairs=c.split(";").map(p=>p.trim()).filter(p=>p);const out=pairs.filter(p=>/^(zpsid|zpw_sek|__zi|zpw_seck|__zpw_sek|app\.event\.id|clientId|isDark)=/.test(p));const line=out.join("; ");console.log("zcloud_cookie: "+line);console.log(">>> Copy dòng trên (Ctrl+C sau khi select) rồi paste vào zcloud <<<");})();`;
 
 // copyCookieScript: copy CK_SCRIPT vao clipboard, doi label 1.5s thanh "Da sao chep".
 async function copyCookieScript(){
@@ -799,7 +803,7 @@ async function pasteCookieFromClipboard(){
 		var m=txt.match(/zcloud_cookie:\s*(.+)/);
 		if(m){ta.value=m[1].trim()}
 		else if(/zpsid=/.test(txt)){ta.value=txt.trim()}
-		else{er.textContent='Clipboard không có cookie zpsid. Chạy script trong Console Zalo trước.';er.style.display='';return}
+		else{er.textContent='Clipboard không có cookie zpsid. Mở DevTools của chat.zalo.me (F12, đảm bảo tab Zalo đang focus), chạy script lại rồi copy dòng "zcloud_cookie: ..." từ console.';er.style.display='';return}
 		ta.focus();
 	}catch(e){
 		er.textContent='Không đọc được clipboard. Dán thủ công vào ô bên dưới.';er.style.display='';
