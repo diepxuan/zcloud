@@ -66,6 +66,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 13 | Media download | 🟢 Xong | [13-media-download.md](tasks/13-media-download.md) |
 | 14 | Tách Web UI ra file tĩnh | 🟢 Xong | [14-split-webui.md](tasks/14-split-webui.md) |
 | 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
+| 18 | Terminal UI (TUI) | 🟡 Mockup | [18-tui.md](tasks/18-tui.md) |
 
 ---
 
@@ -268,6 +269,21 @@ Approach:
 **Còn lại của T11** (sau T11.5 + T11.6):
 - ZCloud media + family album (chưa reverse).
 - Integration test end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức theo §5.4).
+
+## 5.12. T12 — Terminal UI (TUI)
+
+Chi tiết: [tasks/18-tui.md](tasks/18-tui.md).
+
+Workflow yêu cầu của Sếp (11/09/2026): `./zcloudd` hoặc `./zcloudd tui`
+→ màn chọn account → màn chọn conv (filter được tên/ID) → màn chat
+(xem + gửi tin). ESC ở bất kỳ màn nào cũng thoát hẳn (exit 0).
+
+| # | Tính năng | Mức độ | Ghi chú |
+|:-:|-----------|:------:|---------|
+| T18.1 | Bubbletea + 3 màn tuần tự (wizard) | 🟡 Pending | Hiện `./zcloudd tui` chỉ in banner. Khi implement thật dùng `charmbracelet/bubbletea` + `lipgloss` + `bubbles`. **Không được đổi `./zcloudd` no-arg** — watch fork `./zcloudd` no-arg để lấy HTTP server (xem commit `6019140`). |
+| T18.2 | Load data từ Postgres + filter `/` | 🟡 Pending | Màn 1: load accounts. Màn 2: load convs của account đang chọn. Filter `/` lọc theo displayName (case-insensitive contains) + parse ID nếu text toàn số. |
+| T18.3 | Composer + gửi tin nhắn (màn 3) | 🟡 Pending | Textinput ở bottom panel, Enter để gửi qua `core.Client.SendMessage(text, convID)`. Echo optimistic + marker `[sent]` khi nhận WS ack. Text >2000 char → chia nhỏ. Smoke test với Trần Ngọc Đức theo §5.4. |
+| T18.4 | Polish + resize + cleanup | 🟡 Pending | Detect không có TTY → in hướng dẫn `zcloudd serv` thay vì crash. Resize 20 dòng không vỡ. Thoát alternate buffer sạch. |
 
 ## 6. References
 
