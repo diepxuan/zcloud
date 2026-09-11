@@ -25,7 +25,7 @@
 - **AES-128-CBC** (không phải AES-ECB) cho REST params — đã xác nhận qua
   zca-js + za-go.
 - **AES-GCM** cho WS event data khi Zalo trả cipher.
-- **Pure Go SQLite** (`modernc.org/sqlite`) — tránh CGO, dễ cross-compile.
+- **Postgres-only từ 11/09/2026** (`github.com/jackc/pgx/v5` qua `database/sql`) — bỏ hoàn toàn SQLite backend (`store_sqlite.go`, `NewSQLite`, `BackendSQLite`, dialect branches). Integration test dùng `-tags testdb` + `ZCLOUD_TEST_DSN`, schema-per-test (`zcloud_t_<TestName>`) để chạy song song an toàn.
 - **Vanilla JS** cho UI — không framework, đơn giản, dễ debug, embed.FS
   build 1 binary duy nhất.
 - **Multi-user trong 1 daemon** — `Server.clients map[accountId]*Client`.

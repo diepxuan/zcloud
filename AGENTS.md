@@ -18,7 +18,7 @@ Mỗi session startup, đọc theo thứ tự:
 - **Mục tiêu:** Xây dựng cloud service Zalo đầy đủ (xem `docs/tasks.md` §1):
   1. ✅ Có URL cho Sếp đăng nhập bằng QR code
   2. ✅ Có thể chat real-time với user Zalo khác
-  3. ✅ Lưu lịch sử chat và media lâu dài (SQLite + disk)
+  3. ✅ Lưu lịch sử chat và media lâu dài (PostgreSQL + disk)
   4. ✅ Đồng bộ lịch sử theo chuẩn Zalo (WebSocket cmd 510/511)
 - **Source code:** `src/zcloud/` (Go module `github.com/diepxuan/zcloud`)
 - **Task list + master plan + audit:** `docs/tasks.md`
@@ -27,7 +27,7 @@ Mỗi session startup, đọc theo thứ tự:
   - **Phần B**: Design system — tokens, components, layout (đọc trước khi sửa UI).
   - **Phần C**: Tham chiếu.
 - **Chính sách push:** Em toàn quyền quyết định, push trực tiếp vào `main` sau mỗi subtask. Không cần review.
-- **Công nghệ:** Go core + server, SQLite + disk storage, vanilla JS web UI
+- **Công nghệ:** Go core + server, PostgreSQL (pgx) + disk storage, vanilla JS web UI
 
 ## Cấu trúc thư mục
 - `src/zcloud/` — Source code chính
