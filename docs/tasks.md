@@ -283,7 +283,8 @@ Workflow yêu cầu của Sếp (11/09/2026): `./zcloudd` hoặc `./zcloudd tui`
 | T18.1 | Bubbletea + 3 màn tuần tự (wizard) | 🟡 Pending | Hiện `./zcloudd tui` chỉ in banner. Khi implement thật dùng `charmbracelet/bubbletea` + `lipgloss` + `bubbles`. **Không được đổi `./zcloudd` no-arg** — watch fork `./zcloudd` no-arg để lấy HTTP server (xem commit `6019140`). |
 | T18.2 | Load data từ Postgres + filter `/` | 🟡 Pending | Màn 1: load accounts. Màn 2: load convs của account đang chọn. Filter `/` lọc theo displayName (case-insensitive contains) + parse ID nếu text toàn số. |
 | T18.3 | Composer + gửi tin nhắn (màn 3) | 🟡 Pending | Textinput ở bottom panel, Enter để gửi qua `core.Client.SendMessage(text, convID)`. Echo optimistic + marker `[sent]` khi nhận WS ack. Text >2000 char → chia nhỏ. Smoke test với Trần Ngọc Đức theo §5.4. |
-| T18.4 | Polish + resize + cleanup | 🟡 Pending | Detect không có TTY → in hướng dẫn `zcloudd serv` thay vì crash. Resize 20 dòng không vỡ. Thoát alternate buffer sạch. |
+| T18.5 | Cookie login bằng 2 field zpsid + zpw_sek (bỏ script) | 🟡 Pending | Modal hiện tại dùng script DevTools bị `NotAllowedError: Document is not focused`. Thay bằng 2 ô input thủ công copy từ DevTools → Application → Cookies → chat.zalo.me. `zpw_sek` dùng `type="password"` để che value. Server validate 2 field bắt buộc. |
+| T18.6 | Polish + resize + cleanup | 🟡 Pending | Detect không có TTY → in hướng dẫn `zcloudd serv` thay vì crash. Resize 20 dòng không vỡ. Thoát alternate buffer sạch. |
 
 ## 6. References
 

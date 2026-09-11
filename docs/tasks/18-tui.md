@@ -127,7 +127,87 @@ màn chỉ cần đổi `m.screen` state. Không blocking stdin khi không focus
   xem quy ước §5.4 trong `docs/tasks.md`.
 - Tin nhận realtime: nhờ Sếp gửi từ điện thoại → TUI hiển thị trong 3s.
 
-### T18.4 — Polish + resize + cleanup
+### T18.5 — Thêm acc login bằng cookie (zpsid + zpw_sek, bỏ script)
+
+Sếp yêu cầu 11/09/2026: thay modal nhập cookie hiện tại (dùng script trong
+DevTools để extract + parseCookie auto) bằng form nhập thủ công 2 field.
+Lý do: script gặp `NotAllowedError: Document is not focused` khi DevTools
+mở detached hoặc user click sang tab khác — copy thủ công 2 ô đơn giản
+hơn, không cần focus.
+
+**Field cần Sếp điền (chỉ 2):**
+
+| Field     | Mô tả                                                         | Bắt buộc |
+|-----------|---------------------------------------------------------------|:--------:|
+| `zpsid`   | Session ID — copy từ DevTools → Application → Cookies → `zpsid` | ✅       |
+| `zpw_sek` | Secret key — copy từ DevTools → Application → Cookies → `zpw_sek` | ✅       |
+
+Các cookie phụ (`__zi`, `zpw_seck`, `__zpw_sek`, `app.event.id`, `clientId`,
+`isDark`) đã bị loại khỏi script — chúng là cookies tracking/theme Zalo
+PC, KHÔNG cần cho `core.CookieLogin` (chỉ cần `zpsid` + `zpw_sek` để gọi
+`getLoginInfo` ở `wpa.chat.zalo.me` thành công).
+
+**Cách copy trong DevTools:**
+
+1. Mở https://chat.zalo.me, đăng nhập xong.
+2. F12 → tab **Application** → mục **Cookies** → `https://chat.zalo.me`.
+3. Tìm `zpsid` → double-click cột **Value** → Ctrl+C.
+4. Tìm `zpw_sek` → double-click cột **Value** → Ctrl+C.
+5. Paste vào 2 ô tương ứng.
+
+**Sửa `internal/api/handlers.go:HandleCookieLogin`:**
+
+Đổi request body từ `{cookie: string}` thành `{zpsid, zpw_sek string}`.
+Build cookies map:
+```go
+cookies := map[string]string{"zpsid": req.ZPSID, "zpw_sek": req.ZPWSEK}
+```
+rồi gọi `core.CookieLogin(ctx, cookies, "", "")` như cũ. Validate phía
+server: nếu `zpsid` hoặc `zpw_sek` rỗng → fail 400 "thiếu field".
+
+**Sửa `internal/api/web/chat.html` modal "Đăng nhập bằng Cookie":**
+
+Bỏ 4 step hướng dẫn script + nút "Sao chép script" + nút "Dán cookie
+từ clipboard" + `CK_SCRIPT` + `copyCookieScript()` + `pasteCookieFromClipboard()`.
+Thay bằng:
+```html
+<div class="ck-fields">
+  <label>zpsid
+    <input id="ck-zpsid" placeholder="Session ID từ DevTools → Application → Cookies → zpsid">
+  </label>
+  <label>zpw_sek
+    <input id="ck-zpwsek" type="password" placeholder="Secret key từ DevTools → Application → Cookies → zpw_sek">
+  </label>
+</div>
+<div class="ck-help">
+  Mở <a href="https://chat.zalo.me" target="_blank">chat.zalo.me</a> đã đăng nhập →
+  F12 → Application → Cookies → chat.zalo.me → copy value của <b>zpsid</b> và <b>zpw_sek</b>.
+</div>
+```
+
+`zpw_sek` dùng `type="password"` để browser che value khi Sếp gõ
+(tránh shoulder-surfing) — vẫn paste được bình thường.
+
+**Sửa `submitCookie()`** trong `chat.html`:
+
+Đọc 2 input thay vì textarea:
+```js
+var zpsid = document.getElementById('ck-zpsid').value.trim();
+var zpwsek = document.getElementById('ck-zpwsek').value.trim();
+if (!zpsid || !zpwsek) { er.textContent = 'Nhập cả zpsid và zpw_sek'; ...; return; }
+fetch('/api/login/cookie', { method:'POST', body: JSON.stringify({zpsid, zpw_sek: zpwsek}) })
+```
+giữ nguyên phần xử lý response.
+
+**Verify:**
+- [ ] Đăng nhập Zalo web, F12 → Application → Cookies → chat.zalo.me.
+- [ ] Copy `zpsid` và `zpw_sek`, paste vào 2 ô trong modal.
+- [ ] Bấm "Đăng nhập bằng Cookie" → server trả `{accountId}`.
+- [ ] Account xuất hiện trong list, WS listener start, có thể chat.
+- [ ] Bỏ trống 1 trong 2 ô → báo "Nhập cả zpsid và zpw_sek".
+- [ ] Không còn script/DevTools/copy-paste chuỗi dài.
+
+### T18.6 — Polish + resize + cleanup
 - Detect terminal không hỗ trợ TUI (không có TTY) → in hướng dẫn dùng
   `zcloudd serv` rồi exit 1 thay vì crash.
 - Cleanup screen khi thoát (gửi `\x1b[?1049l` để thoát alternate buffer).
