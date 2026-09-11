@@ -22,12 +22,22 @@ const (
 )
 
 // IsMedia trả về true nếu message type có attachment media cần tải về disk.
+//
+// MsgTypeLink không tự trả true — caller phải check attachment có URL ảnh
+// trước (xem HasImageAttachment trong ws.go). Logic tách riêng vì MsgType
+// là enum không chứa context attachments.
 func (t MsgType) IsMedia() bool {
 	switch t {
 	case MsgTypeImage, MsgTypeSticker, MsgTypeFile, MsgTypeVoice, MsgTypeVideo:
 		return true
 	}
 	return false
+}
+
+// IsLink trả về true nếu message là link. Caller kiểm tra tiếp attachment
+// có ảnh preview (OG image) để quyết định có tải về disk hay không.
+func (t MsgType) IsLink() bool {
+	return t == MsgTypeLink
 }
 // EventType represents WebSocket event types
 type EventType int

@@ -220,3 +220,30 @@ func TestMsgTypeIsMedia(t *testing.T) {
 		}
 	}
 }
+
+// TestHasImageAttachment: detect attachment có URL ảnh (jpg/jpeg/png/gif/webp).
+func TestHasImageAttachment(t *testing.T) {
+	cases := []struct {
+		name string
+		atts []core.Attachment
+		want bool
+	}{
+		{"jpg", []core.Attachment{{URL: "https://x/y.jpg", FileName: "y.jpg"}}, true},
+		{"jpeg-upper", []core.Attachment{{URL: "https://x/y.JPEG", FileName: "y.JPEG"}}, true},
+		{"png", []core.Attachment{{URL: "https://x/y.png", FileName: "y.png"}}, true},
+		{"gif", []core.Attachment{{URL: "https://x/y.gif", FileName: "y.gif"}}, true},
+		{"webp", []core.Attachment{{URL: "https://x/y.webp", FileName: "y.webp"}}, true},
+		{"mp4-not-image", []core.Attachment{{URL: "https://x/y.mp4", FileName: "y.mp4"}}, false},
+		{"pdf-not-image", []core.Attachment{{URL: "https://x/y.pdf", FileName: "y.pdf"}}, false},
+		{"empty-url", []core.Attachment{{URL: "", FileName: "y.jpg"}}, false},
+		{"mixed", []core.Attachment{{URL: "https://x/y.pdf"}, {URL: "https://x/y.jpg"}}, true},
+		{"empty", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := hasImageAttachment(c.atts); got != c.want {
+				t.Errorf("hasImageAttachment(%+v) = %v, want %v", c.atts, got, c.want)
+			}
+		})
+	}
+}

@@ -469,6 +469,11 @@ const storeMediaDefaultAttempts = 3
 
 // enqueueMessageMediaJobs ghi mỗi media attachment của message vào bảng
 // media_jobs. MediaWorker nền sẽ tải về disk + retry + broadcast.
+//
+// Type đã biết là media (image/sticker/file/voice/video) đều đi qua
+// extractAllMedia. Với MsgTypeLink, chỉ enqueue nếu attachment có URL
+// ảnh (jpg/png/webp/gif) — Zalo link message có field 'thumb' cho OG
+// preview image; nếu không có thì link thuần không cần tải.
 func enqueueMessageMediaJobs(st *store.Store, accountID string, msg *core.Message, logger *log.Logger) {
 	if st == nil || msg == nil || len(msg.Attachments) == 0 {
 		return
@@ -477,7 +482,7 @@ func enqueueMessageMediaJobs(st *store.Store, accountID string, msg *core.Messag
 		logger.Printf("zalo-ws: skip media enqueue, missing account/conv (msg=%s)", msg.ID)
 		return
 	}
-	if !msg.Type.IsMedia() {
+	if !msg.Type.IsMedia() && !(msg.Type.IsLink() && hasImageAttachment(msg.Attachments)) {
 		return
 	}
 	items := extractAllMedia(msg.Attachments)
@@ -523,6 +528,22 @@ func fileExists(st *store.Store, accountID, convID, fileID, ext string) bool {
 		return false
 	}
 	return true
+}
+
+// hasImageAttachment trả về true nếu bất kỳ attachment nào có URL trông giống ảnh
+// (jpg/jpeg/png/gif/webp). Dùng để quyết định MsgTypeLink có OG preview cần tải.
+func hasImageAttachment(atts []core.Attachment) bool {
+	imageExts := map[string]bool{"jpg": true, "jpeg": true, "png": true, "gif": true, "webp": true}
+	for _, a := range atts {
+		if a.URL == "" {
+			continue
+		}
+		ext := strings.ToLower(extFromFileOrURL(a.FileName, a.URL))
+		if imageExts[ext] {
+			return true
+		}
+	}
+	return false
 }
 
 // extractAllMedia duyệt toàn bộ attachments, trả về thông tin download cho
