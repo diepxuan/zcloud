@@ -6,7 +6,7 @@ import (
 )
 
 // ====================================
-// Domain types — chia sẻ giữa SQLite và Postgres backend
+// Domain types — dùng chung giữa core, api, store
 // ====================================
 
 type Account struct {

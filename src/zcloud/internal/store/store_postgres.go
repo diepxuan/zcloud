@@ -10,7 +10,7 @@ import (
 // Postgres-specific migration + dialect helpers
 // ====================================
 
-// migratePostgres tạo schema Postgres. Tương đương store_sqlite.go nhưng:
+// migratePostgres tạo schema Postgres (khi cần migration mới).
 // - DATETIME → TIMESTAMP WITH TIME ZONE
 // - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL PRIMARY KEY
 // - TEXT DEFAULT CURRENT_TIMESTAMP → TIMESTAMPTZ DEFAULT NOW()
@@ -38,7 +38,7 @@ func (s *Store) migratePostgres() error {
 }
 
 // ensureSessionServiceMapPG thêm cột service_map nếu thiếu.
-// Dùng information_schema thay cho PRAGMA table_info (chỉ có ở SQLite).
+// Dùng information_schema (chuẩn SQL) để kiểm tra cột đã tồn tại.
 func (s *Store) ensureSessionServiceMapPG() error {
 	var exists bool
 	err := s.db.QueryRow(`
@@ -59,7 +59,7 @@ func (s *Store) ensureSessionServiceMapPG() error {
 }
 
 // ====================================
-// Schema (Postgres) — ánh xạ 1:1 từ SQLite
+// Schema (Postgres)
 // ====================================
 
 const migrationAccountsPG = `

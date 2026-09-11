@@ -31,7 +31,7 @@ type ServerConfig struct {
 }
 
 // DatabaseConfig — cấu hình Postgres. zcloud chỉ hỗ trợ Postgres, không có
-// SQLite backend nữa (xem docs/tasks.md §4.3).
+// SQLite backend nữa — chỉ còn Postgres (xem docs/tasks.md §4.3).
 type DatabaseConfig struct {
 	Postgres PostgresConfig `yaml:"postgres"`
 }
