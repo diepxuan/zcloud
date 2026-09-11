@@ -156,8 +156,8 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | T4 | Zalo OA webhook (task 08) | 🟢 Optional | Schema sẵn, thiếu handler |
 | T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
-| T7 | Re-login QR cho account hiện tại | 🔴 Block | Session cookies bị Zalo server reject (`zpw_sek không đúng`) — cần Sếp login lại qua QR |
-| T8 | Verify end-to-end sau re-login | 🟡 Medium | Gửi tin qua Zalo client khác → DB có message + browser WS nhận event |
+| T7 | ~~Re-login QR cho account hiện tại~~ | ✅ Resolved | Lỗi `zpw_sek không đúng` xảy ra 11/08/2026 khi test SendMessage. Sau đó session được refresh qua background (commit đợt 29/07 cập nhật `secret_key bZMgG6RLiSa/DrYbIotXIg==`), từ 01/09/2026 trở đi không còn lỗi. Verify 11/09/2026: `listening=true`, `hasActiveSession=true`, WS connect `wss://ws3-msg.chat.zalo.me?zpw_ver=688` OK, ping/pong đều, sync old messages nhiều conv. Ghi chú cũ trong audit có thể bỏ. |
+| T8 | Verify end-to-end | 🟢 Optional | Đã verify một phần ngày 11/09: `/api/conversations` + `/api/messages` trả data thật. Smoke test cuối (gửi tin thật + media download) cần Sếp chủ động từ Zalo client khác — không block. |
 | T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
 | T10 | WS AES-GCM + desktop command set | 🟢 Optional | PC bundle xác nhận AES-GCM layout và cmd 590-592/630-634 nếu làm cross-device/backup sync |
 | T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟢 Deferred | Làm sau khi T1+T2+T3 (verify + integration test, auto-sync nền, đồng bộ media kèm tin nhắn) hoàn thành. Xem chi tiết tại [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md) |
@@ -197,6 +197,6 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 - **T2 — Auto-sync scheduler** (`internal/api/sync_scheduler.go`): goroutine quét account active mỗi 10 phút (env `ZC_AUTOSYNC_INTERVAL`, min 30s), throttle 500ms/conv, idempotent lock tránh overlap, truyền `lastId` từ `conv.LastMsgID` cho WS cmd 510/511. `RequestOldMessagesViaListener` nhận thêm `lastID`; `HandleSyncMessages` nhận `lastId` từ client (fallback `conv.LastMsgID`).
 - **T3 — Đồng bộ media đầy đủ** (`internal/api/ws.go`): `MsgType.IsMedia()` helper, `extractAllMedia` (dedupe URL), `downloadOneMedia` (skip nếu file tồn tại, retry 3 lần cho cả network error và HTTP 5xx, lưu meta qua `SaveMedia`, broadcast `media_downloaded`).
 
-**Smoke test còn lại** cần Sếp login QR (T7 block): gửi tin thật từ Zalo client khác → DB có row + media file trong `/storages/media/`.
+**Smoke test còn lại** (optional): gửi tin thật từ Zalo client khác → DB có row + media file trong `/storages/media/`. T7 đã resolve, không còn chặn.
 
 Sau khi 3 phần trên ổn định → làm T11 (PC desktop / cross-device sync).
