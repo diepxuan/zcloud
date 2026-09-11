@@ -208,9 +208,9 @@ func buildTo(binary, sourceDir string) error {
 	return nil
 }
 
-// startBinary chạy binary không flag → rơi vào default = server.Run().
+// startBinary chạy "zcloudd serv" — chạy server foreground (cùng cách gọi với systemd ExecStart).
 func startBinary(binary string, logger *log.Logger) (*exec.Cmd, error) {
-	cmd := exec.Command(binary) // không flag → rơi vào default = server.Run()
+	cmd := exec.Command(binary, "serv") // chạy server foreground (giống systemd ExecStart=zcloudd serv)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = ProjectRoot()
