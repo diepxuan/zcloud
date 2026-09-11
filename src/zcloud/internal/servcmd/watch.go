@@ -208,9 +208,9 @@ func buildTo(binary, sourceDir string) error {
 	return nil
 }
 
-// startBinary chạy binary với các flag mặc định cho watch mode.
+// startBinary chạy binary không flag → rơi vào default = server.Run().
 func startBinary(binary string, logger *log.Logger) (*exec.Cmd, error) {
-	cmd := exec.Command(binary, "--port", "8080", "--dev")
+	cmd := exec.Command(binary) // không flag → rơi vào default = server.Run()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Dir = ProjectRoot()

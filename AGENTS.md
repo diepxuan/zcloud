@@ -37,12 +37,15 @@ Mỗi session startup, đọc theo thứ tự:
 - `docs/references/` — Source tham khảo (zca-js, zcago, Za-go)
 
 ## Service manager (`zcloudd serv`)
-Quản lý service đã được port từ bash script vào binary:
-- `zcloudd serv` — chạy watch mode (foreground, systemd ExecStart)
+Quản lý service đã được port từ bash script vào binary. CLI shape:
+- `zcloudd` — chạy HTTP server (foreground)
+- `zcloudd serv` — chạy HTTP server foreground (cho systemd ExecStart)
+- `zcloudd serv watch` — watch + auto-rebuild + restart server (dev)
 - `zcloudd serv start|stop|restart` — systemctl wrapper
 - `zcloudd serv status` — trạng thái systemd + port
 - `zcloudd serv logs [-f]` — journalctl -u zcloud
 - `zcloudd serv install` — (re)generate `/etc/systemd/system/zcloud.service`
+- `zcloudd tui` — terminal UI (mockup, sắp triển khai)
 - Config (DB password, port, domain...) đọc từ `~/.config/ductn/zcloud.yml`
 - Script bash cũ `scripts/zcloud.sh` + `scripts/zcloudd.sh` đã được chuyển vào `tmp/scratch/trash/`
 

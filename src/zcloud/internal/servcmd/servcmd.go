@@ -4,13 +4,13 @@
 //
 // Subcommands:
 //
-//	zcloudd serv                  run as daemon (watch mode + auto-rebuild) — used by systemd
+//	zcloudd serv                  chạy HTTP server (foreground, không watch) — used by systemd
 //	zcloudd serv start            systemctl start zcloud (install unit if missing)
 //	zcloudd serv stop             systemctl stop zcloud
 //	zcloudd serv restart          systemctl restart zcloud (also rebuilds binary)
 //	zcloudd serv status           show systemd status + listening port
 //	zcloudd serv logs [-f]        journalctl -u zcloud
-//	zcloudd serv watch            foreground watch mode (same as no-subcommand)
+//	zcloudd serv watch            foreground watch mode (fsnotify + auto-rebuild)
 //	zcloudd serv install          (re)write /etc/systemd/system/zcloud.service + daemon-reload
 package servcmd
 
@@ -20,6 +20,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/diepxuan/zcloud/internal/server"
 )
 
 // ServiceName là tên systemd unit.
@@ -61,10 +63,11 @@ func parent(p string) string {
 	return p[:i]
 }
 
-// Run dispatch `zcloudd serv <subcommand>`. Nếu subcommand rỗng → chạy watch mode.
+// Run dispatch `zcloudd serv <subcommand>`. Nếu subcommand rỗng → chạy HTTP server
+// (giống `zcloudd` không-arg). Systemd ExecStart=zcloudd serv dùng nhánh này.
 func Run(args []string) error {
 	if len(args) == 0 {
-		return watchForeground()
+		return server.Run()
 	}
 	switch args[0] {
 	case "start":
@@ -94,13 +97,13 @@ func printHelp() {
 	fmt.Println(`zcloudd serv — quản lý service zcloud daemon
 
 Usage:
-  zcloudd serv                  chạy daemon (watch + auto-rebuild) — systemd ExecStart
+  zcloudd serv                  chạy HTTP server (foreground, không watch)
   zcloudd serv start            systemctl start zcloud (cài unit nếu thiếu)
   zcloudd serv stop             systemctl stop zcloud
   zcloudd serv restart          systemctl restart + rebuild binary
   zcloudd serv status           in trạng thái systemd + port listener
   zcloudd serv logs [-f]        xem journalctl -u zcloud
-  zcloudd serv watch            chạy foreground watch (alias của default)
+  zcloudd serv watch            foreground watch + auto-rebuild (dev)
   zcloudd serv install          (re)generate systemd unit + daemon-reload
   zcloudd serv help             in trợ giúp này`)
 }
@@ -133,7 +136,7 @@ func systemctlRun(label string, subargs ...string) error {
 }
 
 // install tạo/cập nhật /etc/systemd/system/zcloud.service rồi daemon-reload.
-// Unit file dùng ExecStart=zcloudd serv (chạy watch mode trong foreground).
+// Unit file dùng ExecStart=zcloudd serv (chạy server trực tiếp trong foreground).
 func install() error {
 	bin := BinaryPath()
 	root := ProjectRoot()
