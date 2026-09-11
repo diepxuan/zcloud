@@ -722,6 +722,7 @@ function renderAccounts(){
 			+'<div class="mg-row3">'
 			+showBadge
 			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button>'
+			+(a.disabledReason==='auth_expired'?'<button class="mg-btn mg-btn-rel" onclick="showAddModal(\''+uId+'\')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>':'')
 			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
 			+'</div>'
 			+'</div>';
@@ -742,15 +743,21 @@ function renderStats(){
 // Vẫn giữ để không break code khác; chỉ làm noop.
 function switchAcc(id){sy();st('ch');}
 
-// toggleAccountEnabled bật/tắt flag enabled qua API. Composer tự chọn account
-// theo conv → không cần auto-switch 'ca'.
+// toggleAccountEnabled bật/tắt flag enabled qua API.
+// Nếu account bị disabledReason='auth_expired' (zpw_sek invalid) và user tick bật
+// lại → từ chối + thông báo cần đăng nhập lại (cookie/QR mới).
 async function toggleAccountEnabled(id,enabled){
+	var acc=accounts.find(function(a){return a.id===id});
+	if(enabled && acc && acc.disabledReason==='auth_expired'){
+		alert('Tài khoản này đã bị Zalo vô hiệu hóa (zpw_sek hết hạn).\nVui lòng đăng nhập lại bằng QR hoặc Cookie mới.');
+		await loadAccounts(); // reload để checkbox reset
+		return;
+	}
 	try{
 		var r=await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id,enabled:enabled})});
 		var d=await r.json();
 		if(!d.ok){console.log('toggle enabled err',d.error);return;}
 	}catch(e){console.log('toggle enabled network err',e);return;}
-	var acc=accounts.find(function(a){return a.id===id});
 	if(acc) acc.enabled=enabled;
 	// Nếu conv hiện tại thuộc account bị tắt → đóng conv.
 	if(!enabled && ccAccountId===id){cc='';ccAccountId='';ccAccountMe='';}
@@ -760,12 +767,16 @@ async function toggleAccountEnabled(id,enabled){
 }
 
 // toggleAllEnabled bật/tắt tất cả cùng lúc.
+// Bỏ qua account có disabledReason='auth_expired' (cần re-login mới bật lại được).
 async function toggleAllEnabled(){
-	var allEnabled=accounts.length>0 && accounts.every(function(a){return a.enabled});
+	// allEnabled chỉ tính những account KHÔNG bị auth_expired.
+	var toggleable=accounts.filter(function(a){return a.disabledReason!=='auth_expired';});
+	var allEnabled=toggleable.length>0 && toggleable.every(function(a){return a.enabled});
 	var wantEnabled=!allEnabled;
 	for(var i=0;i<accounts.length;i++){
 		var a=accounts[i];
 		if(a.enabled===wantEnabled) continue;
+		if(a.disabledReason==='auth_expired' && wantEnabled) continue;
 		try{
 			await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:a.id,enabled:wantEnabled})});
 			a.enabled=wantEnabled;
@@ -785,8 +796,19 @@ async function restartListener(id){
 }
 
 // Hien thi modal them tai khoan.
-async function showAddModal(){
+async function showAddModal(reloginID){
 	var m=document.getElementById('add-modal');if(!m)return;
+	// Mode re-login — preselect accountID, lock vào tab cookie, đổi title.
+	if(reloginID){
+		m.dataset.reloginId=reloginID;
+		var acc=accounts.find(function(a){return a.id===reloginID});
+		var accName=acc?acc.displayName:reloginID;
+		document.getElementById('add-modal-title').textContent='Đăng nhập lại — '+accName;
+		switchAddTab('cookie');
+	} else {
+		delete m.dataset.reloginId;
+		document.getElementById('add-modal-title').textContent='Thêm tài khoản Zalo';
+	}
 	m.style.display='flex';
 	// Chi goi switchAddTab de reset state va trigger createQR ben trong no.
 	// Khong goi createQR truc tiep de tranh 2 request song song.
@@ -860,11 +882,13 @@ function stopQRPoll(){if(qrPollTimer){clearTimeout(qrPollTimer);qrPollTimer=null
 async function submitCookie(){
 	var zpsid=document.getElementById('ck-zpsid').value.trim();
 	var zpwsek=document.getElementById('ck-zpwsek').value.trim();
+	var m=document.getElementById('add-modal');
+	var reloginId=m&&m.dataset.reloginId?m.dataset.reloginId:'';
 	var er=document.getElementById('cookie-err');
 	er.style.display='none';
 	if(!zpsid||!zpwsek){er.textContent='Nhập cả zpsid và zpw_sek';er.style.display='';return}
 	try{
-		var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zpsid:zpsid,zpw_sek:zpwsek})});
+		var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(reloginId?{accountId:reloginId,zpsid:zpsid,zpw_sek:zpwsek}:{zpsid:zpsid,zpw_sek:zpwsek})});
 		var d=await r.json();
 		if(d.ok){
 			hideAddModal();window.location.reload();

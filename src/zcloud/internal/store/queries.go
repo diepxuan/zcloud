@@ -37,8 +37,8 @@ func (s *Store) SetAccountUserID(id, userID string) error {
 
 func (s *Store) GetAccount(id string) (*Account, error) {
 	a := &Account{}
-	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, created_at, updated_at FROM accounts WHERE id = $1"
-	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt)
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, created_at, updated_at FROM accounts WHERE id = $1"
+	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -48,7 +48,7 @@ func (s *Store) GetAccount(id string) (*Account, error) {
 // ListAccounts trả về tất cả accounts (accountType=0) hoặc theo type.
 // enabledOnly: nếu true chỉ trả account có enabled=true.
 func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, error) {
-	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, created_at, updated_at FROM accounts"
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, created_at, updated_at FROM accounts"
 	args := []interface{}{}
 	conds := []string{}
 	if accountType > 0 {
@@ -71,7 +71,7 @@ func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, erro
 	var accounts []Account
 	for rows.Next() {
 		var a Account
-		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, a)
@@ -82,7 +82,18 @@ func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, erro
 // SetAccountEnabled bật/tắt flag enabled của account.
 // WS listener KHÔNG bị ảnh hưởng — account disabled vẫn listen + sync.
 func (s *Store) SetAccountEnabled(accountID string, enabled bool) error {
-	_, err := s.db.Exec("UPDATE accounts SET enabled = $1, updated_at = NOW() WHERE id = $2", enabled, accountID)
+	reason := ""
+	if !enabled {
+		reason = "user"
+	}
+	_, err := s.db.Exec("UPDATE accounts SET enabled = $1, disabled_reason = $2, updated_at = NOW() WHERE id = $3", enabled, reason, accountID)
+	return err
+}
+
+// SetAccountDisabledReason: đánh dấu account bị auto-disable (vd zpw_sek fail).
+// Khi reason != "" sẽ được giữ nguyên; khi reason == "" xoá flag.
+func (s *Store) SetAccountDisabledReason(accountID, reason string) error {
+	_, err := s.db.Exec("UPDATE accounts SET disabled_reason = $1, updated_at = NOW() WHERE id = $2", reason, accountID)
 	return err
 }
 

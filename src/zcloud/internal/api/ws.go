@@ -255,6 +255,9 @@ func handleExpiredSession(st *store.Store, accountID string, logger *log.Logger)
 		if err := st.SetAccountEnabled(accountID, false); err != nil {
 			logger.Printf("zalo-ws: disable %s err: %v", accountID, err)
 		}
+		if err := st.SetAccountDisabledReason(accountID, "auth_expired"); err != nil {
+			logger.Printf("zalo-ws: set disabled_reason %s err: %v", accountID, err)
+		}
 		if err := st.DeleteSession(sessRec.ID); err != nil {
 			logger.Printf("zalo-ws: delete session %s err: %v", sessRec.ID, err)
 		}

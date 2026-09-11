@@ -40,6 +40,9 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureAccountEnabledPG(); err != nil {
 		return err
 	}
+	if err := s.ensureAccountDisabledReasonPG(); err != nil {
+		return err
+	}
 	return s.ensureSessionTransportPG()
 }
 
@@ -125,7 +128,21 @@ func (s *Store) ensureSessionTransportPG() error {
 	return nil
 }
 
-// ensureAccountEnabledPG thêm cột enabled vào accounts nếu thiếu.
+// ensureAccountDisabledReasonPG thêm cột disabled_reason vào accounts nếu thiếu.
+func (s *Store) ensureAccountDisabledReasonPG() error {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='disabled_reason')`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.disabled_reason: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add accounts.disabled_reason: %w", err)
+	}
+	return nil
+}
 // Default TRUE cho backward compat — account cũ vẫn enabled mặc định.
 func (s *Store) ensureAccountEnabledPG() error {
 	var exists bool

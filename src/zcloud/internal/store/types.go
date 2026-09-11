@@ -18,6 +18,7 @@ type Account struct {
 	Status      int       `json:"status"`
 	Note        string    `json:"note"`
 	Enabled     bool      `json:"enabled"` // false = ẩn khỏi UI nhưng vẫn listen WS
+	DisabledReason string  `json:"disabledReason,omitempty"` // "" | "auth_expired" | "user"
 	Transport   string    `json:"transport,omitempty"` // ""=web | "pc"
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`

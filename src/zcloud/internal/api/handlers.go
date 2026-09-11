@@ -212,6 +212,24 @@ func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	StopZaloListener(accountID)
+	// Nếu session is_active=0 (do bị deactivate bởi DeleteSession hoặc setAccountEnabled),
+	// thử refresh bằng cookie login trước khi StartZaloListener — nếu không StartZaloListener
+	// sẽ log "no active session" và listener không start.
+	sessRec, _ := s.Store.GetActiveSession(accountID)
+	if sessRec == nil {
+		var err error
+		sessRec, err = s.Store.LoadSessionByAccountID(accountID)
+		if err == nil && sessRec != nil {
+			var ck map[string]string
+			if json.Unmarshal([]byte(sessRec.Cookies), &ck) == nil && len(ck) > 0 {
+				sessRec = s.autoRefresh(sessRec)
+			}
+		}
+	}
+	if sessRec == nil {
+		fail(w, 404, "no session + refresh failed, please re-login")
+		return
+	}
 	go StartZaloListener(s.Store, accountID, s.Logger)
 	ok(w, map[string]interface{}{"restarted": true, "accountId": accountID})
 }
@@ -358,9 +376,22 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 		displayName = safeDisplayName(session.UserID)
 	}
 
+	// Nếu account đã tồn tại (re-login), KHÔNG đặt enabled=false để tránh
+	// xoá trạng thái cũ. CreateAccount dùng upsert (ON CONFLICT DO NOTHING) nên an toàn.
+	if req.AccountID != "" && req.AccountID != accountID {
+		fail(w, 400, "accountId không khớp userID của cookie mới")
+		return
+	}
 	s.Store.CreateAccount(accountID, displayName, 1)
 	if avatar != "" {
 		s.Store.UpdateAccount(accountID, displayName, avatar)
+	}
+	// Re-activate: xoá cờ disabled + disabled_reason nếu có (re-login).
+	if err := s.Store.SetAccountDisabledReason(accountID, ""); err != nil {
+		s.Logger.Printf("clear disabled_reason %s: %v", accountID, err)
+	}
+	if err := s.Store.SetAccountEnabled(accountID, true); err != nil {
+		s.Logger.Printf("enable %s: %v", accountID, err)
 	}
 	if err := s.Store.SetAccountUserID(accountID, session.UserID); err != nil {
 		s.Logger.Printf("set account user_id %s: %v", accountID, err)
@@ -793,8 +824,9 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	// Application → Cookies → chat.zalo.me. Hai field là tối thiểu để
 	// core.CookieLogin / getLoginInfo thành công.
 	var req struct {
-		ZPSID  string `json:"zpsid"`
-		ZPWSEK string `json:"zpw_sek"`
+		ZPSID     string `json:"zpsid"`
+		ZPWSEK    string `json:"zpw_sek"`
+		AccountID string `json:"accountId,omitempty"` // optional: re-login vào account cũ (vd auth_expired)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, 400, "invalid body")
