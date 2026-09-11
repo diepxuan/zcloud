@@ -160,7 +160,7 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | T8 | Verify end-to-end (Sep ↔ Trần Ngọc Đức) | ✅ Verified 11/09/2026 | `/api/messages/send` (Sep → Trần Ngọc Đức) → `sent: true`; DB có row (15→16); WS broadcast `new_message` <1s; Zalo echo cmd 501 parse + dedupe OK. Xem chi tiết §5.4. |
 | T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
 | T10 | WS AES-GCM + desktop command set | ✅ Done (đợt 11/09) | AES-GCM layout đã có + cipherKey wire vào DecodeWSEvent từ trước (cmd 590-592/630-634 dispatch thành DesktopSyncEvent qua cmdToEventType). Test round-trip AES-GCM encrypt=2/3 + base64 key + missing key. Schema payload từng cmd cần reverse thêm trusted-device WASM. |
-| T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟡 Partial (đợt 11/09) | Sub-task xem §5.6: T11.1 (TTL handling — fail fast non-media) ✅, T11.2 (rate-limit 200ms) ✅, T11.3 (AES-GCM = T10) ✅, T11.4 (parse desktop sync cmd) ✅. Còn: backup/restore reverse WASM (multi-week), integration test media end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức). |
+| T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟡 Partial (đợt 11/09) | Sub-task xem §5.6: T11.1 (TTL handling — fail fast non-media) ✅, T11.2 (rate-limit 200ms) ✅, T11.3 (AES-GCM = T10) ✅, T11.4 (parse desktop sync cmd) ✅, **T11.5 (parse schema payload 590-592/630-634 + hook backup flow) 🟡 In Progress**. Còn: T11.6 WASM reverse cho trusted-device, integration test media end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức). |
 
 ## 5.1. Đã hoàn thành trong đợt này (29/07/2026)
 
@@ -198,10 +198,38 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 - `api.handleZaloEvent` default case: log + broadcast `desktop_sync` cho browser với `{cmd, subCmd, event, rawData}`.
 - Test `TestCmdToEventType`/`TestEventTypeString`/`TestMsgTypeIsLink` đảm bảo mapping không trùng + Link type có helper riêng.
 
-**Còn lại của T11** (xem [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md)):
-- Reverse trusted-device WASM flow (Zalo PC bundle) để biết schema cmd 590-592/630-634 thật — hiện chỉ log payload thô.
-- `get_backupmsginfo`, `pull_mobile_msg`, `cancel_pull_mobile_msg` đã có helpers trong `internal/core/desktop_sync.go` nhưng chưa trigger khi backup session đến.
-- ZCloud media + family album.
+**T11.5 — Parse schema payload cmd 590-592/630-634 + hook backup flow** (🟡 In Progress):
+
+Hiện tại (sau T11.4): worker nhận `DesktopSyncEvent{RawData json.RawMessage}` nhưng chỉ log payload, chưa parse thành struct có schema cụ thể. T11.5 làm tiếp:
+
+1. **Capture payload thật từ Zalo PC bundle** — login PC, chạy backup/sync, capture WS frame cmd 590-592/630-634 (wireshark hoặc custom logger).
+2. **Reverse schema** cho 8 cmd:
+   - 590 RequestSync: `{data: ...}` — server yêu cầu client gửi msg cross-device
+   - 591 AckDeleteSession: `{data: ...}` — xác nhận xoá session sync
+   - 592 MobileWakeUp: `{data: ...}` — đánh thức mobile để sync
+   - 630 InitBackup: `{data: {...}}` — seq_id, pc_name, public_key
+   - 631 CreateBackup: (no data)
+   - 632 BackupMeta: `{backup_data: [...], total_count: N}` — metadata backup từ PC
+   - 633 RestoreMobile: `{data: ...}` — báo mobile khôi phục
+   - 634 BackupConfigs: `{configs: {...}}` — lấy cấu hình backup
+3. **Tạo struct Go** cho mỗi cmd (vd `InitBackupPayload{SeqID, PcName, PublicKey}`).
+4. **Decode thay vì log**: `handleDesktopSync` switch theo `evType` parse `RawData` thành struct.
+5. **Hook backup flow**: khi nhận `BackupMeta` → trigger download backup messages qua `pull_mobile_msg`.
+
+Phụ thuộc: T11.6 (WASM reverse cho trusted-device key exchange).
+
+**T11.6 — Reverse trusted-device WASM flow** (🟢 Optional, multi-week):
+
+Zalo PC bundle (`work/reverse-zalo-pc-20260811/app.asar`) dùng WASM cho trusted-device key exchange khi sync/backup. Có thể cần reverse `.wasm` modules để biết schema chính xác của payload cmd 590-592/630-634.
+
+Approach:
+1. Extract `.wasm` files từ `app.asar`
+3. Decompile (wabt / wasm2wat / radare2 / Ghidra WASM plugin)
+4. Map hàm WASM → schema JSON
+5. Implement key exchange + verify signature
+
+**Còn lại của T11** (sau T11.5 + T11.6):
+- ZCloud media + family album (chưa reverse).
 - Integration test end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức theo §5.4).
 
 ## 6. References
