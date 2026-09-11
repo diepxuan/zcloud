@@ -47,8 +47,12 @@ type Conversation struct {
 	ConvType  int          `json:"convType"` // 0: cá nhân, 1: nhóm, 2: OA
 	LastMsgID string       `json:"lastMsgId"`
 	LastMsgAt sql.NullTime `json:"lastMsgAt"`
-	Unread    int          `json:"unread"`
-	UpdatedAt time.Time    `json:"updatedAt"`
+	// LastMsgContent preview text của tin cuối (vd "Khi mô có gối cao su…" hoặc
+	// "📷 Ảnh" nếu là image). Lấy qua LEFT JOIN messages trong GetConversations;
+	// rỗng nếu messages bị xoá hoặc content > MaxLastMsgPreview.
+	LastMsgContent string    `json:"lastMsgContent,omitempty"`
+	Unread         int       `json:"unread"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type Message struct {

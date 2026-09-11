@@ -1011,7 +1011,7 @@ try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.jso
 if(d.ok&&d.data){el('cl','');
 d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
 var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
-dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(c.lastMsgId||'')+'</div></div>';
+dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div></div>';
 dv.onclick=function(){sc(c.id,c.name,c.avatar)};el('cl').appendChild(dv)});}}catch(e){}}
 function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});

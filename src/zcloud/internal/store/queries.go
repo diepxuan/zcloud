@@ -215,11 +215,29 @@ func (s *Store) DeleteAccount(id string) error {
 }
 
 func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
-	// NULLS LAST cho Postgres.
-	q := `SELECT id, account_id, name, avatar, conv_type, last_msg_id, last_msg_at, unread_count, updated_at
-		FROM conversations
-		WHERE account_id = $1
-		ORDER BY last_msg_at DESC NULLS LAST, updated_at DESC`
+	// LEFT JOIN messages để lấy preview text tin cuối (cho sidebar UI).
+	// Nếu messages bị xoá, lastMsgContent = NULL → UI fallback về lastMsgId.
+	// Cắt ngắn content tại MaxLastMsgPreview ký tự + "..." để tránh payload lớn.
+	q := fmt.Sprintf(`
+		SELECT c.id, c.account_id, c.name, c.avatar, c.conv_type,
+		       c.last_msg_id, c.last_msg_at,
+		       CASE WHEN m.content IS NULL OR m.content = '' THEN
+		            CASE WHEN m.msg_type = 2 THEN '📷 Ảnh'
+		                 WHEN m.msg_type = 3 THEN 'Sticker'
+		                 WHEN m.msg_type = 5 THEN 'Voice'
+		                 WHEN m.msg_type = 6 THEN 'Link'
+		                 WHEN m.msg_type = 7 THEN 'Video'
+		                 WHEN m.msg_type = 4 THEN 'File'
+		                 ELSE ''
+		            END
+		            WHEN LENGTH(m.content) > %d THEN SUBSTRING(m.content, 1, %d) || '…'
+		            ELSE m.content
+		       END AS preview,
+		       c.unread_count, c.updated_at
+		FROM conversations c
+		LEFT JOIN messages m ON m.account_id = c.account_id AND m.id = c.last_msg_id
+		WHERE c.account_id = $1
+		ORDER BY c.last_msg_at DESC NULLS LAST, c.updated_at DESC`, maxLastMsgPreview, maxLastMsgPreview)
 	rows, err := s.db.Query(q, accountID)
 	if err != nil {
 		return nil, err
@@ -229,8 +247,12 @@ func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
 	var convs []Conversation
 	for rows.Next() {
 		var c Conversation
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Avatar, &c.ConvType, &c.LastMsgID, &c.LastMsgAt, &c.Unread, &c.UpdatedAt); err != nil {
+		var preview sql.NullString
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.Avatar, &c.ConvType, &c.LastMsgID, &c.LastMsgAt, &preview, &c.Unread, &c.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if preview.Valid {
+			c.LastMsgContent = preview.String
 		}
 		convs = append(convs, c)
 	}
@@ -240,6 +262,8 @@ func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
 // ====================================
 // Message operations
 // ====================================
+
+const maxLastMsgPreview = 80
 
 const insertMessageSQL = `INSERT INTO messages
 	(id, account_id, conv_id, from_id, from_name, content, msg_type, timestamp, attachments)
