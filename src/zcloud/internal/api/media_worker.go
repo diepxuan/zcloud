@@ -106,6 +106,14 @@ func (w *MediaWorker) processAccount(ctx context.Context, accountID string) {
 		default:
 		}
 		w.processJob(ctx, job)
+		// Rate-limit: chờ giữa các job để tránh spam Zalo CDN (có thể bị 429
+		// rate limit nếu sync nhiều conv cùng lúc). 200ms = ~5 req/s, đủ
+		// nhanh cho batch 20, đủ chậm để không trigger Zalo limit.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
 
