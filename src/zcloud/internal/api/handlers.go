@@ -459,11 +459,24 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 // ========== MESSAGES ==========
 
 func (s *Server) HandleMessages(w http.ResponseWriter, r *http.Request) {
-	accountID := r.URL.Query().Get("accountId")
 	convID := r.URL.Query().Get("convId")
-	if accountID == "" || convID == "" {
-		fail(w, 400, "missing accountId or convId")
+	if convID == "" {
+		fail(w, 400, "missing convId")
 		return
+	}
+	// accountId optional — nếu trống, tự tìm theo convId (ưu tiên enabled + lastMsgAt).
+	accountID := r.URL.Query().Get("accountId")
+	if accountID == "" {
+		var err error
+		accountID, err = s.Store.FindAccountByConvID(convID)
+		if err != nil {
+			fail(w, 500, "find account: "+err.Error())
+			return
+		}
+		if accountID == "" {
+			fail(w, 404, "conv not found")
+			return
+		}
 	}
 	cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
 	if cursor == 0 {
@@ -505,9 +518,22 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid body")
 		return
 	}
-	if req.AccountID == "" || req.Content == "" {
-		fail(w, 400, "missing fields")
+	if req.To == "" || req.Content == "" {
+		fail(w, 400, "missing to or content")
 		return
+	}
+	// accountId optional — tự tìm theo conv (ưu tiên account enabled).
+	if req.AccountID == "" {
+		var err error
+		req.AccountID, err = s.Store.FindAccountByConvID(req.To)
+		if err != nil {
+			fail(w, 500, "find account: "+err.Error())
+			return
+		}
+		if req.AccountID == "" {
+			fail(w, 404, "conv not found")
+			return
+		}
 	}
 
 	sessRec, err := s.Store.GetActiveSession(req.AccountID)

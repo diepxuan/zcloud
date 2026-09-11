@@ -223,6 +223,25 @@ func (s *Store) GetConversation(accountID, convID string) (*Conversation, error)
 	return c, err
 }
 
+// FindAccountByConvID trả account_id sở hữu convId.
+// Nếu nhiều account cùng có conv (vd self-thread), trả theo enabled+lastMsgAt DESC
+// (ưu tiên account enabled + có tin nhắn gần nhất).
+func (s *Store) FindAccountByConvID(convID string) (string, error) {
+	var accountID string
+	q := `
+		SELECT c.account_id
+		FROM conversations c
+		JOIN accounts a ON a.id = c.account_id
+		WHERE c.id = $1
+		ORDER BY a.enabled DESC, c.last_msg_at DESC NULLS LAST, c.updated_at DESC
+		LIMIT 1`
+	err := s.db.QueryRow(q, convID).Scan(&accountID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return accountID, err
+}
+
 func (s *Store) DeleteAccount(id string) error {
 	s.db.Exec("DELETE FROM sessions WHERE account_id = $1", id)
 	s.db.Exec("DELETE FROM conversations WHERE account_id = $1", id)
