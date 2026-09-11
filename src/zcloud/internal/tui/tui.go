@@ -1,43 +1,62 @@
-// Package tui là terminal UI cho zcloud — hiện tại chỉ là placeholder/mockup.
-// Mục tiêu cuối cùng: dashboard TUI để xem accounts, conversations, recent
-// messages, restart service, v.v. — tương tác trực tiếp từ terminal mà
-// không cần mở browser.
+// Package tui là terminal UI cho zcloud — wizard 3 màn tuần tự
+// (chọn account → chọn thread → chat) dùng charmbracelet/bubbletea.
 //
-// Trạng thái: MOCKUP. Hàm Run chỉ in banner + giải thích các phím tắt dự
-// kiến, rồi thoát. Sẽ được thay thế bằng Bubble Tea / tview khi triển khai.
+// Workflow yêu cầu bởi Sếp 11/09/2026:
+//   - ./zcloudd tui  hoặc  ./zcloudd  (no-arg)  mở TUI
+//   - Màn 1: chọn account (↑/↓, Enter)
+//   - Màn 2: chọn thread (/ filter, Enter)
+//   - Màn 3: xem + gửi tin
+//   - ESC ở bất kỳ màn nào cũng thoát hẳn (exit 0)
+//
+// Xem chi tiết tại docs/tasks/18-tui.md.
 package tui
 
 import (
 	"fmt"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Run khởi động TUI. Hiện tại là mockup — in banner và các phím dự kiến rồi
-// thoát ngay (return nil). Khi implement sẽ block cho đến khi user nhấn q/Ctrl-C.
+// Run khởi động TUI. Trả về error nếu terminal không hỗ trợ TUI
+// (không có TTY) — bubbletea tự lo việc restore alternate buffer
+// khi Run() trả về.
 func Run() error {
-	fmt.Println(`╔════════════════════════════════════════════╗
-║   zcloud TUI — MOCKUP (chưa triển khai)   ║
-╚════════════════════════════════════════════╝
+	// Không có TTY (vd chạy trong pipe / ssh không có PTY) → in hướng dẫn
+	// thay vì để bubbletea crash.
+	if !isTTY() {
+		fmt.Fprintln(os.Stderr, "zcloud TUI cần terminal thật (TTY).")
+		fmt.Fprintln(os.Stderr, "Chạy tương tác: ./zcloudd tui")
+		fmt.Fprintln(os.Stderr, "Hoặc dùng web UI: http://zcloud.diepxuan.corp:8080")
+		return fmt.Errorf("no TTY")
+	}
 
-  Phím tắt dự kiến (sẽ có trong bản thực):
+	m := newModel()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
+}
 
-    ↑/↓         di chuyển giữa accounts / conversations
-    Tab         chuyển panel (accounts ↔ messages)
-    Enter       mở conversation / xem chi tiết
-    n           soạn tin nhắn mới
-    r           reload dữ liệu
-    s           mở panel service (start/stop/watch)
-    /           tìm kiếm
-    ?           trợ giúp
-    q           thoát
+// newModel tạo Model khởi đầu — T18.1 hardcode 1-2 account mẫu, T18.2
+// sẽ load từ Postgres.
+func newModel() Model {
+	return Model{
+		store:           &Store{},
+		screen:          screenAccounts,
+		selectedAccount: 0,
+		selectedConv:    0,
+		accounts:        dummyAccounts(),
+		convs:           nil, // màn 2 load khi user chọn account
+		messages:        nil, // màn 3 load khi user chọn conv
+	}
+}
 
-  Dữ liệu hiện không có TUI runtime — bản mockup chỉ để xác nhận CLI shape.
-
-  Tạm thời dùng:
-    zcloudd           chạy HTTP server
-    zcloudd serv      quản lý systemd service
-    zcloudd serv watch  watch + auto-rebuild khi sửa code
-
-  Xem docs/tasks.md §5 cho kế hoạch triển khai TUI.
-`)
-	return nil
+// isTTY kiểm tra stdin/stdout có phải terminal thật không.
+// Dùng os.Stat + mode char device.
+func isTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
