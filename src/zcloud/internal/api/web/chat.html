@@ -237,6 +237,31 @@ body{
   transition:all var(--dur-1) var(--ease);
 }
 .mg-item .mg-del:hover{background:var(--c-danger);color:var(--c-text-onbrand)}
+.mg-item .mg-enabled-wrap{
+  display:flex;align-items:center;justify-content:center;
+  padding:0 var(--s-1);flex-shrink:0;
+}
+.mg-item .mg-enabled{
+  width:18px;height:18px;cursor:pointer;margin:0;
+  accent-color:var(--c-brand);
+}
+.mg-item .mg-enabled:disabled{opacity:.4;cursor:not-allowed}
+
+/* === cv-acc: badge account trong conv/friend khi multi-account === */
+.cv-acc{
+  font-size:var(--fz-xs);color:var(--c-text-3);
+  margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding-left:1px;
+}
+.cv-acc::before{content:"@ ";color:var(--c-text-3);opacity:.6}
+
+/* === mg-toggle-all: nút bật/tắt tất cả === */
+#mg-toggle-all{
+  background:var(--c-surface-2)!important;color:var(--c-text)!important;
+  border:1px solid var(--c-border-2)!important;flex-shrink:0;
+  padding:0 var(--s-3)!important;min-width:auto!important;
+}
+#mg-toggle-all:hover{background:var(--c-surface)!important;color:var(--c-brand)!important;border-color:var(--c-brand)!important}
 
 /* === Chat area === */
 .ca{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg)}
@@ -537,6 +562,7 @@ body{
       <div class="mg-h">Quản lý tài khoản</div>
       <div class="mg-toolbar">
         <input id="mg-search" type="text" placeholder="Tìm theo tên hoặc ID…" oninput="renderAccounts()">
+        <button id="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả">⚡ Tất cả</button>
         <button id="mg-add" onclick="showAddModal()">+ Thêm</button>
       </div>
       <div class="mg-stats" id="mg-stats"></div>
@@ -636,9 +662,21 @@ function renderAccounts(){
 		var dv=document.createElement('div');dv.className='mg-item';
 		if(a.id===ca) dv.className+=' cur';
 		var stClass=a.listening?'on':(a.hasActiveSession?'err':'off');
-		var stTitle=a.listening?'Dang nghe WS':(a.hasActiveSession?'Session OK, listener chua chay':'Khong co session active');
+		var stTitle=a.listening?'WS đang nghe':(a.hasActiveSession?'Session OK, listener chưa chạy':'Không có session active');
 		var uId=esc(a.id);
-		dv.innerHTML='<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'" alt=""></div>'
+		var showBadge;
+		if(!a.enabled){showBadge='<span class="mg-cur" style="color:var(--c-text-3);border-color:var(--c-text-3)">Đã ẩn</span>'}
+		else if(a.id===ca){showBadge='<span class="mg-cur">Đang dùng</span>'}
+		else{showBadge=''}
+		dv.innerHTML='<div class="mg-enabled-wrap">'
+			+'<input type="checkbox" class="mg-enabled" '
+			+(a.enabled?'checked':'')+' '
+			+'data-id="'+uId+'" '
+			+'title="'+(a.enabled?'Ẩn khỏi danh sách chat/danh bạ':'Hiện trong danh sách chat/danh bạ')+'" '
+			+'onclick="event.stopPropagation()" '
+			+'onchange="toggleAccountEnabled(\\'+uId+'\\', this.checked)">'
+			+'</div>'
+			+'<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'" alt=""></div>'
 			+'<div class="mg-body">'
 			// row 1: ten account + status dot
 			+'<div class="mg-row1">'
@@ -649,10 +687,10 @@ function renderAccounts(){
 			+'<div class="mg-row2">'
 			+'<span class="mg-meta">'+esc(a.id)+'</span>'
 			+'</div>'
-			// row 3: badge "Dang dung" + nut Restart + nut Xoa
+			// row 3: badge trang thai + nut Restart + nut Xoa
 			+'<div class="mg-row3">'
-			+(a.id===ca?'<span class="mg-cur">Đang dùng</span>':'')
-			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button>'
+			+showBadge
+			+'<button class="mg-btn" onclick="restartListener(\\'+uId+'\\')">Restart</button>'
 			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
 			+'</div>'
 			+'</div>';
@@ -664,9 +702,9 @@ function renderAccounts(){
 function renderStats(){
 	var s=document.getElementById('mg-stats');if(!s)return;
 	var total=accounts.length;
+	var shown=accounts.filter(function(a){return a.enabled}).length;
 	var on=accounts.filter(function(a){return a.listening}).length;
-	var sess=accounts.filter(function(a){return a.hasActiveSession}).length;
-	s.textContent=total+' tài khoản • '+on+' đang nghe WS • '+sess+' có session';
+	s.textContent=total+' tài khoản • '+shown+' hiển thị • '+on+' đang nghe WS';
 }
 
 // switchAcc chuyen sang account (khong F5).
@@ -676,6 +714,47 @@ function switchAcc(id){
 	var acc=accounts.find(function(a){return a.id===id});
 	me=acc?acc.userId||'':'';
 	ca=id;uh();sy();st('ch');
+}
+
+// toggleAccountEnabled bật/tắt flag enabled qua API. Auto-switch ca nếu tắt account đang chat.
+async function toggleAccountEnabled(id,enabled){
+	try{
+		var r=await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id,enabled:enabled})});
+		var d=await r.json();
+		if(!d.ok){console.log('toggle enabled err',d.error);return;}
+	}catch(e){console.log('toggle enabled network err',e);return;}
+	// Cập nhật cache client trước khi reload để UI không nhảy.
+	var acc=accounts.find(function(a){return a.id===id});
+	if(acc) acc.enabled=enabled;
+	// Nếu tắt account đang chat → chuyển sang account enabled đầu tiên khác.
+	if(!enabled && ca===id){
+		var next=accounts.find(function(a){return a.id!==id && a.enabled});
+		if(next) switchAcc(next.id);
+		else ca='';
+	}
+	await loadAccounts();
+	renderAccounts();renderStats();
+	sy();loadFriends();
+}
+
+// toggleAllEnabled bật/tắt tất cả cùng lúc — nếu tất cả đang enabled thì tắt hết
+// (trừ account đang chat), ngược lại bật hết.
+async function toggleAllEnabled(){
+	var allEnabled=accounts.length>0 && accounts.every(function(a){return a.enabled});
+	var wantEnabled=!allEnabled;
+	for(var i=0;i<accounts.length;i++){
+		var a=accounts[i];
+		if(a.enabled===wantEnabled) continue;
+		// Không tắt account đang chat — tránh ca bị rỗng.
+		if(!wantEnabled && a.id===ca) continue;
+		try{
+			await fetch('/api/account/enabled',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:a.id,enabled:wantEnabled})});
+			a.enabled=wantEnabled;
+		}catch(e){console.log('toggle all err',a.id,e);}
+	}
+	await loadAccounts();
+	renderAccounts();renderStats();
+	sy();loadFriends();
 }
 
 // restartListener stop+start listener (fix khi WS bi loi, session con song).
@@ -813,7 +892,7 @@ function renderMsg(m){
   if(attHtml.indexOf('data-only-imgs="1"')>=0) dv.classList.add('img-only');
   var t=new Date(m.timestamp);
   var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-  var fn=(m.fromName&&m.fromId!==me)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
+  var fn=(m.fromName&&m.fromId!==me)?m.fromName:(cvCache[ca+'|'+m.fromId]?cvCache[ca+'|'+m.fromId].name:'');
   var body='';
   body+=attHtml;
   body+=esc(m.content||'');
@@ -951,22 +1030,80 @@ function applyMediaDownloaded(data,curConv){
   });
 }
 
-async function loadFriends(){if(!ca){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa chọn user</div>');return}
-el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
-try{var r=await fetch('/api/friends?accountId='+ca);var d=await r.json();
-if(d.ok&&d.data&&d.data.length>0){el('fl','');
-d.data.forEach(function(u){var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;
-dv.innerHTML='<div class="cv-a"><img src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(u.name||u.id)+'</div></div>';
-dv.onclick=function(){sc(u.id,u.name,u.avatar)};el('fl').appendChild(dv)})}
-else{el('fl','<div style="padding:20px;text-align:center;color:#999">'+((d.error)||'Không có bạn bè')+'</div>')}}
-catch(e){el('fl','<div style="padding:20px;text-align:center;color:#999">Lỗi tải bạn bè</div>')}}
-async function sy(){if(!ca)return;
-try{var r=await fetch('/api/conversations/sync?accountId='+ca);var d=await r.json();
-if(d.ok&&d.data){el('cl','');
-d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
-var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
-dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div></div>';
-dv.onclick=function(){sc(c.id,c.name,c.avatar)};el('cl').appendChild(dv)});}}catch(e){}}
+async function loadFriends(){
+	// Load friends cho TẤT CẢ enabled accounts, merge + dedupe theo id.
+	var enabled=accounts.filter(function(a){return a.enabled});
+	if(!enabled.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return}
+	el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
+	var seen={};var all=[];
+	for(var i=0;i<enabled.length;i++){
+		var acc=enabled[i];
+		try{
+			var r=await fetch('/api/friends?accountId='+acc.id);
+			var d=await r.json();
+			if(d.ok&&d.data){
+				d.data.forEach(function(u){u._accountId=acc.id;u._accountLabel=acc.displayName||acc.id;if(!seen[u.id]){seen[u.id]=true;all.push(u);}});
+			}
+		}catch(e){console.log('friends load err',acc.id,e);}
+	}
+	if(!all.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Không có bạn bè</div>');return;}
+	el('fl','');
+	all.forEach(function(u){
+		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=u.id;dv.dataset.accountId=u._accountId;
+		var accLabel=enabled.length>1?'<div class="cv-acc">'+esc(u._accountLabel)+'</div>':'';
+		dv.innerHTML='<div class="cv-a"><img src="'+(u.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
+			+'<div class="cv-b">'
+			+'<div class="cv-n">'+(u.name||u.id)+'</div>'
+			+accLabel
+			+'</div>';
+		dv.onclick=function(){switchAcc(u._accountId);sc(u.id,u.name,u.avatar);};
+		el('fl').appendChild(dv);
+	});
+}
+async function sy(){
+	// Nếu chưa có ca → chọn account enabled đầu tiên (nếu có).
+	if(!ca){
+		var first=accounts.find(function(a){return a.enabled});
+		if(first){ca=first.id;me=first.userId||'';uh();}
+		else{el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return;}
+	}
+	// Sync conversations cho account đang chat (kích hoạt fetch mới nhất từ Zalo).
+	try{await fetch('/api/conversations/sync?accountId='+ca);}catch(e){}
+	// Load convs DB cho TẤT CẢ enabled accounts, merge + sort theo lastMsgAt DESC.
+	var enabled=accounts.filter(function(a){return a.enabled});
+	var allConvs=[];
+	for(var i=0;i<enabled.length;i++){
+		var acc=enabled[i];
+		try{
+			var r=await fetch('/api/conversations?accountId='+acc.id);
+			var d=await r.json();
+			if(d.ok&&d.data){
+				d.data.forEach(function(c){c._accountId=acc.id;c._accountLabel=acc.displayName||acc.id;});
+				allConvs=allConvs.concat(d.data);
+			}
+		}catch(e){console.log('conv load err',acc.id,e);}
+	}
+	// Dedupe theo (id, accountId) — vì 2 account khác nhau có thể có cùng id (vd self-thread).
+	var seen={};
+	allConvs=allConvs.filter(function(c){var k=c.id+'|'+c._accountId;if(seen[k])return false;seen[k]=true;return true;});
+	// Sort theo lastMsgAt DESC (rỗng xuống cuối).
+	allConvs.sort(function(a,b){var ta=a.lastMsgAt?new Date(a.lastMsgAt).getTime():0;var tb=b.lastMsgAt?new Date(b.lastMsgAt).getTime():0;return tb-ta;});
+	el('cl','');
+	if(!allConvs.length){el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có hội thoại</div>');return;}
+	allConvs.forEach(function(c){
+		cvCache[c.id+'|'+c._accountId]={name:c.name,avatar:c.avatar};
+		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;dv.dataset.accountId=c._accountId;
+		var accLabel=enabled.length>1?'<div class="cv-acc">'+esc(c._accountLabel)+'</div>':'';
+		dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
+			+'<div class="cv-b">'
+			+'<div class="cv-n">'+(c.name||c.id)+'</div>'
+			+'<div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div>'
+			+accLabel
+			+'</div>';
+		dv.onclick=function(){switchAcc(c._accountId);sc(c.id,c.name,c.avatar);};
+		el('cl').appendChild(dv);
+	});
+}
 // scrollLastMessage: scroll container đến element tin nhắn cuối cùng.
 // Dùng scrollIntoView({block:'end',behavior:'smooth'|'auto'}) thay vì
 // scrollTop=scrollHeight — chính xác hơn với flex layout có gap,
@@ -992,7 +1129,7 @@ function scrollLastMessage(ml, smooth){
 }
 
 
-function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
+function sc(id,nm,av){cc=id;cvCache[ca+'|'+id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
 el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
