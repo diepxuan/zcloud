@@ -151,7 +151,7 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | # | Tính năng | Mức độ | Ghi chú |
 |:-:|-----------|:------:|---------|
 | T1 | WS AES-GCM decrypt hoàn chỉnh | 🟡 Medium | Có cipherKey nhưng chưa dùng |
-| T2 | Auto-detect media trong WS event | 🟡 Medium | Hiện phải gọi API download thủ công |
+| T2 | Auto-download media khi WS nhận event | ✅ Done (đợt 09/2026, polish 11/09) | `enqueueMessageMediaJobs` tự động vào `media_jobs` khi WS nhận new/old msg có attachment. `MediaWorker` (5s interval, batch 20) tải về disk + retry 3 + dedupe + skip nếu file đã có. UI fallback `/api/media/download` qua `imgErr` khi URL Zalo CDN die. Xem chi tiết T2.7–T2.10 dưới. |
 | T3 | Integration test (chat/store/api) | 🟡 Medium | Chỉ có `encrypt_test.go` |
 | T4 | Zalo OA webhook (task 08) | 🟢 Optional | Schema sẵn, thiếu handler |
 | T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
@@ -226,3 +226,50 @@ Sau khi 3 phần trên ổn định → làm T11 (PC desktop / cross-device sync
 - WS `/ws`: nhận `new_message` event với payload đầy đủ trong <1s.
 - Zalo server echo: frame `01f50100...` (cmd 501 subCmd 01) → zcloud parse qua `EventNewMessage` + dedupe (cùng msgId, INSERT OR IGNORE không lưu row mới).
 - Server response: `error_code: 0, error_message: Successful`.
+
+---
+
+## 5.5 T2 chi tiết (Auto-download media)
+
+T2 xử lý 5 sub-task kỹ thuật liên quan đến media pipeline.
+
+### T2.7 — Reject non-media response (HTML-as-media)
+
+- **File**: `internal/core/mediafile.go` (helper `IsMediaContent`, `MediaContentPrefix`), wire vào `internal/api/media_worker.go:download` và `internal/api/router.go:HandleMediaDownload`.
+- **Vấn đề**: URL Zalo CDN die (photo không tồn tại, token hết hạn, …) trả về HTML/text 200 OK thay vì binary media. Code cũ save file HTML thành `.bin` 185KB + đánh `done`. → DB báo done nhưng browser không hiển thị được.
+- **Fix**: sniff 8 byte đầu (JPEG/PNG/GIF/WebP/MP4/MOV/M4A/WebM/OGG/MP3) — nếu không match thì fail download và retry hết maxAttempts → `MarkFailed`.
+- **Cleanup**: 3 file `.bin` 185KB HTML đã xoá khỏi disk 11/09/2026.
+
+### T2.8 — Variant selection (prefer longest URL)
+
+- **File**: `internal/api/ws.go:extractAllMedia` + helper `baseAttachmentID`, `extFromFileOrURL`.
+- **Vấn đề cũ**: dedupe theo MsgID, giữ variant đầu tiên — thường là thumb (-1). Sync từ WS hay bị ảnh thumb thay vì HD.
+- **Fix mới**: dedupe theo base ID (strip `-N` nếu N là số), giữ variant URL dài nhất (thường là original HD, vì URL original chứa path + size metadata dài hơn thumb).
+- **Test**: `TestExtractAllMediaPreferLongestVariant`, `TestExtractAllMediaDedupVariantSameBase`, `TestExtractAllMediaDistinctBases`, `TestBaseAttachmentID`.
+
+### T2.9 — Auto-download link OG preview image
+
+- **File**: `internal/core/types.go` (thêm `IsLink()`), `internal/api/ws.go:hasImageAttachment`, hook vào `enqueueMessageMediaJobs`.
+- **Vấn đề**: MsgTypeLink (chat.link) bị `IsMedia()` bỏ qua hoàn toàn → OG preview image (qua field `thumb`) không được tải về disk.
+- **Fix**: trong `enqueueMessageMediaJobs`, thêm nhánh `msg.Type.IsLink() && hasImageAttachment(msg.Attachments)` → cho qua nếu attachment có URL ảnh (jpg/jpeg/png/gif/webp). Link thuần không ảnh thì bỏ qua (không tải nhầm HTML).
+- **Test**: `TestHasImageAttachment` cover jpg/jpeg-upper/png/gif/webp/mp4/pdf/empty/mixed.
+
+### T2.10 — Dọn dead code
+
+- **File**: `internal/api/ws.go` xoá `maybeAutoDownloadMedia` (không ai gọi, chỉ định nghĩa). Giữ `downloadOneMedia` (còn test dùng + có thể fallback).
+
+### T2.11 — Verify với data thật (pending — cần Sếp thao tác)
+
+Chưa verify được vì DB hiện chỉ có image (type=2). Cần Sếp gửi từ Trần Ngọc Đức:
+- 1 sticker (type=3) → confirm IsMedia() pick up + tải thành công
+- 1 voice (type=5) → confirm retry + ext detect đúng (m4a/mp3)
+- 1 file (type=4) → confirm ext lấy từ FileName
+- 1 video (type=7) → confirm mp4 ext + retry với file lớn
+- 1 link có OG image (type=6) → confirm hasImageAttachment + tải thumb
+
+Script verify: `/tmp/t2_verify_media.sh` (đếm type + jobs + disk).
+
+### T2.12 — Test thật phải dùng thread Trần Ngọc Đức
+
+Theo §5.4, mọi test gửi/nhận phải dùng conv `4866700441106275565`. Sếp gửi các loại media vào thread này (không cần mở app khác — Zalo phone có sẵn account Sep), em sẽ chạy `bash /tmp/t2_verify_media.sh` để verify.
+
