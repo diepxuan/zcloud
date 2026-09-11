@@ -83,7 +83,20 @@ func Run(args []string) error {
 	case "watch":
 		return watchForeground()
 	case "install":
-		return install()
+		watch := false
+		for _, a := range args[1:] {
+			switch a {
+			case "--watch", "-w":
+				watch = true
+			case "-h", "--help":
+				fmt.Println("Usage: zcloudd serv install [--watch]")
+				fmt.Println("  --watch, -w  ExecStart=zcloudd serv watch (auto-rebuild + restart)")
+				return nil
+			default:
+				return fmt.Errorf("install: flag không hợp lệ: %s", a)
+			}
+		}
+		return install(watch)
 	case "help", "--help", "-h":
 		printHelp()
 		return nil
@@ -136,8 +149,8 @@ func systemctlRun(label string, subargs ...string) error {
 }
 
 // install tạo/cập nhật /etc/systemd/system/zcloud.service rồi daemon-reload.
-// Unit file dùng ExecStart=zcloudd serv (chạy server trực tiếp trong foreground).
-func install() error {
+// Mặc định ExecStart=zcloudd serv (foreground); truyền watch=true để dùng `serv watch`.
+func install(watch bool) error {
 	bin := BinaryPath()
 	root := ProjectRoot()
 	unit := fmt.Sprintf(`[Unit]
@@ -148,7 +161,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=%s
-ExecStart=%s serv
+ExecStart=%s serv%s
 Restart=always
 RestartSec=3
 StandardOutput=journal
@@ -158,7 +171,7 @@ Environment=HOME=/root
 
 [Install]
 WantedBy=multi-user.target
-`, root, bin)
+`, root, bin, watchArg(watch))
 
 	// Đọc file hiện tại để so sánh — không ghi đè nếu không đổi.
 	existing, err := os.ReadFile(ServiceFile)
@@ -186,7 +199,7 @@ WantedBy=multi-user.target
 func start() error {
 	if _, err := os.Stat(ServiceFile); os.IsNotExist(err) {
 		fmt.Println("[zcloud] Service file chưa tồn tại — cài đặt...")
-		if err := install(); err != nil {
+		if err := install(false); err != nil {
 			return err
 		}
 	}
@@ -215,7 +228,7 @@ func restart() error {
 		return fmt.Errorf("build: %w", err)
 	}
 	if _, err := os.Stat(ServiceFile); os.IsNotExist(err) {
-		if err := install(); err != nil {
+		if err := install(false); err != nil {
 			return err
 		}
 	}
@@ -259,4 +272,11 @@ func logs(args []string) error {
 
 func watchForeground() error {
 	return Watch(context.Background(), BinaryPath(), ProjectRoot()+"/src/zcloud")
+}
+// watchArg trả về " watch" nếu watch=true, "" nếu false — dùng cho template ExecStart.
+func watchArg(w bool) string {
+	if w {
+		return " watch"
+	}
+	return ""
 }
