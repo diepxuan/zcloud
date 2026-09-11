@@ -159,8 +159,8 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 | T7 | ~~Re-login QR cho account hiện tại~~ | ✅ Resolved | Lỗi `zpw_sek không đúng` xảy ra 11/08/2026 khi test SendMessage. Sau đó session được refresh qua background (commit đợt 29/07 cập nhật `secret_key bZMgG6RLiSa/DrYbIotXIg==`), từ 01/09/2026 trở đi không còn lỗi. Verify 11/09/2026: `listening=true`, `hasActiveSession=true`, WS connect `wss://ws3-msg.chat.zalo.me?zpw_ver=688` OK, ping/pong đều, sync old messages nhiều conv. Ghi chú cũ trong audit có thể bỏ. |
 | T8 | Verify end-to-end (Sep ↔ Trần Ngọc Đức) | ✅ Verified 11/09/2026 | `/api/messages/send` (Sep → Trần Ngọc Đức) → `sent: true`; DB có row (15→16); WS broadcast `new_message` <1s; Zalo echo cmd 501 parse + dedupe OK. Xem chi tiết §5.4. |
 | T9 | Review host/config từ server thay vì hardcode | 🟡 Medium | PC bundle dùng `zpw_service_map_new` + server domains; cần đọc session/config nếu muốn chống đổi host |
-| T10 | WS AES-GCM + desktop command set | 🟢 Optional | PC bundle xác nhận AES-GCM layout và cmd 590-592/630-634 nếu làm cross-device/backup sync |
-| T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟢 Deferred | Làm sau khi T1+T2+T3 (verify + integration test, auto-sync nền, đồng bộ media kèm tin nhắn) hoàn thành. Xem chi tiết tại [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md) |
+| T10 | WS AES-GCM + desktop command set | ✅ Done (đợt 11/09) | AES-GCM layout đã có + cipherKey wire vào DecodeWSEvent từ trước (cmd 590-592/630-634 dispatch thành DesktopSyncEvent qua cmdToEventType). Test round-trip AES-GCM encrypt=2/3 + base64 key + missing key. Schema payload từng cmd cần reverse thêm trusted-device WASM. |
+| T11 | Auto-sync media đầy đủ + cross-device/backup sync | 🟡 Partial (đợt 11/09) | Sub-task xem §5.6: T11.1 (TTL handling — fail fast non-media) ✅, T11.2 (rate-limit 200ms) ✅, T11.3 (AES-GCM = T10) ✅, T11.4 (parse desktop sync cmd) ✅. Còn: backup/restore reverse WASM (multi-week), integration test media end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức). |
 
 ## 5.1. Đã hoàn thành trong đợt này (29/07/2026)
 
@@ -179,6 +179,30 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
   ZCloud/family media, trusted-device WASM, Postgres encrypted local store.
 
 ---
+
+### T11.6 — Chi tiết T11 (đợt 11/09)
+
+**T11.1 — TTL / fail-fast non-media response**: `internal/api/media_worker.go:download` trả error ngay khi response không phải media binary (HTML/text 200 OK thay vì binary). Retry 3 lần cho non-media response là lãng phí — URL Zalo CDN không thể "hồi sinh".
+
+**T11.2 — Rate-limit giữa các job**: `internal/api/media_worker.go:processAccount` thêm 200ms sleep giữa các job (~5 req/s). Đủ nhanh cho batch=20 (mỗi tick xử lý ~4s), đủ chậm để không trigger Zalo rate limit (~10 req/s).
+
+**T11.3 = T10 — AES-GCM layout + cipherKey wire**: cipherKey đã được `handleDesktopSync`/`decryptPayload` sử dụng. Test `TestDecodeWSEventAESGCM`/`AESGCMRaw`/`AESGCMBase64Key`/`AESGCMMissingKey` cover 4 case encrypt=2 (AES-GCM+gzip), encrypt=3 (AES-GCM raw), cipherKey truyền dạng base64 string, cipherKey rỗng → error.
+
+**T11.4 — Parse cmd 590-592/630-634 as DesktopSyncEvent**:
+- `core.EventType` thêm 8 type: `EventRequestSync`, `EventAckDeleteSession`, `EventMobileWakeUp`, `EventInitBackup`, `EventCreateBackup`, `EventBackupMeta`, `EventRestoreMobile`, `EventBackupConfigs`.
+- `core.CmdToEventType(cmd, subCmd)` ánh WS cmd → EventType.
+- `core.EventType.String()` trả tên event để log + broadcast.
+- `core.DesktopSyncEvent{Cmd, SubCmd, Type, RawData json.RawMessage}` — payload thô để downstream parse khi reverse thêm WASM.
+- `core.Event.DesktopSync *DesktopSyncEvent` — non-nil cho 8 cmd trên.
+- `core.handleDesktopSync` dispatch Event vào `msgChan` (non-blocking; drop nếu channel đầy để không block WS read loop).
+- `api.handleZaloEvent` default case: log + broadcast `desktop_sync` cho browser với `{cmd, subCmd, event, rawData}`.
+- Test `TestCmdToEventType`/`TestEventTypeString`/`TestMsgTypeIsLink` đảm bảo mapping không trùng + Link type có helper riêng.
+
+**Còn lại của T11** (xem [tasks/16-auto-sync-media.md](tasks/16-auto-sync-media.md)):
+- Reverse trusted-device WASM flow (Zalo PC bundle) để biết schema cmd 590-592/630-634 thật — hiện chỉ log payload thô.
+- `get_backupmsginfo`, `pull_mobile_msg`, `cancel_pull_mobile_msg` đã có helpers trong `internal/core/desktop_sync.go` nhưng chưa trigger khi backup session đến.
+- ZCloud media + family album.
+- Integration test end-to-end (cần Sếp gửi data thật từ Trần Ngọc Đức theo §5.4).
 
 ## 6. References
 
