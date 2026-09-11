@@ -18,6 +18,7 @@ type Account struct {
 	Status      int       `json:"status"`
 	Note        string    `json:"note"`
 	Enabled     bool      `json:"enabled"` // false = ẩn khỏi UI nhưng vẫn listen WS
+	Transport   string    `json:"transport,omitempty"` // ""=web | "pc"
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -36,6 +37,8 @@ type Session struct {
 	APIType    uint      `json:"apiType"`
 	APIVersion uint      `json:"apiVersion"`
 	IsActive   int       `json:"isActive"`
+	Transport  string    `json:"transport,omitempty"` // ""=web | "pc" = Zalo PC
+	CipherKey  string    `json:"cipherKey,omitempty"` // base64 AES-GCM (PC only)
 	CreatedAt  time.Time `json:"createdAt"`
 	ExpiresAt  time.Time `json:"expiresAt"`
 }

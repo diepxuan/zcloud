@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
+	cryptorand "crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -143,7 +144,7 @@ func randomHex(minLen, maxLen int) string {
 		length = minLen + rand.Intn(maxLen-minLen+1)
 	}
 	b := make([]byte, (length+1)/2)
-	rand.Read(b)
+	cryptorand.Read(b)
 	return hex.EncodeToString(b)[:length]
 }
 
@@ -313,6 +314,45 @@ func DecodeAESGCM(key, iv, aad, ct []byte) ([]byte, error) {
 		return nil, fmt.Errorf("aes-gcm: new gcm: %w", err)
 	}
 	return gcm.Open(nil, iv, ct, aad)
+}
+
+// EncodeAESGCM mã hóa AES-GCM dùng cho WebSocket send.
+// Output layout: [iv 16][aad 16][ciphertext+tag] (base64-encoded khi wrap thành WS event).
+// mode: WSEncryptAESGCM=2 (gzip trước khi encrypt) | WSEncryptAESGCMRaw=3 (raw, không gzip).
+func EncodeAESGCM(key, aad, plaintext []byte, mode byte) ([]byte, error) {
+	var data []byte
+	if mode == WSEncryptAESGCM {
+		// gzip trước khi encrypt (PC dùng mode 2 cho restore flows).
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		if _, err := zw.Write(plaintext); err != nil {
+			return nil, fmt.Errorf("aes-gcm gzip write: %w", err)
+		}
+		if err := zw.Close(); err != nil {
+			return nil, fmt.Errorf("aes-gcm gzip close: %w", err)
+		}
+		data = buf.Bytes()
+	} else {
+		data = plaintext
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm new cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCMWithNonceSize(block, 16)
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm new gcm: %w", err)
+	}
+	iv := make([]byte, 16)
+	if _, err := cryptorand.Read(iv); err != nil {
+		return nil, fmt.Errorf("aes-gcm iv: %w", err)
+	}
+	ct := gcm.Seal(nil, iv, data, aad)
+	out := make([]byte, 0, 16+16+len(ct))
+	out = append(out, iv...)
+	out = append(out, aad...)
+	out = append(out, ct...)
+	return out, nil
 }
 
 // DecodeWSEvent giải mã WebSocket event data từ Zalo

@@ -129,8 +129,8 @@ func (s *Store) GetActiveSessionsForAccounts() (map[string]bool, error) {
 }
 
 const upsertSessionSQL = `INSERT INTO sessions
-	(id, account_id, user_id, cookies, secret_key, imei, user_agent, language, ws_urls, service_map, api_type, api_version, is_active, expires_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	(id, account_id, user_id, cookies, secret_key, imei, user_agent, language, ws_urls, service_map, api_type, api_version, is_active, expires_at, transport, cipher_key)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	ON CONFLICT (id) DO UPDATE SET
 		account_id = EXCLUDED.account_id,
 		user_id = EXCLUDED.user_id,
@@ -143,6 +143,8 @@ const upsertSessionSQL = `INSERT INTO sessions
 		service_map = EXCLUDED.service_map,
 		api_type = EXCLUDED.api_type,
 		api_version = EXCLUDED.api_version,
+		transport = EXCLUDED.transport,
+		cipher_key = EXCLUDED.cipher_key,
 		is_active = EXCLUDED.is_active,
 		expires_at = EXCLUDED.expires_at`
 
@@ -154,18 +156,20 @@ func (s *Store) SaveSession(sr *Session) error {
 		return err
 	}
 	_, err := s.db.Exec(upsertSessionSQL, sr.ID, sr.AccountID, sr.UserID, sr.Cookies, sr.SecretKey,
-		sr.IMEI, sr.UserAgent, sr.Language, sr.WSURLs, sr.ServiceMap, sr.APIType, sr.APIVersion, sr.IsActive, sr.ExpiresAt)
+		sr.IMEI, sr.UserAgent, sr.Language, sr.WSURLs, sr.ServiceMap, sr.APIType, sr.APIVersion, sr.IsActive, sr.ExpiresAt, sr.Transport, sr.CipherKey)
 	return err
 }
 
 func (s *Store) LoadSession(id string) (*Session, error) {
 	sr := &Session{}
 	q := `SELECT id, account_id, user_id, cookies, secret_key, imei, user_agent, language,
-		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at
+		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at,
+		transport, cipher_key
 		FROM sessions WHERE id = $1`
 	err := s.db.QueryRow(q, id).Scan(&sr.ID, &sr.AccountID, &sr.UserID, &sr.Cookies, &sr.SecretKey,
 		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs, &sr.ServiceMap,
-		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt)
+		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt,
+		&sr.Transport, &sr.CipherKey)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -175,11 +179,13 @@ func (s *Store) LoadSession(id string) (*Session, error) {
 func (s *Store) GetActiveSession(accountID string) (*Session, error) {
 	sr := &Session{}
 	q := `SELECT id, account_id, user_id, cookies, secret_key, imei, user_agent, language,
-		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at
+		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at,
+		transport, cipher_key
 		FROM sessions WHERE account_id = $1 AND is_active = 1 ORDER BY created_at DESC LIMIT 1`
 	err := s.db.QueryRow(q, accountID).Scan(&sr.ID, &sr.AccountID, &sr.UserID, &sr.Cookies, &sr.SecretKey,
 		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs, &sr.ServiceMap,
-		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt)
+		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt,
+		&sr.Transport, &sr.CipherKey)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

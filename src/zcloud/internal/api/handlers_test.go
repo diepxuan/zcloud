@@ -145,3 +145,30 @@ func TestHandleSendMessage_NoAccountID(t *testing.T) {
 		})
 	}
 }
+
+// TestHandlePCLogin_ValidateBody kiểm tra validate body cho /api/login/pc.
+func TestHandlePCLogin_ValidateBody(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{"empty body", `{}`, 400},
+		{"missing zpw_sek", `{"zpsid":"abc"}`, 400},
+		{"missing zpsid", `{"zpw_sek":"xyz"}`, 400},
+		{"invalid JSON", `not-json`, 400},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{Logger: newDiscardLogger()}
+			req := httptest.NewRequest(http.MethodPost, "/api/login/pc",
+				strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			s.HandlePCLogin(rr, req)
+			if rr.Code != tc.wantCode {
+				t.Fatalf("want %d, got %d (body=%s)", tc.wantCode, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}

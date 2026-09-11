@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"bytes"
 	"compress/gzip"
 	"crypto/aes"
@@ -304,4 +305,55 @@ func gzipBytes(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// TestEncodeDecodeAESGCM_RoundTrip kiểm tra encode + decode round-trip.
+// Layout: [iv 16][aad 16][ciphertext+tag].
+func TestEncodeDecodeAESGCM_RoundTrip(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef") // 32 bytes = AES-256
+	plaintext := []byte(`{"cmd":501,"data":{"msg":"hello world from PC"}}`)
+	aad := []byte("0123456789abcdef") // 16 bytes
+
+	for _, mode := range []byte{WSEncryptAESGCM, WSEncryptAESGCMRaw} {
+		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
+			ct, err := EncodeAESGCM(key, aad, plaintext, mode)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			// Layout phải đúng: 16 (iv) + 16 (aad) + len(plaintext) + 16 (tag).
+			// Layout: 16 (iv) + 16 (aad) + ct + 16 (tag).
+			// Mode 2 gzip nên ciphertext length khác len(plaintext).
+			if len(ct) < 32+16 {
+				t.Fatalf("len too short: got %d", len(ct))
+			}
+			// aad phải match.
+			if !bytes.Equal(ct[16:32], aad) {
+				t.Errorf("aad mismatch")
+			}
+			// Decode round-trip.
+			dec, err := DecodeAESGCM(key, ct[:16], ct[16:32], ct[32:])
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if !bytes.Equal(dec, plaintext) {
+				t.Errorf("plaintext mismatch: want %q, got %q", plaintext, dec)
+			}
+		})
+	}
+}
+
+// TestEncodeAESGCM_KeyMismatch kiểm tra decode với key khác phải fail.
+func TestEncodeAESGCM_KeyMismatch(t *testing.T) {
+	key1 := []byte("0123456789abcdef0123456789abcdef")
+	key2 := []byte("fedcba9876543210fedcba9876543210")
+	aad := []byte("0123456789abcdef")
+	plaintext := []byte("secret")
+
+	ct, err := EncodeAESGCM(key1, aad, plaintext, WSEncryptAESGCMRaw)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := DecodeAESGCM(key2, ct[:16], ct[16:32], ct[32:]); err == nil {
+		t.Fatal("decode với key khác phải fail, nhưng pass")
+	}
 }

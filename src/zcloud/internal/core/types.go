@@ -247,6 +247,10 @@ type Session struct {
 	ExtraVer   string              `json:"extraVer,omitempty"`
 	APIType    uint                `json:"apiType"`
 	APIVersion uint                `json:"apiVersion"`
+	// Transport: "" = web (default) | "pc" = Zalo PC trusted-device protocol.
+	// PC dùng AES-GCM với cipherKey từ auth response + WASM key exchange.
+	Transport  string              `json:"transport,omitempty"`
+	CipherKey  string              `json:"cipherKey,omitempty"` // base64 AES-GCM key (PC)
 }
 
 // Event represents a WebSocket event from Zalo

@@ -37,7 +37,10 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureAccountUserIDPG(); err != nil {
 		return err
 	}
-	return s.ensureAccountEnabledPG()
+	if err := s.ensureAccountEnabledPG(); err != nil {
+		return err
+	}
+	return s.ensureSessionTransportPG()
 }
 
 // ensureSessionServiceMapPG thêm cột service_map nếu thiếu.
@@ -93,6 +96,31 @@ func (s *Store) ensureAccountUserIDPG() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT ''`); err != nil {
 		return fmt.Errorf("add accounts.user_id: %w", err)
+	}
+	return nil
+}
+
+// ensureSessionTransportPG thêm cột transport + cipher_key vào sessions nếu thiếu.
+// Mặc định transport='' (web), cipher_key rỗng.
+func (s *Store) ensureSessionTransportPG() error {
+	for _, col := range []struct {
+		def string
+		typ string
+	}{
+		{"transport", "TEXT NOT NULL DEFAULT ''"},
+		{"cipher_key", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists bool
+		err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sessions' AND column_name=$1)`, col.def).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("check sessions.%s: %w", col.def, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", col.def, col.typ)); err != nil {
+			return fmt.Errorf("add sessions.%s: %w", col.def, err)
+		}
 	}
 	return nil
 }

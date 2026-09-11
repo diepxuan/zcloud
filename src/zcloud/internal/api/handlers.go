@@ -24,7 +24,9 @@ type Server struct {
 }
 
 func NewServer(s *store.Store, logger *log.Logger) *Server {
-	return &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client)}
+	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client)}
+	globalServer = svr
+	return svr
 }
 
 type APIResponse struct {
@@ -128,6 +130,77 @@ func (s *Server) HandleAccountSetEnabled(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ok(w, map[string]interface{}{"accountId": req.AccountID, "enabled": req.Enabled})
+}
+
+// HandlePCLogin tạo session cho Zalo PC login.
+// Body: {zpsid, zpw_sek, cipherKey, transport: "pc"} (cipherKey optional — server sẽ lấy từ WS auth nếu rỗng).
+// Transport flag 'pc' → set transport trong session để WS layer AES-GCM encrypt.
+func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ZPSID     string `json:"zpsid"`
+		ZPWSEK    string `json:"zpw_sek"`
+		CipherKey string `json:"cipherKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.ZPSID == "" || req.ZPWSEK == "" {
+		fail(w, 400, "thiếu zpsid hoặc zpw_sek")
+		return
+	}
+	cookies := map[string]string{
+		"zpsid":   req.ZPSID,
+		"zpw_sek": req.ZPWSEK,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	result, err := core.CookieLogin(ctx, cookies, "", "")
+	if err != nil {
+		fail(w, 500, "login failed: "+err.Error())
+		return
+	}
+	session := result.Session
+	accountID := "acc_" + session.UserID
+
+	friendClient := core.NewClient(session)
+	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	displayName, avatar := "", ""
+	if n, a, err := friendClient.GetMyProfile(innerCtx); err == nil && n != "" {
+		displayName, avatar = n, a
+	}
+	innerCancel()
+	if displayName == "" {
+		displayName = safeDisplayName(session.UserID)
+	}
+
+	s.Store.CreateAccount(accountID, displayName, 1)
+	s.Store.SetAccountUserID(accountID, session.UserID)
+	if avatar != "" {
+		s.Store.UpdateAccount(accountID, displayName, avatar)
+	}
+
+	cj, _ := json.Marshal(session.Cookies)
+	wsList := session.WSURLs
+	if wsList == nil {
+		wsList = []string{}
+	}
+	wj, _ := json.Marshal(wsList)
+	smj, _ := json.Marshal(session.ServiceMap)
+	if session.ServiceMap == nil {
+		smj = []byte("{}")
+	}
+
+	StopZaloListener(accountID)
+	s.Store.SaveSession(&store.Session{
+		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
+		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
+		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
+		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
+		Transport: "pc", CipherKey: req.CipherKey,
+	})
+	go StartZaloListener(s.Store, accountID, s.Logger)
+	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc"})
 }
 
 // HandleAccountRestart stop + start zalo listener cho account (fix WS loi,

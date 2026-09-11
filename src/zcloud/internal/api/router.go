@@ -38,6 +38,7 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/qr/create", s.HandleCreateQR)
 	mux.HandleFunc("GET /api/qr/poll", s.HandlePollQR)
 	mux.HandleFunc("POST /api/login/cookie", s.HandleCookieLogin)
+	mux.HandleFunc("POST /api/login/pc", s.HandlePCLogin)
 
 	// ====================================
 	// API — Conversations & Messages

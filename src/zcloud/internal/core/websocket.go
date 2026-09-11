@@ -38,6 +38,7 @@ type WSClient struct {
 	authErr   error
 
 	cipherKey   []byte // Key cho AES-GCM decrypt event data
+	encryptMode byte    // WSEncryptAESGCM (2) | WSEncryptAESGCMRaw (3) | 0 = plain
 	session     *Session
 	url         string
 	requestIDs  uint64
@@ -54,11 +55,12 @@ func NewWSClient(session *Session) *WSClient {
 	}
 
 	return &WSClient{
-		msgChan:   make(chan Event, 100),
-		errChan:   make(chan error, 10),
-		closeChan: make(chan CloseEvent, 4),
-		session:   session,
-		url:       url,
+		msgChan:    make(chan Event, 100),
+		errChan:    make(chan error, 10),
+		closeChan:  make(chan CloseEvent, 4),
+		encryptMode: 0, // 0 = plain; AES-GCM set sau khi nhận cipherKey từ server.
+		session:    session,
+		url:        url,
 	}
 }
 
@@ -188,6 +190,22 @@ func (w *WSClient) SendWS(ctx context.Context, cmd uint16, subCmd uint8, data ma
 		return fmt.Errorf("ws marshal: %w", err)
 	}
 
+	// Nếu có cipherKey + encryptMode (PC), wrap payload thành envelope JSON
+	// {data: base64(iv|aad|ct), encrypt: N} thay vì raw JSON — match PC protocol.
+	if w.encryptMode >= WSEncryptAESGCM && len(w.cipherKey) > 0 {
+		aad := make([]byte, 16)
+		copy(aad, payload[:min(16, len(payload))])
+		ct, encErr := EncodeAESGCM(w.cipherKey, aad, payload, w.encryptMode)
+		if encErr != nil {
+			return fmt.Errorf("ws encrypt: %w", encErr)
+		}
+		envelope, _ := json.Marshal(map[string]any{
+			"data":    base64.StdEncoding.EncodeToString(ct),
+			"encrypt": int(w.encryptMode),
+		})
+		payload = envelope
+	}
+
 	// Frame format: version(1) + cmd(2 LE) + subCmd(1) + payload
 	frame := make([]byte, 4+len(payload))
 	frame[0] = 1 // version
@@ -197,6 +215,9 @@ func (w *WSClient) SendWS(ctx context.Context, cmd uint16, subCmd uint8, data ma
 
 	return w.conn.Write(ctx, websocket.MessageBinary, frame)
 }
+
+// encryptPayloadIfNeeded wrap payload thành envelope khi cần AES-GCM.
+// Trả về payload đã wrap (hoặc payload gốc nếu không encrypt).
 
 func (w *WSClient) SendWSWithID(ctx context.Context, cmd uint16, subCmd uint8, data map[string]any) error {
 	if data == nil {
@@ -324,13 +345,17 @@ func (w *WSClient) handleFrame(data []byte) {
 			ErrorMsg  string `json:"error_message"`
 		}
 		if err := json.Unmarshal(payload, &keyMsg); err == nil && keyMsg.Key != "" {
-			fmt.Printf("[zcloud] ws auth key received: keylen=%d\n", len(keyMsg.Key))
+			fmt.Printf("[zcloud] ws auth key received: keylen=%d transport=%q\n", len(keyMsg.Key), w.session.Transport)
 			w.mu.Lock()
 			decoded, decErr := base64.StdEncoding.DecodeString(keyMsg.Key)
 			if decErr == nil && len(decoded) > 0 {
 				w.cipherKey = decoded
 			} else {
 				w.cipherKey = []byte(keyMsg.Key)
+			}
+			// PC transport: bật AES-GCM encrypt cho cả send/receive.
+			if w.session.Transport == "pc" {
+				w.encryptMode = WSEncryptAESGCMRaw
 			}
 			w.mu.Unlock()
 			w.mu.Lock()
@@ -491,6 +516,24 @@ func (w *WSClient) GetBackupConfigs(ctx context.Context) error {
 	return w.SendWSWithID(ctx, 634, 0, map[string]any{})
 }
 
+// encryptPayloadIfNeeded wrap payload thành envelope khi cần AES-GCM.
+func (w *WSClient) encryptPayloadIfNeeded(payload []byte) ([]byte, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.encryptMode < WSEncryptAESGCM || len(w.cipherKey) == 0 {
+		return payload, nil
+	}
+	aad := make([]byte, 16)
+	copy(aad, payload[:min(16, len(payload))])
+	ct, err := EncodeAESGCM(w.cipherKey, aad, payload, w.encryptMode)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{
+		"data":    base64.StdEncoding.EncodeToString(ct),
+		"encrypt": int(w.encryptMode),
+	})
+}
 func (w *WSClient) decryptPayload(payload []byte) []byte {
 	w.mu.Lock()
 	ck := w.cipherKey
