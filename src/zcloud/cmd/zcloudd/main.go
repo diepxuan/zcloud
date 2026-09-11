@@ -12,10 +12,29 @@ import (
 
 	"github.com/diepxuan/zcloud/internal/api"
 	"github.com/diepxuan/zcloud/internal/config"
+	"github.com/diepxuan/zcloud/internal/servcmd"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
+// init được gọi trước main — in banner và check subcommand `serv` để dispatch
+// sớm, tránh phải parse flags toàn cục khi user chỉ muốn quản lý service.
+func init() {
+	fmt.Println("zcloudd — Zalo Cloud Service")
+	fmt.Println("Phiên bản phát triển")
+	fmt.Println()
+}
+
 func main() {
+	// Dispatch: nếu argv[1] == "serv" → chạy subcommand quản lý service.
+	// Đây là entry point cho systemd ExecStart=zcloudd serv, không phải server.
+	if len(os.Args) > 1 && os.Args[1] == "serv" {
+		if err := runServ(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcloud] serv error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Parse config
 	cfg := config.Parse()
 
@@ -164,6 +183,10 @@ func main() {
 	logger.Println("Server đã tắt.")
 }
 
+// runServ dispatch sang package servcmd. Tách ra để giữ main.go gọn.
+func runServ(args []string) error {
+	return servcmd.Run(args)
+}
 // ====================================
 // Middleware
 // ====================================
@@ -223,10 +246,4 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func init() {
-	fmt.Println("zcloudd — Zalo Cloud Service")
-	fmt.Println("Phiên bản phát triển")
-	fmt.Println()
 }

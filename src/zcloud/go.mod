@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/coder/websocket v1.8.15
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jackc/pgx/v5 v5.10.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -15,5 +16,6 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 )

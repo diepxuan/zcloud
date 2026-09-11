@@ -33,7 +33,18 @@ Mỗi session startup, đọc theo thứ tự:
 - `src/zcloud/` — Source code chính
 - `docs/` — Tài liệu: tasks, design, schema, references, tasks/<id>.md
 - `scripts/` — Service manager (zcloud.sh + zcloudd.sh watch mode)
+- `scripts/` — Service manager (đã port vào `zcloudd serv` — script bash cũ trong `tmp/scratch/trash/`)
 - `docs/references/` — Source tham khảo (zca-js, zcago, Za-go)
+
+## Service manager (`zcloudd serv`)
+Quản lý service đã được port từ bash script vào binary:
+- `zcloudd serv` — chạy watch mode (foreground, systemd ExecStart)
+- `zcloudd serv start|stop|restart` — systemctl wrapper
+- `zcloudd serv status` — trạng thái systemd + port
+- `zcloudd serv logs [-f]` — journalctl -u zcloud
+- `zcloudd serv install` — (re)generate `/etc/systemd/system/zcloud.service`
+- Config (DB password, port, domain...) đọc từ `~/.config/ductn/zcloud.yml`
+- Script bash cũ `scripts/zcloud.sh` + `scripts/zcloudd.sh` đã được chuyển vào `tmp/scratch/trash/`
 
 ## Lưu ý cho các session sau
 - Đã reverse Zalo Web API (mã hóa, đăng nhập, REST, WebSocket) — xem `docs/design.md`
