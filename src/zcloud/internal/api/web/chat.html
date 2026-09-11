@@ -611,8 +611,7 @@ var me='';
 var wsr=null;
 document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();wc()});
 function wc(){if(!ca||wsr)return;wsr=new WebSocket('ws://'+location.host+'/ws?accountId='+ca);
-wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;if(cc&&m.convId&&m.convId!==cc){return;}var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);ml.scrollTop=ml.scrollHeight;
-requestAnimationFrame(function(){ml.scrollTop=ml.scrollHeight;});
+wsr.onmessage=function(e){try{var d=JSON.parse(e.data);if(d.type=='new_message'||d.type=='old_message'){var m=d.data;if(cc&&m.convId&&m.convId!==cc){return;}var ml=document.getElementById('ml');var dv=renderMsg(m);if(d.type=='old_message' && ml.firstChild) ml.insertBefore(dv,ml.firstChild);else ml.appendChild(dv);scrollLastMessage(ml,dv,false);
 }else if(d.type=='media_downloaded'){applyMediaDownloaded(d.data,cc)}}catch(ex){}};
 wsr.onclose=function(){wsr=null;setTimeout(wc,3000)}}
 // accounts: cache list account cho tab Quan ly. Reload khi can.
@@ -1015,6 +1014,31 @@ d.data.forEach(function(c){cvCache[c.id]={name:c.name,avatar:c.avatar};
 var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;
 dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div><div class="cv-b"><div class="cv-n">'+(c.name||c.id)+'</div><div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div></div>';
 dv.onclick=function(){sc(c.id,c.name,c.avatar)};el('cl').appendChild(dv)});}}catch(e){}}
+// scrollLastMessage: scroll container đến element tin nhắn cuối cùng.
+// Dùng scrollIntoView({block:'end',behavior:'smooth'|'auto'}) thay vì
+// scrollTop=scrollHeight — chính xác hơn với flex layout có gap,
+// và tự chờ render ảnh/video hoàn tất (browser tự tính layout).
+// Thử 2 lần (immediate + rAF) để cover ảnh load chậm.
+function scrollLastMessage(ml, smooth){
+  if(!ml) return;
+  var last=ml.lastElementChild;
+  if(!last||last.classList.contains('lm-end')||last.id==='lm-btn'||last.id==='lm-load'){
+    // Nếu element cuối là button/spinner/end marker, tìm .msg cuối.
+    var msgs=ms.querySelectorAll('.msg');
+    if(msgs.length===0) return;
+    last=msgs[msgs.length-1];
+  }
+  var b=smooth?'smooth':'auto';
+  try{
+    last.scrollIntoView({block:'end', inline:'nearest', behavior:b});
+  }catch(e){
+    // Fallback cho browser cũ.
+    ml.scrollTop=ml.scrollHeight;
+  }
+  requestAnimationFrame(function(){last.scrollIntoView({block:'end',behavior:b});});
+}
+
+
 function sc(id,nm,av){cc=id;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ia').classList.remove('hd');
@@ -1055,8 +1079,7 @@ async function lm(manual){
         // First load: cuộn xuống cuối. requestAnimationFrame chờ browser
         // layout xong (ảnh cần load height); không thì scrollTop set trước
         // khi content thực sự render → chỉ cuộn được 1 phần.
-        ml.scrollTop=ml.scrollHeight;
-        requestAnimationFrame(function(){ml.scrollTop=ml.scrollHeight;});
+        scrollLastMessage(ml,null,false);
       }else{
         ml.scrollTop=oldT+(newH-oldH);
       }
@@ -1095,8 +1118,7 @@ try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type
 if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);
-ml.scrollTop=ml.scrollHeight;
-requestAnimationFrame(function(){ml.scrollTop=ml.scrollHeight;});}}catch(e){}}
+scrollLastMessage(ml,dv,false);}}catch(e){}}
 async function xd(id){if(!confirm('Xoá user '+id+'?'))return;
 try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id})})}catch(e){}
 window.location.reload()}
