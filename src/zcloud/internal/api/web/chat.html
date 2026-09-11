@@ -457,29 +457,18 @@ body{
 .ck-step code{font-family:var(--ff-mono);font-size:var(--fz-xs);
   background:var(--c-surface);padding:1px 4px;border-radius:var(--r-sm);border:1px solid var(--c-border)}
 .ck-step a{color:var(--c-brand)}
-.ck-copy{
-  margin-top:var(--s-1);background:var(--c-surface);color:var(--c-brand);
-  border:1px solid var(--c-brand);border-radius:var(--r-sm);
-  padding:var(--s-2) var(--s-3);font-size:var(--fz-sm);font-weight:var(--fw-m);
-  font-family:inherit;cursor:pointer;
-  transition:all var(--dur-1) var(--ease);
-  display:flex;align-items:center;justify-content:center;gap:var(--s-1);
-}
-.ck-copy:hover{background:var(--c-brand);color:var(--c-text-onbrand)}
-.ck-copy.ok{background:var(--c-success);color:var(--c-text-onbrand);border-color:var(--c-success)}
-.ck-code-wrap{margin-top:var(--s-2);font-size:var(--fz-xs)}
-.ck-code-wrap summary{cursor:pointer;color:var(--c-text-3);font-size:var(--fz-xs);
-  padding:var(--s-1) 0;user-select:none}
-.ck-code-wrap summary:hover{color:var(--c-brand)}
-.ck-code{
-  margin:var(--s-1) 0 0;padding:var(--s-2);background:var(--c-bg);
+.ck-fields{display:flex;flex-direction:column;gap:var(--s-2);margin-top:var(--s-1)}
+.ck-field{display:flex;flex-direction:column;gap:var(--s-1)}
+.ck-label{font-size:var(--fz-xs);font-weight:var(--fw-m);color:var(--c-text-3);text-transform:uppercase;letter-spacing:.5px}
+.ck-field input{
+  background:var(--c-bg);color:var(--c-text-1);
   border:1px solid var(--c-border);border-radius:var(--r-sm);
-  font-family:var(--ff-mono);font-size:var(--fz-xs);color:var(--c-text-2);
-  white-space:pre-wrap;word-break:break-all;max-height:140px;overflow:auto;
-  text-align:left;line-height:1.4;
+  padding:var(--s-2) var(--s-3);font-size:var(--fz-md);
+  font-family:var(--ff-mono);line-height:1.4;
+  outline:none;transition:border-color var(--dur-1) var(--ease);
 }
-.ck-paste{margin-bottom:var(--s-2)}
-.ck-paste-btn{margin-top:0}
+.ck-field input:focus{border-color:var(--c-brand)}
+.ck-field input::placeholder{color:var(--c-text-3);font-family:var(--ff-sans)}
 /* === Lightbox === */
 .lb{
   position:fixed;inset:0;z-index:200;display:none;
@@ -587,17 +576,21 @@ body{
     </div>
     <div class="modal-body" id="cookie-pane" style="display:none">
       <div class="ck-guide">
-        <div class="ck-step"><span class="ck-num">1</span><div>Mở <a href="https://chat.zalo.me" target="_blank" rel="noopener">chat.zalo.me</a>, đăng nhập xong. Mở <b>DevTools</b> bằng phím <b>F12</b> → tab <b>Console</b>.</div></div>
-        <div class="ck-step"><span class="ck-num">2</span><div>Bấm <b>Sao chép script</b> bên dưới, paste vào Console của Zalo, nhấn <b>Enter</b>.</div></div>
-        <div class="ck-step"><span class="ck-num">3</span><div>Console sẽ in ra 1 dòng bắt đầu bằng <code>zcloud_cookie:</code>. <b>Sao chép cả dòng đó</b>.</div></div>
-        <div class="ck-step"><span class="ck-num">4</span><div>Quay lại đây, bấm <b>Dán cookie</b> — hệ thống tự điền vào ô bên dưới.</div></div>
-        <button class="ck-copy" onclick="copyCookieScript()" aria-label="Sao chép script lấy cookie">📋 Sao chép script</button>
-        <details class="ck-code-wrap"><summary>Xem script</summary><pre class="ck-code" id="ck-script"></pre></details>
+        <div class="ck-step"><span class="ck-num">1</span><div>Mở <a href="https://chat.zalo.me" target="_blank" rel="noopener">chat.zalo.me</a>, đăng nhập xong.</div></div>
+        <div class="ck-step"><span class="ck-num">2</span><div>Nhấn <b>F12</b> → tab <b>Application</b> → mục <b>Cookies</b> → chọn <code>https://chat.zalo.me</code>.</div></div>
+        <div class="ck-step"><span class="ck-num">3</span><div>Tìm <code>zpsid</code> → double-click cột <b>Value</b> → Ctrl+C, paste vào ô <b>zpsid</b> bên dưới.</div></div>
+        <div class="ck-step"><span class="ck-num">4</span><div>Tương tự với <code>zpw_sek</code> → paste vào ô <b>zpw_sek</b>.</div></div>
       </div>
-      <div class="ck-paste">
-        <button class="modal-primary ck-paste-btn" onclick="pasteCookieFromClipboard()" type="button">📥 Dán cookie từ clipboard</button>
+      <div class="ck-fields">
+        <label class="ck-field">
+          <span class="ck-label">zpsid</span>
+          <input id="ck-zpsid" autocomplete="off" spellcheck="false" placeholder="Session ID từ Application → Cookies → zpsid">
+        </label>
+        <label class="ck-field">
+          <span class="ck-label">zpw_sek</span>
+          <input id="ck-zpwsek" type="password" autocomplete="off" spellcheck="false" placeholder="Secret key từ Application → Cookies → zpw_sek">
+        </label>
       </div>
-      <textarea id="cookie-input" placeholder="Hoặc dán cookie thủ công vào đây…" rows="3"></textarea>
       <div id="cookie-err" class="modal-err" style="display:none"></div>
       <button class="modal-primary" onclick="submitCookie()" style="margin-top:var(--s-2)">Đăng nhập bằng Cookie</button>
     </div>
@@ -765,64 +758,20 @@ async function pollQR(){
 }
 function stopQRPoll(){if(qrPollTimer){clearTimeout(qrPollTimer);qrPollTimer=null}qrToken=''}
 
-// Script extract cookie Zalo PC tu document.cookie. User paste vao Console
-// cua chat.zalo.me roi Enter. Se in dong bat dau bang "zcloud_cookie:".
-// Script chỉ in dòng "zcloud_cookie: ..." ra console — user tự select+copy
-// (Ctrl+C hoặc chuột phải → Copy). Không gọi navigator.clipboard.writeText
-// vì browser yêu cầu document focused; khi DevTools mở detached / user
-// click sang tab khác thì clipboard write fail với NotAllowedError.
-var CK_SCRIPT = String.raw`(()=>{const c=document.cookie;if(!c){console.log("zcloud_cookie: ");return}const pairs=c.split(";").map(p=>p.trim()).filter(p=>p);const out=pairs.filter(p=>/^(zpsid|zpw_sek|__zi|zpw_seck|__zpw_sek|app\.event\.id|clientId|isDark)=/.test(p));const line=out.join("; ");console.log("zcloud_cookie: "+line);console.log(">>> Copy dòng trên (Ctrl+C sau khi select) rồi paste vào zcloud <<<");})();`;
-
-// copyCookieScript: copy CK_SCRIPT vao clipboard, doi label 1.5s thanh "Da sao chep".
-async function copyCookieScript(){
-	var btn=document.querySelector('.ck-copy');
-	try{
-		await navigator.clipboard.writeText(CK_SCRIPT);
-		btn.classList.add('ok');btn.textContent='✓ Đã sao chép';
-		setTimeout(function(){btn.classList.remove('ok');btn.textContent='\uD83D\uDCCB Sao chép script'},1500);
-	}catch(e){
-		// Fallback: select text trong <pre> neu clipboard API bi chan.
-		var pre=document.getElementById('ck-script');
-		pre.textContent=CK_SCRIPT;
-		pre.parentElement.open=true;
-		var r=document.createRange();r.selectNodeContents(pre);
-		var sel=window.getSelection();sel.removeAllRanges();sel.addRange(r);
-		btn.classList.add('ok');btn.textContent='✓ Đã chọn (Ctrl+C)';
-		setTimeout(function(){btn.classList.remove('ok');btn.textContent='\uD83D\uDCCB Sao chép script'},2000);
-	}
-}
-
-// pasteCookieFromClipboard: doc clipboard, loc dong "zcloud_cookie:...",
-// dien vao textarea. Neu khong co prefix, dien raw.
-async function pasteCookieFromClipboard(){
-	var ta=document.getElementById('cookie-input');
-	var er=document.getElementById('cookie-err');
-	er.style.display='none';
-	try{
-		var txt=await navigator.clipboard.readText();
-		var m=txt.match(/zcloud_cookie:\s*(.+)/);
-		if(m){ta.value=m[1].trim()}
-		else if(/zpsid=/.test(txt)){ta.value=txt.trim()}
-		else{er.textContent='Clipboard không có cookie zpsid. Mở DevTools của chat.zalo.me (F12, đảm bảo tab Zalo đang focus), chạy script lại rồi copy dòng "zcloud_cookie: ..." từ console.';er.style.display='';return}
-		ta.focus();
-	}catch(e){
-		er.textContent='Không đọc được clipboard. Dán thủ công vào ô bên dưới.';er.style.display='';
-	}
-}
-
-// Submit cookie login.
+// Cookie login: nhập zpsid + zpw_sek thủ công, submit qua /api/login/cookie.
 async function submitCookie(){
-	var ta=document.getElementById('cookie-input');
+	var zpsid=document.getElementById('ck-zpsid').value.trim();
+	var zpwsek=document.getElementById('ck-zpwsek').value.trim();
 	var er=document.getElementById('cookie-err');
 	er.style.display='none';
-	if(!ta.value.trim()){er.textContent='Chua nhap cookie';er.style.display='';return}
+	if(!zpsid||!zpwsek){er.textContent='Nhập cả zpsid và zpw_sek';er.style.display='';return}
 	try{
-		var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookies:ta.value})});
+		var r=await fetch('/api/login/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({zpsid:zpsid,zpw_sek:zpwsek})});
 		var d=await r.json();
 		if(d.ok){
 			hideAddModal();window.location.reload();
 		}else{
-			er.textContent=d.error||'Login that bai';er.style.display='';
+			er.textContent=d.error||'Login thất bại';er.style.display='';
 		}
 	}catch(e){er.textContent=String(e);er.style.display=''}
 }
