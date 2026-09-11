@@ -67,6 +67,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 14 | Tách Web UI ra file tĩnh | 🟢 Xong | [14-split-webui.md](tasks/14-split-webui.md) |
 | 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
 | 18 | Terminal UI (TUI) | 🟡 Mockup | [18-tui.md](tasks/18-tui.md) |
+| 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
 
 ---
 
@@ -285,6 +286,21 @@ Workflow yêu cầu của Sếp (11/09/2026): `./zcloudd` hoặc `./zcloudd tui`
 | T18.3 | Composer + gửi tin nhắn (màn 3) | 🟡 Pending | Textinput ở bottom panel, Enter để gửi qua `core.Client.SendMessage(text, convID)`. Echo optimistic + marker `[sent]` khi nhận WS ack. Text >2000 char → chia nhỏ. Smoke test với Trần Ngọc Đức theo §5.4. |
 | T18.5 | Cookie login bằng 2 field zpsid + zpw_sek (bỏ script) | 🟡 Pending | Modal hiện tại dùng script DevTools bị `NotAllowedError: Document is not focused`. Thay bằng 2 ô input thủ công copy từ DevTools → Application → Cookies → chat.zalo.me. `zpw_sek` dùng `type="password"` để che value. Server validate 2 field bắt buộc. |
 | T18.6 | Polish + resize + cleanup | 🟡 Pending | Detect không có TTY → in hướng dẫn `zcloudd serv` thay vì crash. Resize 20 dòng không vỡ. Thoát alternate buffer sạch. |
+
+## 5.13. T13 — Multi-account filter (chọn account hiển thị trong UI)
+
+Chi tiết: [tasks/19-multi-account-filter.md](tasks/19-multi-account-filter.md).
+
+Sếp yêu cầu 11/09/2026: trong panel "Quản lý tài khoản" thêm checkbox cho
+mỗi account để chọn subset hiển thị. Account không check vẫn listen WS
++ lưu data bình thường nhưng UI ẩn convs/contacts. Khi multi-account
+enabled, conv list gộp + gắn badge tên account.
+
+| # | Tính năng | Mức độ | Ghi chú |
+|:-:|-----------|:------:|---------|
+| T19.1 | Backend: cột `enabled` + `SetAccountEnabled` + endpoint `POST /api/account/enabled` | 🟡 Pending | Schema migration thêm cột `enabled BOOLEAN NOT NULL DEFAULT TRUE` vào `accounts`. Store API + HTTP handler mới. WS listener KHÔNG thay đổi. |
+| T19.2 | Frontend: checkbox trong management panel + merge convs/friends | 🟡 Pending | Checkbox per-account trong `#pn-mg`. Conv list + friends list gộp từ enabled accounts, mỗi item kèm tên account. |
+| T19.3 | Header dropdown "Đang chat" + auto-switch khi tắt account đang chat | 🟡 Pending | Dropdown chọn account composer gửi từ. Nếu tắt `ca` → auto-switch sang enabled account đầu tiên. |
 
 ## 6. References
 
