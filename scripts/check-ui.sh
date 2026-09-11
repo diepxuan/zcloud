@@ -4,7 +4,7 @@
 # ============================================
 # Start Lightpanda serve, kết nối CDP, mở /chat, check:
 #  - DOM render đầy đủ (mg-item, add-modal, cv count...)
-#  - Global vars tồn tại (CK_SCRIPT, ca, accounts)
+#  - Global vars tồn tại (ca, accounts)
 #  - Đoạn test JS quan trọng chạy được (no exceptionDetails)
 #
 # Phát hiện: runtime error trong test snippets, DOM render sai.
@@ -127,7 +127,7 @@ async function check(name, expr, expected) {
 }
 
 await check('document.title', 'document.title', 'ZCloud Chat');
-await check('typeof CK_SCRIPT', 'typeof CK_SCRIPT', 'string');
+// CK_SCRIPT đã bị bỏ ở T18.5 (cookie UI dùng 2 ô input, không còn script trong DevTools).
 await check('typeof ca', 'typeof ca', 'string');
 await check('typeof accounts', 'typeof accounts', 'object');
 await check('add-modal exists', '!!document.getElementById("add-modal")', true);

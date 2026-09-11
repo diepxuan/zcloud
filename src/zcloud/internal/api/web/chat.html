@@ -674,7 +674,7 @@ function renderAccounts(){
 			+'data-id="'+uId+'" '
 			+'title="'+(a.enabled?'Ẩn khỏi danh sách chat/danh bạ':'Hiện trong danh sách chat/danh bạ')+'" '
 			+'onclick="event.stopPropagation()" '
-			+'onchange="toggleAccountEnabled(\\'+uId+'\\', this.checked)">'
+			+'onchange="toggleAccountEnabled(\'+uId+\', this.checked)">'
 			+'</div>'
 			+'<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'" alt=""></div>'
 			+'<div class="mg-body">'
@@ -690,7 +690,7 @@ function renderAccounts(){
 			// row 3: badge trang thai + nut Restart + nut Xoa
 			+'<div class="mg-row3">'
 			+showBadge
-			+'<button class="mg-btn" onclick="restartListener(\\'+uId+'\\')">Restart</button>'
+			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button>'
 			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
 			+'</div>'
 			+'</div>';
