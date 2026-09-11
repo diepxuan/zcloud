@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"database/sql"
 	"fmt"
 	"os"
@@ -44,12 +45,21 @@ func (s *Store) GetAccount(id string) (*Account, error) {
 	return a, err
 }
 
-func (s *Store) ListAccounts(accountType int) ([]Account, error) {
-	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, created_at, updated_at FROM accounts"
+// ListAccounts trả về tất cả accounts (accountType=0) hoặc theo type.
+// enabledOnly: nếu true chỉ trả account có enabled=true.
+func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, error) {
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, created_at, updated_at FROM accounts"
 	args := []interface{}{}
+	conds := []string{}
 	if accountType > 0 {
-		q += " WHERE account_type = $1"
 		args = append(args, accountType)
+		conds = append(conds, fmt.Sprintf("account_type = $%d", len(args)))
+	}
+	if enabledOnly {
+		conds = append(conds, "enabled = TRUE")
+	}
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
 	}
 	q += " ORDER BY created_at DESC"
 	rows, err := s.db.Query(q, args...)
@@ -61,12 +71,19 @@ func (s *Store) ListAccounts(accountType int) ([]Account, error) {
 	var accounts []Account
 	for rows.Next() {
 		var a Account
-		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, a)
 	}
 	return accounts, nil
+}
+
+// SetAccountEnabled bật/tắt flag enabled của account.
+// WS listener KHÔNG bị ảnh hưởng — account disabled vẫn listen + sync.
+func (s *Store) SetAccountEnabled(accountID string, enabled bool) error {
+	_, err := s.db.Exec("UPDATE accounts SET enabled = $1, updated_at = NOW() WHERE id = $2", enabled, accountID)
+	return err
 }
 
 // ====================================

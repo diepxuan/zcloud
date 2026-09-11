@@ -164,7 +164,7 @@ func Run() error {
 // account về đúng thread người gửi. Chỉ chạy cho account có user_id (uid thuần
 // lấy từ session), và im lặng khi không còn gì để dọn.
 func repairSelfThreads(db *store.Store, logger *log.Logger) {
-	accounts, err := db.ListAccounts(0)
+	accounts, err := db.ListAccounts(0, false)
 	if err != nil {
 		logger.Printf("repair-thread: list accounts err=%v", err)
 		return

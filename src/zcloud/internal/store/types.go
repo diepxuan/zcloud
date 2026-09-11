@@ -17,6 +17,7 @@ type Account struct {
 	AccountType int       `json:"accountType"` // 1: Zalo User, 2: Zalo OA
 	Status      int       `json:"status"`
 	Note        string    `json:"note"`
+	Enabled     bool      `json:"enabled"` // false = ẩn khỏi UI nhưng vẫn listen WS
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }

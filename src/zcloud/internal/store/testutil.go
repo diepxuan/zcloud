@@ -14,6 +14,7 @@ package store
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,20 @@ func testSchemaName(t *testing.T) string {
 	name := strings.ReplaceAll(t.Name(), "/", "_")
 	name = strings.ReplaceAll(name, " ", "_")
 	return fmt.Sprintf("zcloud_t_%s", name)
+}
+
+// dsnWithSchema thêm ?search_path=<schema> vào DSN để mọi
+// connection trong pool tự dùng schema đó. Tránh bug SET search_path chỉ
+// áp dụng cho 1 connection trong pool (pgx5 hỗ trợ qua RuntimeParams).
+func dsnWithSchema(dsn, schema string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return dsn
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // newTestStore mở Postgres, tạo schema riêng cho test, chạy migration,
@@ -60,19 +75,11 @@ func newTestStore(t *testing.T) *Store {
 		_ = admin.Close()
 	})
 
-	st, err := NewPostgres(dsn, mediaPath, 4, 2)
+	st, err := NewPostgres(dsnWithSchema(dsn, schema), mediaPath, 4, 2)
 	if err != nil {
 		t.Fatalf("NewPostgres: %v", err)
 	}
-	// Ép search_path cho mọi connection trong pool. NewPostgres tự migrate
-	// trên schema "public"; ta đổi sang schema riêng rồi chạy lại migration
-	// bằng cách chạy SQL trên schema đó.
-	if _, err := st.db.Exec("SET search_path TO " + schema); err != nil {
-		t.Fatalf("set search_path: %v", err)
-	}
-	if err := st.migratePostgres(); err != nil {
-		t.Fatalf("migrate on %s: %v", schema, err)
-	}
+	// NewPostgres đã migrate với search_path đúng (từ DSN). Tạo test account.
 	t.Cleanup(func() { _ = st.Close() })
 
 	if err := st.CreateAccount("acc-1", "Test Account", 1); err != nil {
@@ -102,14 +109,8 @@ func newTestStoreFull(t *testing.T) (*Store, error) {
 		_ = admin.Close()
 	})
 
-	st, err := NewPostgres(dsn, mediaPath, 4, 2)
+	st, err := NewPostgres(dsnWithSchema(dsn, schema), mediaPath, 4, 2)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := st.db.Exec("SET search_path TO " + schema); err != nil {
-		return nil, err
-	}
-	if err := st.migratePostgres(); err != nil {
 		return nil, err
 	}
 	t.Cleanup(func() { _ = st.Close() })

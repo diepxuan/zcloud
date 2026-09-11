@@ -4,6 +4,8 @@ package api
 
 import (
 	"database/sql"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,4 +50,10 @@ func newTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
+}
+
+// newDiscardLogger trả *log.Logger ghi vào io.Discard — dùng cho test
+// không muốn log nhiễu console.
+func newDiscardLogger() *log.Logger {
+	return log.New(io.Discard, "", 0)
 }

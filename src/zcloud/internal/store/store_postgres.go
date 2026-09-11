@@ -34,7 +34,10 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureSessionServiceMapPG(); err != nil {
 		return err
 	}
-	return s.ensureAccountUserIDPG()
+	if err := s.ensureAccountUserIDPG(); err != nil {
+		return err
+	}
+	return s.ensureAccountEnabledPG()
 }
 
 // ensureSessionServiceMapPG thêm cột service_map nếu thiếu.
@@ -90,6 +93,27 @@ func (s *Store) ensureAccountUserIDPG() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT ''`); err != nil {
 		return fmt.Errorf("add accounts.user_id: %w", err)
+	}
+	return nil
+}
+
+// ensureAccountEnabledPG thêm cột enabled vào accounts nếu thiếu.
+// Default TRUE cho backward compat — account cũ vẫn enabled mặc định.
+func (s *Store) ensureAccountEnabledPG() error {
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'accounts' AND column_name = 'enabled'
+		)`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.enabled: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
+		return fmt.Errorf("add accounts.enabled: %w", err)
 	}
 	return nil
 }

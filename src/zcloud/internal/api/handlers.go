@@ -75,7 +75,11 @@ func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
-	accounts, _ := s.Store.ListAccounts(1)
+	// ?enabledOnly=true: chỉ trả account có enabled=true (UI header dùng để
+	// merge convs/friends từ subset). Mặc định false — management panel
+	// vẫn thấy tất cả kèm flag enabled.
+	enabledOnly := r.URL.Query().Get("enabledOnly") == "true"
+	accounts, _ := s.Store.ListAccounts(1, enabledOnly)
 	if accounts == nil {
 		accounts = []store.Account{}
 	}
@@ -101,6 +105,29 @@ func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	ok(w, out)
+}
+
+// HandleAccountSetEnabled bật/tắt flag enabled của account.
+// WS listener KHÔNG bị ảnh hưởng — account disabled vẫn listen + sync.
+// Body: {accountId: string, enabled: bool}
+func (s *Server) HandleAccountSetEnabled(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"accountId"`
+		Enabled   bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.AccountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
+	if err := s.Store.SetAccountEnabled(req.AccountID, req.Enabled); err != nil {
+		fail(w, 500, "update enabled: "+err.Error())
+		return
+	}
+	ok(w, map[string]interface{}{"accountId": req.AccountID, "enabled": req.Enabled})
 }
 
 // HandleAccountRestart stop + start zalo listener cho account (fix WS loi,
@@ -663,17 +690,24 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 // ========== COOKIE LOGIN ==========
 
 func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
+	// Body: {zpsid: string, zpw_sek: string} — copy thủ công từ DevTools →
+	// Application → Cookies → chat.zalo.me. Hai field là tối thiểu để
+	// core.CookieLogin / getLoginInfo thành công.
 	var req struct {
-		Cookie string `json:"cookie"`
+		ZPSID  string `json:"zpsid"`
+		ZPWSEK string `json:"zpw_sek"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, 400, "invalid body")
 		return
 	}
-	cookies := parseCookie(req.Cookie)
-	if len(cookies) == 0 {
-		fail(w, 400, "no cookies")
+	if req.ZPSID == "" || req.ZPWSEK == "" {
+		fail(w, 400, "thiếu zpsid hoặc zpw_sek")
 		return
+	}
+	cookies := map[string]string{
+		"zpsid":   req.ZPSID,
+		"zpw_sek": req.ZPWSEK,
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -760,7 +794,7 @@ func (s *Server) HandleFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) HandleChatPage(w http.ResponseWriter, r *http.Request) {
-	accounts, _ := s.Store.ListAccounts(1)
+	accounts, _ := s.Store.ListAccounts(1, false)
 	if len(accounts) == 0 {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -858,7 +892,7 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 
 // RefreshAllSessions refresh tat ca session sap het han (goi tu background goroutine)
 func (s *Server) RefreshAllSessions() {
-	accounts, err := s.Store.ListAccounts(1)
+	accounts, err := s.Store.ListAccounts(1, false)
 	if err != nil {
 		return
 	}
