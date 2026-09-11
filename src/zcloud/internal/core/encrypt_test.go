@@ -1,6 +1,11 @@
 package core
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"testing"
@@ -204,4 +209,99 @@ func TestWSMessageParseAndMedia(t *testing.T) {
 	if len(msg.Attachments) == 0 || msg.Attachments[0].URL != "https://example.com/a.jpg" {
 		t.Fatalf("bad atts: %+v", msg.Attachments)
 	}
+}
+
+// TestDecodeWSEventAESGCM: round-trip AES-GCM + gzip (encrypt=2).
+// Tạo envelope {data: base64(encrypted)}, verify DecodeWSEvent decrypt ra plain.
+func TestDecodeWSEventAESGCM(t *testing.T) {
+	keyBytes := []byte("0123456789abcdef")
+	key := []byte(base64.StdEncoding.EncodeToString(keyBytes))
+	plain := []byte(`{"msgs":[],"groupMsgs":[]}`)
+
+	gz, err := gzipBytes(plain)
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	iv := bytes.Repeat([]byte{0xAB}, 16)
+	aad := bytes.Repeat([]byte{0xCD}, 16)
+	block, _ := aes.NewCipher(keyBytes)
+	gcm, _ := cipher.NewGCMWithNonceSize(block, 16)
+	ct := gcm.Seal(nil, iv, gz, aad)
+	raw := append(append(iv, aad...), ct...)
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	envelope := []byte(`{"data":"` + b64 + `","encrypt":2}`)
+
+	out, err := DecodeWSEvent(envelope, key)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(out) != string(plain) {
+		t.Errorf("got %s, want %s", string(out), string(plain))
+	}
+}
+
+func TestDecodeWSEventAESGCMRaw(t *testing.T) {
+	keyBytes := []byte("fedcba9876543210")
+	key := []byte(base64.StdEncoding.EncodeToString(keyBytes))
+	plain := []byte(`hello world`)
+
+	iv := bytes.Repeat([]byte{0x01}, 16)
+	aad := bytes.Repeat([]byte{0x02}, 16)
+	block, _ := aes.NewCipher(keyBytes)
+	gcm, _ := cipher.NewGCMWithNonceSize(block, 16)
+	ct := gcm.Seal(nil, iv, plain, aad)
+	raw := append(append(iv, aad...), ct...)
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	envelope := []byte(`{"data":"` + b64 + `","encrypt":3}`)
+
+	out, err := DecodeWSEvent(envelope, key)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(out) != "hello world" {
+		t.Errorf("got %s, want hello world", string(out))
+	}
+}
+
+func TestDecodeWSEventAESGCMBase64Key(t *testing.T) {
+	keyBytes := []byte("0123456789abcdef")
+	keyB64 := base64.StdEncoding.EncodeToString(keyBytes)
+	plain := []byte("test")
+
+	iv := bytes.Repeat([]byte{0x02}, 16)
+	aad := bytes.Repeat([]byte{0x03}, 16)
+	block, _ := aes.NewCipher(keyBytes)
+	gcm, _ := cipher.NewGCMWithNonceSize(block, 16)
+	ct := gcm.Seal(nil, iv, plain, aad)
+	raw := append(append(iv, aad...), ct...)
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	envelope := []byte(`{"data":"` + b64 + `","encrypt":3}`)
+
+	out, err := DecodeWSEvent(envelope, []byte(keyB64))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(out) != "test" {
+		t.Errorf("got %s, want test", string(out))
+	}
+}
+
+func TestDecodeWSEventAESGCMMissingKey(t *testing.T) {
+	envelope := []byte(`{"data":"xxxxx","encrypt":2}`)
+	_, err := DecodeWSEvent(envelope, nil)
+	if err == nil {
+		t.Error("expected error when cipherKey missing for AES-GCM")
+	}
+}
+
+func gzipBytes(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(data); err != nil {
+		return nil, err
+	}
+	if err := gw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
