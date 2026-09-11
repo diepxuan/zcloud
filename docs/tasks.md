@@ -68,6 +68,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
 | 18 | Terminal UI (TUI) | 🟡 Mockup | [18-tui.md](tasks/18-tui.md) |
 | 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
+| 20 | Login Zalo PC (trusted-device) | 🟡 Pending | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
 
 ---
 
@@ -301,6 +302,24 @@ enabled, conv list gộp + gắn badge tên account.
 | T19.1 | Backend: cột `enabled` + `SetAccountEnabled` + endpoint `POST /api/account/enabled` | 🟡 Pending | Schema migration thêm cột `enabled BOOLEAN NOT NULL DEFAULT TRUE` vào `accounts`. Store API + HTTP handler mới. WS listener KHÔNG thay đổi. |
 | T19.2 | Frontend: checkbox trong management panel + merge convs/friends | 🟡 Pending | Checkbox per-account trong `#pn-mg`. Conv list + friends list gộp từ enabled accounts, mỗi item kèm tên account. |
 | T19.3 | Header dropdown "Đang chat" + auto-switch khi tắt account đang chat | 🟡 Pending | Dropdown chọn account composer gửi từ. Nếu tắt `ca` → auto-switch sang enabled account đầu tiên. |
+
+## 5.14. T14 — Login Zalo PC (trusted-device protocol)
+
+Chi tiết: [tasks/20-zalo-pc-login.md](tasks/20-zalo-pc-login.md).
+
+**Vấn đề Sếp gặp 11/09/2026**: zcloud chỉ hỗ trợ Zalo Web login. Khi user
+login Zalo web account A ở browser khác (đăng xuất session cũ) → Zalo
+invalidate session cũ → zcloud WS bị kickout → ngừng nhận tin.
+
+**Giải pháp**: Zalo PC client dùng trusted-device protocol riêng (WASM
+key exchange) — không bị kickout khi có session khác.
+
+**Phạm vi**:
+- Phase 1: endpoint `POST /api/login/pc` + WS reconnect loop (~0.5 ngày).
+- Phase 2: AES-GCM payload layer (~1 ngày).
+- Phase 3: WASM reverse cho trusted-device key exchange (~3-5 ngày).
+
+**Tổng estimate**: ~1 tuần. Đợi Sếp duyệt plan trước khi code.
 
 ## 6. References
 
