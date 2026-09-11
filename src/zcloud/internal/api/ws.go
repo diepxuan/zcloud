@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -525,49 +526,60 @@ func fileExists(st *store.Store, accountID, convID, fileID, ext string) bool {
 }
 
 // extractAllMedia duyệt toàn bộ attachments, trả về thông tin download cho
-// từng cái có URL. Bỏ qua các variant URL phụ (chỉ lấy URL chính, không
-// lấy thumb/oriUrl duplicate).
+// từng attachment có URL. Zalo thường gửi cùng 1 file với nhiều variant
+// (-0 = original, -1 = thumb, -2 = preview, …) — dedupe theo base ID và
+// giữ variant có URL dài nhất (thường là original HD, không phải thumb).
 func extractAllMedia(atts []core.Attachment) []mediaDownloadInfo {
+	// bestByID[baseID] = index in out; ta sẽ ghi đè nếu variant sau có URL dài hơn.
+	bestByID := make(map[string]int)
 	var out []mediaDownloadInfo
-	seen := make(map[string]bool)
-	// Dedupe theo MsgID (attachment.ID). Zalo gửi cùng 1 file với nhiều variant
-	// URL (normalUrl/hdUrl/oriUrl/thumbUrl/thumb) — chỉ giữ URL đầu để 1 job /
-	// attachment, tránh mỗi variant tạo job riêng có thể đè ConvID/FileName.
-	seenID := make(map[string]bool)
 	for _, a := range atts {
 		if a.URL == "" {
 			continue
 		}
-		if a.ID != "" {
-			if seenID[a.ID] {
-				continue
+		base := baseAttachmentID(a.ID)
+		if idx, ok := bestByID[base]; ok {
+			// Giữ variant URL dài hơn (thường là original, không phải thumb).
+			if len(a.URL) > len(out[idx].URL) {
+				out[idx].URL = a.URL
+				out[idx].FileName = a.FileName
+				out[idx].MsgID = a.ID
 			}
-			seenID[a.ID] = true
-		}
-		// Dedupe theo URL — attachment đôi khi có nhiều variant (normal/hd/ori)
-		// nhưng cùng file gốc. Giữ URL đầu tiên.
-		if seen[a.URL] {
 			continue
 		}
-		seen[a.URL] = true
-		ext := ""
-		if i := strings.LastIndex(a.FileName, "."); i >= 0 {
-			ext = a.FileName[i+1:]
-		}
-		if ext == "" {
-			u, err := url.Parse(a.URL)
-			if err == nil {
-				ext = strings.TrimPrefix(path.Ext(u.Path), ".")
-			}
-		}
-		if ext == "" {
-			ext = "bin"
-		}
+		bestByID[base] = len(out)
 		out = append(out, mediaDownloadInfo{
-			URL: a.URL, FileName: a.FileName, FileExt: ext, MsgID: a.ID,
+			URL:      a.URL,
+			FileName: a.FileName,
+			FileExt:  extFromFileOrURL(a.FileName, a.URL),
+			MsgID:    a.ID,
 		})
 	}
 	return out
+}
+
+// baseAttachmentID strip variant suffix "-N" nếu phần sau là số.
+// VD: "8235996590219-0" -> "8235996590219", "abc-def-2" -> "abc-def",
+// "raw-id" -> "raw-id". Dùng để dedupe các variant của cùng 1 attachment.
+func baseAttachmentID(id string) string {
+	if i := strings.LastIndex(id, "-"); i > 0 {
+		if _, err := strconv.Atoi(id[i+1:]); err == nil {
+			return id[:i]
+		}
+	}
+	return id
+}
+
+// extFromFileOrURL suy ra extension từ filename (ưu tiên) hoặc URL path.
+func extFromFileOrURL(fileName, rawURL string) string {
+	if i := strings.LastIndex(fileName, "."); i >= 0 {
+		return fileName[i+1:]
+	}
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		return strings.TrimPrefix(path.Ext(u.Path), ".")
+	}
+	return "bin"
 }
 
 const mediaDownloadRetries = 3

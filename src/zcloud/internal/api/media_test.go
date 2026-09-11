@@ -29,14 +29,86 @@ func TestExtractAllMedia(t *testing.T) {
 	}
 }
 
-func TestExtractAllMediaDedupURL(t *testing.T) {
+// TestExtractAllMediaDedupVariantSameBase: 2 ID cùng base ("a-0", "a-1")
+// với URL khác nhau (variant -1 thumb ngắn hơn) → 1 entry, giữ variant URL dài hơn.
+func TestExtractAllMediaDedupVariantSameBase(t *testing.T) {
+	thumb := "https://photo-stal-12.zdn.vn/t.jpg"
+	original := "https://photo-stal-12.zdn.vn/original-hd-2048x1536.jpg"
 	atts := []core.Attachment{
-		{ID: "a", URL: "https://x/y.jpg", FileName: "y.jpg"},
-		{ID: "b", URL: "https://x/y.jpg", FileName: "y.jpg"}, // dup URL
+		{ID: "a-1", URL: thumb, FileName: "y.jpg"},
+		{ID: "a-0", URL: original, FileName: "y.jpg"},
 	}
 	got := extractAllMedia(atts)
 	if len(got) != 1 {
-		t.Fatalf("expected 1, got %d", len(got))
+		t.Fatalf("expected 1 (same base ID 'a'), got %d", len(got))
+	}
+	if got[0].URL != original {
+		t.Errorf("expected longest URL, got %q", got[0].URL)
+	}
+}
+
+// TestExtractAllMediaPreferLongestVariant: cùng base ID với variant -0/-1/-2,
+// phải giữ variant URL dài nhất (thường là original HD, không phải thumb).
+func TestExtractAllMediaPreferLongestVariant(t *testing.T) {
+	// Original HD URL dài nhất, -1/-2 là thumb/preview ngắn hơn.
+	thumbURL := "https://photo-stal-12.zdn.vn/t.jpg"
+	previewURL := "https://photo-stal-12.zdn.vn/p.jpg"
+	originalURL := "https://photo-stal-12.zdn.vn/original-hd-quality-2048x1536.jpg"
+	atts := []core.Attachment{
+		{ID: "8235996590219-0", URL: originalURL, FileName: "photo.jpg"},
+		{ID: "8235996590219-1", URL: thumbURL, FileName: "photo.jpg"},
+		{ID: "8235996590219-2", URL: previewURL, FileName: "photo.jpg"},
+	}
+	got := extractAllMedia(atts)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 deduped item, got %d: %+v", len(got), got)
+	}
+	if got[0].URL != originalURL {
+		t.Errorf("expected longest URL (original), got %q", got[0].URL)
+	}
+	if got[0].MsgID != "8235996590219-0" {
+		t.Errorf("expected MsgID -0 (original variant), got %q", got[0].MsgID)
+	}
+}
+
+// TestExtractAllMediaDistinctBases: 2 base ID khác nhau → 2 entries.
+// Thứ tự trong slice được giữ nguyên; variant dài hơn ghi đè variant ngắn.
+func TestExtractAllMediaDistinctBases(t *testing.T) {
+	thumb := "https://photo-stal-12.zdn.vn/t.jpg"
+	original := "https://photo-stal-12.zdn.vn/original-hd.jpg"
+	atts := []core.Attachment{
+		{ID: "msg1-1", URL: thumb, FileName: "a.jpg"},
+		{ID: "msg2-0", URL: "https://x/b.jpg", FileName: "b.jpg"},
+		{ID: "msg1-0", URL: original, FileName: "a.jpg"},
+	}
+	got := extractAllMedia(atts)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 deduped items, got %d", len(got))
+	}
+	// msg1 phải giữ variant URL dài hơn (original).
+	if got[0].URL != original {
+		t.Errorf("expected longest msg1 URL, got %q", got[0].URL)
+	}
+	if got[1].URL != "https://x/b.jpg" {
+		t.Errorf("expected b URL, got %q", got[1].URL)
+	}
+}
+
+// TestBaseAttachmentID: strip variant -N chỉ khi phần sau là số.
+func TestBaseAttachmentID(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"8235996590219-0", "8235996590219"},
+		{"8235996590219-12", "8235996590219"},
+		{"abc-def-2", "abc-def"},
+		{"raw-id", "raw-id"},          // "id" không phải số
+		{"a1-hdUrl", "a1-hdUrl"},     // "hdUrl" không phải số
+		{"", ""},
+		{"-5", "-5"},                 // prefix "-" nhưng phần trước rỗng → giữ nguyên
+	}
+	for _, c := range cases {
+		if got := baseAttachmentID(c.in); got != c.want {
+			t.Errorf("baseAttachmentID(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
