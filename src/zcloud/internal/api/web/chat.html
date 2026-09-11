@@ -169,6 +169,9 @@ body{
   font-size:var(--fz-md);font-family:inherit;outline:none;
 }
 .mg-toolbar input:focus{border-color:var(--c-brand)}
+
+/* === Panel Quản lý — position relative để FAB absolute bên trong === */
+.mg{position:relative;padding:var(--s-4);padding-bottom:80px}
 .mg-toolbar button{
   height:36px;padding:0 var(--s-4);background:var(--c-brand);
   color:var(--c-text-onbrand);border:none;border-radius:var(--r-md);
@@ -269,13 +272,24 @@ body{
   flex-shrink:0;
 }
 
-/* === mg-toggle-all: nút bật/tắt tất cả === */
-#mg-toggle-all{
-  background:var(--c-surface-2)!important;color:var(--c-text)!important;
-  border:1px solid var(--c-border-2)!important;flex-shrink:0;
-  padding:0 var(--s-3)!important;min-width:auto!important;
+/* === FAB: 2 nút '+ Thêm' + '⚡ Tất cả' kéo ra góc dưới panel Quản lý === */
+.mg-fabs{
+  position:absolute;bottom:var(--s-4);right:var(--s-4);
+  display:flex;gap:var(--s-2);z-index:10;
 }
-#mg-toggle-all:hover{background:var(--c-surface)!important;color:var(--c-brand)!important;border-color:var(--c-brand)!important}
+.mg-fabs button{
+  height:44px;min-width:44px;padding:0 var(--s-4);
+  border:none;border-radius:var(--r-pill);
+  cursor:pointer;font-weight:var(--fw-b);font-family:inherit;
+  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-1);
+  transition:transform var(--dur-1) var(--ease),box-shadow var(--dur-1) var(--ease);
+  box-shadow:var(--sh-2);
+}
+.mg-fabs button:hover{transform:translateY(-1px);box-shadow:var(--sh-3)}
+.mg-fabs #mg-add{background:var(--c-brand);color:var(--c-text-onbrand);font-size:var(--fz-xl)}
+.mg-fabs #mg-add:hover{background:var(--c-brand-hover)}
+.mg-fabs #mg-toggle-all{background:var(--c-surface);color:var(--c-text);border:1px solid var(--c-border-2);font-size:var(--fz-md)}
+.mg-fabs #mg-toggle-all:hover{color:var(--c-brand);border-color:var(--c-brand)}
 
 /* === Chat area === */
 .ca{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg)}
@@ -576,8 +590,12 @@ body{
       <div class="mg-h">Quản lý tài khoản</div>
       <div class="mg-toolbar">
         <input id="mg-search" type="text" placeholder="Tìm theo tên hoặc ID…" oninput="renderAccounts()">
+      </div>
+      <div class="mg-stats" id="mg-stats"></div>
+      <div id="ul"></div>
+      <div class="mg-fabs">
         <button id="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả">⚡ Tất cả</button>
-        <button id="mg-add" onclick="showAddModal()">+ Thêm</button>
+        <button id="mg-add" onclick="showAddModal()" title="Thêm tài khoản Zalo">+ Thêm</button>
       </div>
       <div class="mg-stats" id="mg-stats"></div>
       <div id="ul"></div>
