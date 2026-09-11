@@ -7,60 +7,19 @@ import (
 	"path/filepath"
 )
 
-// Backend xác định loại DB đang dùng. Một số query khác nhau giữa 2 dialect.
+// Backend xác định loại DB đang dùng. Hiện tại zcloud chỉ hỗ trợ Postgres.
 type Backend string
 
 const (
-	BackendSQLite   Backend = "sqlite"
 	BackendPostgres Backend = "postgres"
 )
 
-// Store quản lý toàn bộ persistent data. Dùng được với cả SQLite và Postgres
-// thông qua database/sql — dialect-specific SQL được tách trong store_sqlite.go
-// và store_postgres.go.
+// Store quản lý toàn bộ persistent data. Hiện chỉ hỗ trợ Postgres thông qua
+// database/sql + pgx driver; schema/migrations trong store_postgres.go.
 type Store struct {
 	db        *sql.DB
 	backend   Backend
-	dbPath    string // chỉ dùng cho SQLite (để hiển thị/log)
 	mediaPath string
-}
-
-// NewSQLite mở hoặc tạo SQLite database. dbPath trống → mặc định
-// ./storages/database/zcloud.db.
-func NewSQLite(dbPath, mediaPath string) (*Store, error) {
-	if dbPath == "" {
-		dbPath = filepath.Join(".", "storages", "database", "zcloud.db")
-	}
-	if mediaPath == "" {
-		mediaPath = filepath.Join(".", "storages", "media")
-	}
-	for _, dir := range []string{filepath.Dir(dbPath), mediaPath} {
-		if dir != "." {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return nil, fmt.Errorf("store: mkdir %s: %w", dir, err)
-			}
-		}
-	}
-	// Pure-Go SQLite driver, không CGO.
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("store: open sqlite: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, fmt.Errorf("store: wal: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		return nil, fmt.Errorf("store: busy_timeout: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		return nil, fmt.Errorf("store: fk: %w", err)
-	}
-	s := &Store{db: db, backend: BackendSQLite, dbPath: dbPath, mediaPath: mediaPath}
-	if err := s.migrateSQLite(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("store: migrate: %w", err)
-	}
-	return s, nil
 }
 
 // NewPostgres mở kết nối Postgres qua pgx. DSN theo định dạng
@@ -96,19 +55,14 @@ func NewPostgres(dsn, mediaPath string, maxOpen, maxIdle int) (*Store, error) {
 	return s, nil
 }
 
-// Backend trả về backend đang dùng (sqlite/postgres).
+// Backend trả về backend đang dùng (hiện chỉ có postgres).
 func (s *Store) Backend() Backend { return s.backend }
 
 // DB trả về *sql.DB (cho caller nào cần truy cập trực tiếp).
 func (s *Store) DB() *sql.DB { return s.db }
 
-// Path trả về đường dẫn DB (SQLite) hoặc DSN (Postgres).
-func (s *Store) Path() string {
-	if s.backend == BackendPostgres {
-		return "postgres"
-	}
-	return s.dbPath
-}
+// Path trả về "postgres" — giữ API cũ cho log/UI ("Database sẵn sàng — %s").
+func (s *Store) Path() string { return "postgres" }
 
 // MediaPath trả về thư mục media trên disk.
 func (s *Store) MediaPath() string { return s.mediaPath }
@@ -117,7 +71,7 @@ func (s *Store) MediaPath() string { return s.mediaPath }
 func (s *Store) Close() error { return s.db.Close() }
 
 // ====================================
-// MediaFile path helpers (chỉ dùng cho SQLite; Postgres thì media vẫn trên disk)
+// MediaFile path helpers — media luôn trên disk, DB chỉ lưu metadata.
 // ====================================
 
 // MediaFilePath trả về đường dẫn đầy đủ cho file media.
