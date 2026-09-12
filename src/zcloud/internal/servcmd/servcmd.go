@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/diepxuan/zcloud/internal/server"
@@ -224,7 +225,7 @@ func stop() error {
 
 func restart() error {
 	// Rebuild trước khi restart để code mới được load.
-	if err := rebuildBinary(); err != nil {
+	if err := buildBinary(BinaryPath(), filepath.Join(ProjectRoot(), "src", "zcloud")); err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
 	if _, err := os.Stat(ServiceFile); os.IsNotExist(err) {
