@@ -172,6 +172,7 @@ body{
 
 /* === Panel Quản lý — position relative để FAB absolute bên trong === */
 .mg{position:relative;padding:var(--s-4);padding-bottom:80px}
+/* padding-bottom đủ chỗ cho FAB 56px + khoảng cách 16px không che item cuối */
 .mg-toolbar button{
   height:36px;padding:0 var(--s-4);background:var(--c-brand);
   color:var(--c-text-onbrand);border:none;border-radius:var(--r-md);
@@ -275,21 +276,41 @@ body{
 /* === FAB: 2 nút '+ Thêm' + '⚡ Tất cả' kéo ra góc dưới panel Quản lý === */
 .mg-fabs{
   position:absolute;bottom:var(--s-4);right:var(--s-4);
-  display:flex;gap:var(--s-2);z-index:10;
+  display:flex;flex-direction:column;align-items:flex-end;gap:var(--s-2);
+  z-index:10;
 }
 .mg-fabs button{
-  height:44px;min-width:44px;padding:0 var(--s-4);
-  border:none;border-radius:var(--r-pill);
-  cursor:pointer;font-weight:var(--fw-b);font-family:inherit;
-  display:inline-flex;align-items:center;justify-content:center;gap:var(--s-1);
-  transition:transform var(--dur-1) var(--ease),box-shadow var(--dur-1) var(--ease);
-  box-shadow:var(--sh-2);
+  border:none;cursor:pointer;font-family:inherit;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:transform var(--dur-1) var(--ease),
+             box-shadow var(--dur-1) var(--ease),
+             background var(--dur-1) var(--ease);
+  box-shadow:var(--sh-3);
 }
-.mg-fabs button:hover{transform:translateY(-1px);box-shadow:var(--sh-3)}
-.mg-fabs #mg-add{background:var(--c-brand);color:var(--c-text-onbrand);font-size:var(--fz-xl)}
+.mg-fabs button:hover{transform:translateY(-2px);box-shadow:var(--sh-4)}
+.mg-fabs button:active{transform:translateY(0)}
+/* FAB chính: '+ Thêm' — tròn 56px, brand color */
+.mg-fabs #mg-add{
+  width:56px;height:56px;border-radius:50%;
+  background:var(--c-brand);color:var(--c-text-onbrand);
+  font-size:28px;font-weight:var(--fw-m);line-height:1;
+}
 .mg-fabs #mg-add:hover{background:var(--c-brand-hover)}
-.mg-fabs #mg-toggle-all{background:var(--c-surface);color:var(--c-text);border:1px solid var(--c-border-2);font-size:var(--fz-md)}
+/* Toggle-all: icon-only tròn 40px, surface nổi trên FAB */
+.mg-fabs #mg-toggle-all{
+  width:40px;height:40px;border-radius:50%;
+  background:var(--c-surface);color:var(--c-text-2);
+  font-size:18px;line-height:1;
+  border:1px solid var(--c-border);
+}
 .mg-fabs #mg-toggle-all:hover{color:var(--c-brand);border-color:var(--c-brand)}
+/* Mobile: thu nhỏ FAB để không chiếm quá nhiều diện tích thumb zone */
+@media (max-width: 640px){
+  .mg-fabs{bottom:var(--s-3);right:var(--s-3);gap:var(--s-2)}
+  .mg-fabs #mg-add{width:52px;height:52px;font-size:24px}
+  .mg-fabs #mg-toggle-all{width:36px;height:36px;font-size:16px}
+  .mg{padding-bottom:84px}
+}
 
 /* === Chat area === */
 .ca{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg)}
@@ -594,11 +615,9 @@ body{
       <div class="mg-stats" id="mg-stats"></div>
       <div id="ul"></div>
       <div class="mg-fabs">
-        <button id="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả">⚡ Tất cả</button>
-        <button id="mg-add" onclick="showAddModal()" title="Thêm tài khoản Zalo">+ Thêm</button>
+        <button id="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả" aria-label="Bật/tắt tất cả">⚡</button>
+        <button id="mg-add" onclick="showAddModal()" title="Thêm tài khoản Zalo" aria-label="Thêm tài khoản">+</button>
       </div>
-      <div class="mg-stats" id="mg-stats"></div>
-      <div id="ul"></div>
     </div>
   </aside>
 
