@@ -26,7 +26,6 @@ import (
 // cần đổi signature (giữ backward-compat cho callers hiện có).
 var globalServer *Server
 
-
 // ====================================
 // WebSocket Manager — quản lý các kết nối
 // ====================================
@@ -161,8 +160,7 @@ var (
 )
 
 const (
-	maxReconnectAttempts = 8
-	maxReconnectDelay    = 30 * time.Second
+	maxReconnectDelay = 30 * time.Second
 )
 
 // StartZaloListener khởi động Zalo WebSocket listener cho account
@@ -237,7 +235,7 @@ func isAuthExpiredErr(err error) bool {
 // vô hiệu hóa. Thử refresh qua CookieLogin (dùng cookie hiện tại trong DB):
 //   - Refresh OK → SaveSession mới + StartZaloListener tự động restart.
 //   - Refresh fail (cookie cũng invalid) → disable account (SetAccountEnabled=false)
-//     + DeleteSession. UI sẽ thấy account bị ẩn, không reconnect nữa.
+//   - DeleteSession. UI sẽ thấy account bị ẩn, không reconnect nữa.
 func handleExpiredSession(st *store.Store, accountID string, logger *log.Logger) {
 	if globalServer == nil {
 		logger.Printf("zalo-ws: handleExpiredSession: globalServer nil, skip")
@@ -289,9 +287,23 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 		zaloListenerMu.Unlock()
 	}()
 
-	// Auto-reconnect giới hạn: lỗi mạng retry tối đa, kickout/duplicate dừng
-	// ngay để không tạo vòng lặp vô hạn.
-	for attempt := 0; attempt < maxReconnectAttempts; attempt++ {
+	// Panic recovery: nếu goroutine chết vì panic (bug code, OOM edge case...),
+	// vẫn đảm bảo map listener được dọn ở defer trên. Watcher 30s ở server.go
+	// sẽ tự StartZaloListener lại cho account còn enabled + active session.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Printf("zalo-ws: PANIC in listener %s: %v — watcher sẽ restart", accountID, r)
+		}
+	}()
+
+	// Auto-reconnect vô hạn cho lỗi mạng: WS rớt do mạng/mất gói/server Zalo
+	// restart → cứ backoff + retry mãi. attempt reset về 0 mỗi khi connect
+	// thành công để backoff không tích luỹ khi kết nối lại được.
+	// Vẫn return ngay cho: auth_expired (handleExpiredSession), kickout (3000/3003),
+	// context cancel (StopZaloListener). Watcher ở server.go lo restart nếu
+	// listener chết vĩnh viễn.
+	attempt := 0
+	for {
 		select {
 		case <-ctx.Done():
 			return
@@ -335,8 +347,14 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 				return
 			case <-time.After(backoff(attempt)):
 			}
+			if attempt < 30 {
+				attempt++
+			}
 			continue
 		}
+
+		// Kết nối thành công → reset attempt để lần rớt tiếp theo backoff từ đầu.
+		attempt = 0
 
 		// Nhận events từ Zalo WebSocket
 		reason := listenLoop(ctx, st, client, accountID, logger)
@@ -354,8 +372,10 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 			return
 		case <-time.After(backoff(attempt)):
 		}
+		if attempt < 30 {
+			attempt++
+		}
 	}
-	logger.Printf("zalo-ws: %s exceeded reconnect limit, listener stopped", accountID)
 }
 
 func clientFromSession(sessRec *store.Session) (*core.Client, error) {
@@ -503,8 +523,8 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 				"fromName": om.FromName, "content": om.Content,
 				"timestamp": om.Timestamp, "type": om.Type,
 				"attachments": om.Attachments,
-				"isAck":     om.IsDeliveryAck,
-				"ackStatus": om.AckStatus,
+				"isAck":       om.IsDeliveryAck,
+				"ackStatus":   om.AckStatus,
 			},
 		})
 
