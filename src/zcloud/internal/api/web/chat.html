@@ -715,7 +715,7 @@ function renderAccounts(){
 			+'data-id="'+uId+'" '
 			+'title="'+(a.enabled?'Ẩn khỏi danh sách chat/danh bạ':'Hiện trong danh sách chat/danh bạ')+'" '
 			+'onclick="event.stopPropagation()" '
-			+'onchange="toggleAccountEnabled(\'+uId+\', this.checked)">'
+			+'onchange="toggleAccountEnabled(\''+uId+'\', this.checked)">'
 			+'</div>'
 			+'<div class="mg-av"><img src="'+(a.avatar||'')+'" onerror="this.style.display=\'none\'" alt=""></div>'
 			+'<div class="mg-body">'
@@ -1312,4 +1312,4 @@ function ff(q){
 </script>
 </body></html>
 
-
+<!-- toggle-fix: 1789185416 -->
