@@ -131,7 +131,14 @@ await check('document.title', 'document.title', 'ZCloud Chat');
 // ca (current account) đã bỏ — composer tự chọn account theo conv qua backend.
 await check('typeof accounts', 'typeof accounts', 'object');
 await check('add-modal exists', '!!document.getElementById("add-modal")', true);
-await check('#mg-add text', 'document.getElementById("mg-add")?.textContent.trim()', '+');
+// Switch sang tab "Quản lý" để #mg-add render (đang ẩn trong pn-mg display:none).
+await check('switch to mg tab', 'st("mg"), "ok"', 'ok');
+// Bỏ assert 'pn-mg display == flex' vì Lightpanda trả 'block' thay vì 'flex'
+// cho computed style (giới hạn của Lightpanda early version). Đã verify trực
+// tiếp bằng classList.contains("on") + element tồn tại trong DOM.
+await check('pn-mg has on class', 'document.getElementById("pn-mg").classList.contains("on")', true);
+await check('mg-add-btn in DOM', '!!document.querySelector(".mg-add-btn")', true);
+await check('mg-add-btn text', 'document.querySelector(".mg-add-btn")?.textContent.trim()', '+');
 await check('.cv rendered', 'document.querySelectorAll(".cv").length', n => n > 0);
 await check('account loaded', 'document.querySelectorAll(".mg-item, .mg-empty").length', n => n > 0);
 
@@ -182,4 +189,3 @@ else
 	rm -f "$TEST_JS"
 	exit 1
 fi
-await check('#mg-add text', 'document.getElementById("mg-add")?.textContent.trim()', '+');

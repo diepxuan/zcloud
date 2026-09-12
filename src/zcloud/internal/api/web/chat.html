@@ -152,11 +152,24 @@ body{
 
 /* === Mgmt panel === */
 .mg-h{
+  display:flex;align-items:center;gap:var(--s-2);
   background:var(--c-bg);padding:var(--s-3) var(--s-4);
   border-bottom:1px solid var(--c-border);
   font-size:var(--fz-sm);font-weight:var(--fw-b);
   color:var(--c-text-2);text-transform:uppercase;letter-spacing:.5px;
 }
+.mg-h-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-add-btn{
+  flex-shrink:0;width:32px;height:32px;padding:0;
+  background:var(--c-brand);color:var(--c-text-onbrand);
+  border:none;border-radius:var(--r-md);
+  cursor:pointer;font-size:18px;font-weight:var(--fw-m);line-height:1;
+  font-family:inherit;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:background var(--dur-1) var(--ease);
+}
+.mg-add-btn:hover{background:var(--c-brand-hover)}
+.mg-add-btn:active{transform:scale(0.95)}
 .mg-toolbar{
   display:flex;gap:var(--s-2);padding:var(--s-3) var(--s-4);
   border-bottom:1px solid var(--c-border);background:var(--c-surface);
@@ -171,7 +184,9 @@ body{
 .mg-toolbar input:focus{border-color:var(--c-brand)}
 
 /* === Panel Quản lý — position relative để FAB absolute bên trong === */
-.mg{position:relative;padding:var(--s-4);padding-bottom:80px}
+/* padding-bottom không cần dư chỗ cho FAB — toggle-all đã vào header, */
+/* nút '+' đã vào header. */
+.mg{position:relative;padding:var(--s-4)}
 /* padding-bottom đủ chỗ cho FAB 56px + khoảng cách 16px không che item cuối */
 .mg-toolbar button{
   height:36px;padding:0 var(--s-4);background:var(--c-brand);
@@ -181,10 +196,22 @@ body{
 }
 .mg-toolbar button:hover{background:var(--c-brand-hover)}
 .mg-stats{
+  display:flex;align-items:center;gap:var(--s-2);
   padding:var(--s-2) var(--s-4);background:var(--c-bg);
   font-size:var(--fz-xs);color:var(--c-text-3);
   border-bottom:1px solid var(--c-border);
 }
+.mg-stats-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-toggle-all{
+  flex-shrink:0;height:24px;min-width:24px;padding:0 var(--s-2);
+  background:transparent;color:var(--c-text-3);
+  border:1px solid var(--c-border-2);border-radius:var(--r-sm);
+  cursor:pointer;font-size:14px;line-height:1;font-family:inherit;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:all var(--dur-1) var(--ease);
+}
+.mg-toggle-all:hover{color:var(--c-brand);border-color:var(--c-brand);background:var(--c-surface)}
+.mg-toggle-all:active{transform:scale(0.95)}
 .mg-empty{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   text-align:center;padding:var(--s-7) var(--s-4);color:var(--c-text-3);
@@ -273,44 +300,6 @@ body{
   flex-shrink:0;
 }
 
-/* === FAB: 2 nút '+ Thêm' + '⚡ Tất cả' kéo ra góc dưới panel Quản lý === */
-.mg-fabs{
-  position:absolute;bottom:var(--s-4);right:var(--s-4);
-  display:flex;flex-direction:column;align-items:flex-end;gap:var(--s-2);
-  z-index:10;
-}
-.mg-fabs button{
-  border:none;cursor:pointer;font-family:inherit;
-  display:inline-flex;align-items:center;justify-content:center;
-  transition:transform var(--dur-1) var(--ease),
-             box-shadow var(--dur-1) var(--ease),
-             background var(--dur-1) var(--ease);
-  box-shadow:var(--sh-3);
-}
-.mg-fabs button:hover{transform:translateY(-2px);box-shadow:var(--sh-4)}
-.mg-fabs button:active{transform:translateY(0)}
-/* FAB chính: '+ Thêm' — tròn 56px, brand color */
-.mg-fabs #mg-add{
-  width:56px;height:56px;border-radius:50%;
-  background:var(--c-brand);color:var(--c-text-onbrand);
-  font-size:28px;font-weight:var(--fw-m);line-height:1;
-}
-.mg-fabs #mg-add:hover{background:var(--c-brand-hover)}
-/* Toggle-all: icon-only tròn 40px, surface nổi trên FAB */
-.mg-fabs #mg-toggle-all{
-  width:40px;height:40px;border-radius:50%;
-  background:var(--c-surface);color:var(--c-text-2);
-  font-size:18px;line-height:1;
-  border:1px solid var(--c-border);
-}
-.mg-fabs #mg-toggle-all:hover{color:var(--c-brand);border-color:var(--c-brand)}
-/* Mobile: thu nhỏ FAB để không chiếm quá nhiều diện tích thumb zone */
-@media (max-width: 640px){
-  .mg-fabs{bottom:var(--s-3);right:var(--s-3);gap:var(--s-2)}
-  .mg-fabs #mg-add{width:52px;height:52px;font-size:24px}
-  .mg-fabs #mg-toggle-all{width:36px;height:36px;font-size:16px}
-  .mg{padding-bottom:84px}
-}
 
 /* === Chat area === */
 .ca{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-bg)}
@@ -608,16 +597,18 @@ body{
 
   <aside id="pn-mg" class="sp" aria-label="Quản lý tài khoản">
     <div class="mg">
-      <div class="mg-h">Quản lý tài khoản</div>
+      <div class="mg-h">
+        <span class="mg-h-title">Quản lý tài khoản</span>
+        <button class="mg-add-btn" onclick="showAddModal()" title="Thêm tài khoản Zalo" aria-label="Thêm tài khoản">+</button>
+      </div>
       <div class="mg-toolbar">
         <input id="mg-search" type="text" placeholder="Tìm theo tên hoặc ID…" oninput="renderAccounts()">
       </div>
-      <div class="mg-stats" id="mg-stats"></div>
-      <div id="ul"></div>
-      <div class="mg-fabs">
-        <button id="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả" aria-label="Bật/tắt tất cả">⚡</button>
-        <button id="mg-add" onclick="showAddModal()" title="Thêm tài khoản Zalo" aria-label="Thêm tài khoản">+</button>
+      <div class="mg-stats" id="mg-stats-row">
+        <span class="mg-stats-text" id="mg-stats-text"></span>
+        <button class="mg-toggle-all" onclick="toggleAllEnabled()" title="Bật/tắt hiển thị tất cả" aria-label="Bật/tắt tất cả">⚡</button>
       </div>
+      <div id="ul"></div>
     </div>
   </aside>
 
@@ -751,7 +742,7 @@ function renderAccounts(){
 
 // renderStats hien thi summary (tong so, dang nghe, offline).
 function renderStats(){
-	var s=document.getElementById('mg-stats');if(!s)return;
+	var s=document.getElementById('mg-stats-text');if(!s)return;
 	var total=accounts.length;
 	var shown=accounts.filter(function(a){return a.enabled}).length;
 	var on=accounts.filter(function(a){return a.listening}).length;
@@ -1320,3 +1311,5 @@ function ff(q){
 }
 </script>
 </body></html>
+
+// x
