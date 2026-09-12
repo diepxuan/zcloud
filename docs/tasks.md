@@ -69,6 +69,9 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 18 | Terminal UI (TUI) | 🟡 Mockup | [18-tui.md](tasks/18-tui.md) |
 | 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
 | 20 | Login Zalo PC (trusted-device) | 🟡 Pending | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
+| 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | 🟡 Pending | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
+| 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Pending | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
+| 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 
 ---
 
@@ -320,6 +323,68 @@ key exchange) — không bị kickout khi có session khác.
 - Phase 3: WASM reverse cho trusted-device key exchange (~3-5 ngày).
 
 **Tổng estimate**: ~1 tuần. Đợi Sếp duyệt plan trước khi code.
+
+## 5.15. T15 — Fix bug parse EventNewMessage wrapper (Phase A — sync sâu)
+
+Chi tiết: [tasks/21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md).
+
+**Bug phát hiện 12/09/2026**: WS cmd 501/521 (realtime new message) parse OK
+nhưng `SaveMessage` không bao giờ được gọi. Verify bằng debug log:
+```
+DEBUG: handleNewMessages tt=0 payload_len=769 data_len=896
+       first16=7b226572726f725f636f6465223a302c
+DEBUG: handleNewMessages unmarshal OK msgs_len=0 groupMsgs_len=0
+```
+`first16` = `{"error_code":0,` → Zalo wrap trong `{error_code, data: {msgs}}`.
+`handleNewMessages` chỉ parse 1 lớp → msgs không tìm thấy → drop.
+
+**Fix**: thêm field `Data` vào struct, unwrap `data.msgs` / `data.groupMsgs`
+giống `handleOldMessages` đã làm đúng.
+
+**Hậu quả nếu không fix**:
+- `journalctl -u zcloud --since '7 hours ago' | grep 'new msg from'` = **0 log**.
+- Mọi tin nhắn realtime bị drop trong nhiều giờ (chỉ sync cũ chạy được).
+- DB chỉ có tin từ WS cmd 510/511 (sync history), không có tin realtime.
+
+**Estimate**: ~30 phút.
+
+## 5.16. T16 — SyncV2 backup từ Zalo server (Phase B — sync sâu)
+
+Chi tiết: [tasks/22-syncv2-backup.md](tasks/22-syncv2-backup.md).
+
+**Mục tiêu**: pull được lịch sử sâu (>6h, hiện tại WS cmd 510/511 chỉ sync
+~50 tin gần nhất) qua SyncV2 backup flow mà Zalo PC dùng.
+
+**Endpoints theo `docs/protocol/pc-desktop.md`**:
+- `POST /api/transfer-sync-v2/request-sync` (cmd 12888) — mở session.
+- `POST /api/message/pull_mobile_msg` (cmd 12000) — pull từng batch.
+- WS cmd 590-592/630-634 — transfer state machine.
+
+**Phụ thuộc bắt buộc**:
+- Sếp login Zalo PC client 1 lần để capture payload thật (cần cho AES-CBC 
+  key derivation + payload schema).
+- Không có capture → dừng task.
+
+**Estimate**: ~2-3 ngày (không tính Sếp capture).
+
+## 5.17. T17 — Cross-device snapshot từ /api/message/get_crossdb (Phase C)
+
+Chi tiết: [tasks/23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md).
+
+**Mục tiêu**: lấy 1 lần toàn bộ lịch sử qua DB snapshot — flow Zalo PC
+dùng khi sync từ mobile qua SQLCipher-encrypted SQLite.
+
+**Endpoints theo `docs/protocol/pc-desktop.md`**:
+- `POST /api/message/get_crossdb` (cmd 12412) — request snapshot.
+- WS event 590-592 — nhận snapshot binary encrypted.
+- `db-cross-v4-native.node` (E-011) — `decompressAndDecryptDb` + SQLCipher.
+
+**Phụ thuộc bắt buộc**:
+- Sếp cung cấp bundle `ZaloSetup-26.8.10.exe` (em hiện không có file gốc).
+- Sếp capture snapshot binary + keys khi sync.
+- **Không có bundle + capture → dừng task** (SQLCipher key reverse quá khó).
+
+**Estimate**: ~4-5 ngày (không tính Sếp cung cấp bundle).
 
 ## 6. References
 
