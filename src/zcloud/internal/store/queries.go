@@ -203,6 +203,25 @@ func (s *Store) GetActiveSession(accountID string) (*Session, error) {
 	return sr, err
 }
 
+// LoadSessionByAccountID trả về session mới nhất của account, kể cả khi
+// is_active=0. Dùng cho HandleAccountRestart: nếu session active không có
+// (do bị deactivate), vẫn load được để thử autoRefresh bằng cookie cũ.
+func (s *Store) LoadSessionByAccountID(accountID string) (*Session, error) {
+	sr := &Session{}
+	q := `SELECT id, account_id, user_id, cookies, secret_key, imei, user_agent, language,
+		ws_urls, service_map, api_type, api_version, is_active, created_at, expires_at,
+		transport, cipher_key
+		FROM sessions WHERE account_id = $1 ORDER BY created_at DESC LIMIT 1`
+	err := s.db.QueryRow(q, accountID).Scan(&sr.ID, &sr.AccountID, &sr.UserID, &sr.Cookies, &sr.SecretKey,
+		&sr.IMEI, &sr.UserAgent, &sr.Language, &sr.WSURLs, &sr.ServiceMap,
+		&sr.APIType, &sr.APIVersion, &sr.IsActive, &sr.CreatedAt, &sr.ExpiresAt,
+		&sr.Transport, &sr.CipherKey)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return sr, err
+}
+
 func (s *Store) DeleteSession(id string) error {
 	_, err := s.db.Exec("UPDATE sessions SET is_active = 0 WHERE id = $1", id)
 	return err

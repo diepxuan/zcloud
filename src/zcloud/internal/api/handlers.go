@@ -345,7 +345,7 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "login failed: empty session")
 			return
 		}
-		s.commitLoginSession(w, result.Session)
+		s.commitLoginSession(w, result.Session, "")
 		return
 	case <-time.After(1500 * time.Millisecond):
 		ok(w, map[string]interface{}{"pending": true})
@@ -356,7 +356,10 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session) {
+// accountIDHint: accountID user mong đợi (từ re-login flow). "" nếu là đăng
+// nhập mới / QR flow. Nếu khác rỗng và khác accountID suy ra từ session.UserID
+// → fail vì cookie thuộc user khác.
+func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session, accountIDHint string) {
 	if session == nil || session.UserID == "" {
 		fail(w, 500, "login failed: missing user id")
 		return
@@ -378,7 +381,7 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 
 	// Nếu account đã tồn tại (re-login), KHÔNG đặt enabled=false để tránh
 	// xoá trạng thái cũ. CreateAccount dùng upsert (ON CONFLICT DO NOTHING) nên an toàn.
-	if req.AccountID != "" && req.AccountID != accountID {
+	if accountIDHint != "" && accountIDHint != accountID {
 		fail(w, 400, "accountId không khớp userID của cookie mới")
 		return
 	}
