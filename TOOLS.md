@@ -135,7 +135,30 @@ Tự động tìm node ở `/usr/local/bin/node`, `/usr/bin/node`,
 `/root/.nvm/versions/node/*/bin/node`, ... — hoạt động cả trong
 systemd service (PATH bị strip).
 
-### Tích hợp vào watch mode (`scripts/zcloudd.sh`)
+### Tích hợp vào watch mode (`zcloudd serv watch`)
+
+**Cách trigger watch cycle từ shell** (khi cần rebuild nhanh để test):
+
+```bash
+# Dùng HTML comment để trigger fsnotify Write event trên .html file.
+# HTML comment vô hình trong DOM rendered (user không thấy) nhưng vẫn
+# được browser parse (không break). Nếu lỡ quên xoá thì không hiện ra UI.
+echo "<!-- watch-test: $(date +%s) -->" >> src/zcloud/internal/api/web/chat.html
+
+# Với file .go thì dùng Go comment (chỉ ảnh hưởng AST khi compile):
+echo "// touch $(date +%s)" >> src/zcloud/internal/api/handlers.go
+
+# SAU KHI TEST → restore file về HEAD:
+git restore src/zcloud/internal/api/web/chat.html src/zcloud/internal/api/handlers.go
+```
+
+**Tại sao không dùng `touch`**:
+- `touch` chỉ cập nhật access time, KHÔNG tạo fsnotify Write event.
+- Phải modify nội dung file (`echo ... >> file`) để watch detect.
+
+**Sai lầm em đã mắc (12/09/2026)**:
+- Dùng `echo "// x" >> chat.html` để test → quên restore → commit c993249
+  phải sửa. HTML comment là lựa chọn an toàn hơn cho file HTML.
 Watch loop gọi `check_js` trước khi build:
 ```bash
 if ! check_js; then

@@ -100,3 +100,25 @@ Mọi test gửi/nhận (live smoke + integration end-to-end) PHẢI dùng threa
 các thread khách hàng (Linh Bui, Phandaitrang, ThangMT, Cam Tu, Phan Xuan, …).
 Marker tin test: prefix `[T8-...]` / `[T2-...]` / `[smoke-...]` + epoch timestamp.
 Xem `docs/tasks.md` §5.4 để biết chi tiết + lý do.
+
+## Bài học vận hành (12/09/2026)
+
+### Trigger watch cycle qua shell
+
+Khi cần ép `zcloudd serv watch` rebuild + restart (để verify cycle hoạt động),
+**KHÔNG dùng `touch`** — chỉ update access time, không tạo fsnotify Write event.
+
+Dùng cách modify nội dung:
+- File `.html`: `echo "<!-- watch-test: $(date +%s) -->" >> path/to/file.html`
+  (HTML comment vô hình trong DOM render, browser parse được, không ảnh hưởng UX)
+- File `.go`: `echo "// touch $(date +%s)" >> path/to/file.go`
+  (Go comment chỉ ảnh hưởng compile, không ảnh hưởng runtime)
+
+**LUÔN restore file về HEAD sau khi test xong**:
+```bash
+git restore path/to/file.html path/to/file.go
+```
+
+Em đã mắc lỗi: dùng `echo "// x"` trong chat.html → quên restore → user thấy
+comment trong UI → phải sửa trong commit `c993249`. Bài học: HTML comment là
+lựa chọn an toàn vì nếu lỡ quên, browser không hiển thị ra cho user.
