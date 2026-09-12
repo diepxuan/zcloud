@@ -164,3 +164,18 @@ CREATE TABLE IF NOT EXISTS media_jobs (
     PRIMARY KEY (id, account_id)
 );
 CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status, created_at);
+
+-- ====================================
+-- Contacts — cache danh bạ (bạn bè Zalo) cho mỗi account
+-- ====================================
+-- FriendsWorker upsert mỗi phút (acc1 -> 3s -> acc2 -> ... -> 1 phút -> lặp lại).
+-- KHONG xoa contact cu khi upstream tra thieu (Zalo rate-limit 429).
+CREATE TABLE IF NOT EXISTS contacts (
+    account_id      TEXT NOT NULL REFERENCES accounts(id),
+    user_id         TEXT NOT NULL,
+    name            TEXT DEFAULT '',
+    avatar          TEXT DEFAULT '',
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (account_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id);

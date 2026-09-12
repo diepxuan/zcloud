@@ -144,6 +144,26 @@ func Run() error {
 	defer mediaWorker.Stop()
 	logger.Printf("media-worker: started (interval=5s)")
 
+	// Friends worker — cache GetFriends vào DB contacts theo lịch
+	// acc1 → 3s → acc2 → 3s → ... → accN → interval (mặc định 1 phút).
+	friendsInterval := 1 * time.Minute
+	if v := os.Getenv("ZC_FRIENDS_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 10*time.Second {
+			friendsInterval = d
+		}
+	}
+	friendsStagger := 3 * time.Second
+	if v := os.Getenv("ZC_FRIENDS_STAGGER"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			friendsStagger = d
+		}
+	}
+	friendsWorker := api.NewFriendsWorker(db, logger, friendsInterval, friendsStagger)
+	friendsCtx, friendsCancel := context.WithCancel(context.Background())
+	friendsWorker.Start(friendsCtx)
+	defer friendsWorker.Stop()
+	logger.Printf("friends-worker: started (interval=%s, stagger=%s)", friendsInterval, friendsStagger)
+
 	<-done
 	logger.Println("Đang tắt server...")
 
@@ -155,6 +175,7 @@ func Run() error {
 	}
 	schedulerCancel()
 	mediaCancel()
+	friendsCancel()
 
 	logger.Println("Server đã tắt.")
 	return nil

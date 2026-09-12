@@ -1205,26 +1205,28 @@ async function loadFriends(){
 	// có contact này. Sắp xếp: contact chung (xuất hiện ở nhiều account) trước,
 	// sau đó alphabet displayName. Mỗi contact hiển thị 1 entry với badge
 	// tất cả account đang có contact (vd 'Sep + Chăn Ga').
+	//
+	// Backend (/api/friends) đọc từ DB contacts — FriendsWorker upsert mỗi phút,
+	// tránh rate-limit 429 khi gọi Zalo live. Response shape: Contact[].
+	//  Mỗi contact có {accountId, userId, name, avatar}.
 	var enabled=accounts.filter(function(a){return a.enabled});
 	if(!enabled.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return}
 	el('fl','<div style="padding:20px;text-align:center;color:#999">Đang tải...</div>');
-	// Map id → {names, avatars, accounts: [{id, label, avatar}]}
+	// 1 call duy nhất — backend merge từ tất cả enabled accounts.
+	var r=await fetch('/api/friends');
+	var d=await r.json();
+	if(!d.ok){el('fl','<div style="padding:20px;text-align:center;color:#999">Lỗi tải danh bạ</div>');return}
+	// Map userId → {name, avatar, accounts: [{id, label}]}.
 	var merged={};
-	for(var i=0;i<enabled.length;i++){
-		var acc=enabled[i];
-		try{
-			var r=await fetch('/api/friends?accountId='+acc.id);
-			var d=await r.json();
-			if(d.ok&&d.data){
-				d.data.forEach(function(u){
-					if(!merged[u.id]){merged[u.id]={id:u.id,name:u.name||u.id,avatar:u.avatar||'',accounts:[]};}
-					merged[u.id].accounts.push({id:acc.id,label:acc.displayName||acc.id});
-					// Ưu tiên tên + avatar từ account có userId khớp (chính chủ).
-					if(!merged[u.id]._picked && u.name){merged[u.id].name=u.name;merged[u.id]._picked=true;}
-					if(!merged[u.id].avatar && u.avatar){merged[u.id].avatar=u.avatar;}
-				});
-			}
-		}catch(e){console.log('friends load err',acc.id,e);}
+	var rows=(d.data||[]);
+	for(var i=0;i<rows.length;i++){
+		var u=rows[i];
+		if(!merged[u.userId]){merged[u.userId]={id:u.userId,name:u.name||u.userId,avatar:u.avatar||'',accounts:[]};}
+		var acc=enabled.find(function(a){return a.id===u.accountId;});
+		merged[u.userId].accounts.push({id:u.accountId,label:acc?acc.displayName:u.accountId});
+		// Ưu tiên tên/avatar từ row đầu tiên (đã được backend sắp xếp).
+		if(!merged[u.userId]._picked && u.name){merged[u.userId].name=u.name;merged[u.userId]._picked=true;}
+		if(!merged[u.userId].avatar && u.avatar){merged[u.userId].avatar=u.avatar;}
 	}
 	var all=Object.values(merged);
 	if(!all.length){el('fl','<div style="padding:20px;text-align:center;color:#999">Không có bạn bè</div>');return;}

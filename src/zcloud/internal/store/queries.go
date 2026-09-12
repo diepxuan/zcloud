@@ -646,3 +646,70 @@ func (s *Store) GetPendingWebhooks(limit int) ([]OAWebhookLog, error) {
 	}
 	return logs, nil
 }
+
+// ====================================
+// Contact operations (cache friends per account)
+// ====================================
+
+// upsertContactSQL: insert hoặc update name/avatar/updated_at khi user_id
+// đã tồn tại cho account_id. KHÔNG xoá contact cũ — strategy này giữ data
+// ngay cả khi upstream trả về thiếu (Zalo rate-limit 429 hoặc bug upstream).
+const upsertContactSQL = `INSERT INTO contacts (account_id, user_id, name, avatar, updated_at)
+	VALUES ($1, $2, $3, $4, NOW())
+	ON CONFLICT (account_id, user_id) DO UPDATE SET
+		name = EXCLUDED.name,
+		avatar = EXCLUDED.avatar,
+		updated_at = NOW()`
+
+const listContactsByAccountsSQL = `SELECT account_id, user_id, name, avatar
+	FROM contacts WHERE account_id = ANY($1)`
+
+func (s *Store) UpsertContact(accountID, userID, name, avatar string) error {
+	_, err := s.db.Exec(upsertContactSQL, accountID, userID, name, avatar)
+	return err
+}
+
+func (s *Store) ListContactsByAccounts(accountIDs []string) ([]Contact, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(listContactsByAccountsSQL, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Contact
+	for rows.Next() {
+		var c Contact
+		if err := rows.Scan(&c.AccountID, &c.UserID, &c.Name, &c.Avatar); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (s *Store) CountContactsByAccounts(accountIDs []string) (map[string]int, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.db.Query(
+		`SELECT account_id, COUNT(*) FROM contacts WHERE account_id = ANY($1) GROUP BY account_id`,
+		accountIDs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var id string
+		var cnt int
+		if err := rows.Scan(&id, &cnt); err != nil {
+			return nil, err
+		}
+		out[id] = cnt
+	}
+	return out, nil
+}

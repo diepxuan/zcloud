@@ -139,3 +139,13 @@ type MediaJob struct {
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
+
+// Contact là cache danh bạ (bạn bè Zalo) cho 1 account. Được populate bởi
+// FriendsWorker để tránh gọi Zalo GetFriends mỗi lần UI load (rate-limit).
+// Worker chỉ UPSERT — KHÔNG xoá contact cũ khi upstream trả thiếu.
+type Contact struct {
+	AccountID string `json:"accountId"`
+	UserID    string `json:"userId"`
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+}

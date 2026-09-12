@@ -775,38 +775,43 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 	ok(w, map[string]interface{}{"syncing": synced > 0, "synced": synced})
 }
 
+// HandleFriends trả về danh sách friend cache trong DB (bảng contacts) cho
+// các account enabled. KHÔNG gọi Zalo live — FriendsWorker định kỳ upsert
+// vào DB để tránh rate-limit (429).
+//
+// Query params:
+//   accountId (optional) — nếu có, lọc 1 account. Nếu không, merge từ TẤT
+//   CẢ enabled accounts (mặc định — UI dùng cái này).
 func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
-	if accountID == "" {
-		fail(w, 400, "missing accountId")
+
+	var accountIDs []string
+	if accountID != "" {
+		accountIDs = []string{accountID}
+	} else {
+		// Lấy tất cả enabled account IDs.
+		enabledAccs, err := s.Store.ListAccounts(0, true)
+		if err != nil {
+			fail(w, 500, "list accounts: "+err.Error())
+			return
+		}
+		for _, a := range enabledAccs {
+			accountIDs = append(accountIDs, a.ID)
+		}
+	}
+	if len(accountIDs) == 0 {
+		ok(w, []store.Contact{})
 		return
 	}
-	sessRec, err := s.Store.GetActiveSession(accountID)
-	if err != nil || sessRec == nil {
-		fail(w, 401, "not logged in")
-		return
-	}
-	var cookies map[string]string
-	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
-	session := &core.Session{
-		Cookies: cookies, SecretKey: sessRec.SecretKey, IMEI: sessRec.IMEI,
-		UserAgent: sessRec.UserAgent, APIType: sessRec.APIType, APIVersion: sessRec.APIVersion,
-	}
-	var serviceMap map[string][]string
-	if json.Unmarshal([]byte(sessRec.ServiceMap), &serviceMap) == nil {
-		session.ServiceMap = serviceMap
-	}
-	client := core.NewClient(session)
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	users, err := client.GetFriends(ctx)
+
+	contacts, err := s.Store.ListContactsByAccounts(accountIDs)
 	if err != nil {
-		// Không làm mất UI Contact khi Zalo tạm lỗi.
-		s.Logger.Printf("friends: zalo error=%v", err)
-		ok(w, []core.User{})
+		fail(w, 500, "list contacts: "+err.Error())
 		return
 	}
-	ok(w, users)
+
+	// Trả về Contact[] (có accountId) để frontend merge đúng theo account.
+	ok(w, contacts)
 }
 
 // ========== LOGOUT ==========

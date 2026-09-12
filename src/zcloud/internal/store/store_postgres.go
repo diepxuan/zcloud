@@ -25,6 +25,7 @@ func (s *Store) migratePostgres() error {
 		migrationOAPG,
 		migrationOAWebhookPG,
 		migrationMediaJobsPG,
+		migrationContactsPG,
 	}
 	for _, m := range migrations {
 		if _, err := s.db.Exec(m); err != nil {
@@ -295,3 +296,14 @@ CREATE TABLE IF NOT EXISTS media_jobs (
     PRIMARY KEY (id, account_id)
 );
 CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status, created_at);`
+
+const migrationContactsPG = `
+CREATE TABLE IF NOT EXISTS contacts (
+    account_id      TEXT NOT NULL REFERENCES accounts(id),
+    user_id         TEXT NOT NULL,
+    name            TEXT DEFAULT '',
+    avatar          TEXT DEFAULT '',
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (account_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id);`
