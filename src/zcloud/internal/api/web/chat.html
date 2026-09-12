@@ -673,7 +673,25 @@ var ccAccountId='';var ccAccountMe='';
 // (TODO: thay bằng SSE hoặc polling nếu cần realtime). Composer tự
 // load messages khi gửi xong.
 var wsr=null;
-document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();});
+// healthVersionPoll: poll /api/health mỗi 30s. Nếu version khác version lưu
+// trong window → location.reload() để pick up code mới (CSS/HTML/JS binary
+// mới đã được deploy qua watch mode + atomic rename). Lưu version ban đầu ở
+// lần poll đầu; build ldflags inject git short hash + semver vào binary —
+// xem internal/version.go + buildBinary trong servcmd/watch.go.
+var _serverVersion=null;
+function _checkHealthAndMaybeReload(){
+	fetch('/api/health').then(function(r){return r.json();}).then(function(d){
+		if(!d||!d.ok||!d.data||!d.data.version)return;
+		var v=d.data.version;
+		if(_serverVersion===null){_serverVersion=v;return;}
+		if(v!==_serverVersion){
+			console.log('[zcloud] version changed: '+_serverVersion+' → '+v+' → reload');
+			location.reload();
+		}
+	}).catch(function(){});
+}
+setInterval(_checkHealthAndMaybeReload,30000);
+document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();_checkHealthAndMaybeReload();});
 // accounts: cache list account cho tab Quan ly. Reload khi can.
 var accounts=[];
 // qrPollTimer: interval id cua QR poll loop.
@@ -1313,3 +1331,4 @@ function ff(q){
 </body></html>
 
 <!-- toggle-fix: 1789185416 -->
+<!-- 1789186151 -->
