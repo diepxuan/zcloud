@@ -12,15 +12,17 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/diepxuan/zcloud/internal"
 	"github.com/diepxuan/zcloud/internal/servcmd"
 	"github.com/diepxuan/zcloud/internal/server"
 	"github.com/diepxuan/zcloud/internal/tui"
 )
 
-// init in banner sớm để user biết binary đã load.
+// init in banner sớm để user biết binary đã load. In cả version để user
+// xác nhận binary đang chạy (vd khi debug restart).
 func init() {
 	fmt.Println("zcloudd — Zalo Cloud Service")
-	fmt.Println("Phiên bản phát triển")
+	fmt.Println(internal.Full())
 	fmt.Println()
 }
 
@@ -48,10 +50,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "[zcloud] tui error: %v\n", err)
 			os.Exit(1)
 		}
+	case "version", "--version", "-v":
+		fmt.Printf("zcloudd %s\n", internal.Full())
+		return
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n", os.Args[1])
 		fmt.Fprintln(os.Stderr, "Usage:")
 		fmt.Fprintln(os.Stderr, "  zcloudd              chạy HTTP server")
+		fmt.Fprintln(os.Stderr, "  zcloudd version       in version")
 		fmt.Fprintln(os.Stderr, "  zcloudd serv         quản lý systemd service (xem `zcloudd serv help`)")
 		fmt.Fprintln(os.Stderr, "  zcloudd serv watch   watch + auto-rebuild")
 		fmt.Fprintln(os.Stderr, "  zcloudd tui          terminal UI (mockup)")

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -49,7 +50,14 @@ func fail(w http.ResponseWriter, status int, msg string) {
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
-	ok(w, map[string]interface{}{"service": "zcloud", "time": time.Now().Unix()})
+	// Trả về version (semver + git hash) để frontend poll detect khi binary
+	// được rebuild → auto-reload UI. Xem internal/version.go + ldflags trong
+	// buildBinary (servcmd/watch.go).
+	ok(w, map[string]interface{}{
+		"service": "zcloud",
+		"time":    time.Now().Unix(),
+		"version": internal.Full(),
+	})
 }
 
 func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {

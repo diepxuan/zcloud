@@ -40,12 +40,21 @@ import (
 
 // buildBinary chạy `go build` ra binary path đã cho. PATH augment với
 // /usr/local/go/bin (override qua env ZCLOUD_GO_BIN).
+//
+// Inject git short hash vào package internal.Version qua ldflags — frontend
+// poll /api/health → nếu version thay đổi → location.reload() để pick up
+// code mới mà không cần user F5 thủ công. Nếu không có git (vd CI container)
+// → fallback "dev".
 func buildBinary(binary, sourceDir string) error {
 	goBin := os.Getenv("ZCLOUD_GO_BIN")
 	if goBin == "" {
 		goBin = "/usr/local/go/bin"
 	}
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/zcloudd/")
+	semver := readVersionFile(sourceDir)
+	commit := gitShortHash(sourceDir)
+	ldflags := "-X github.com/diepxuan/zcloud/internal.Semver=" + semver +
+		" -X github.com/diepxuan/zcloud/internal.ShortCommit=" + commit
+	cmd := exec.Command("go", "build", "-ldflags", ldflags, "-o", binary, "./cmd/zcloudd/")
 	cmd.Dir = sourceDir
 	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH")+":"+goBin)
 	out, err := cmd.CombinedOutput()
@@ -55,6 +64,34 @@ func buildBinary(binary, sourceDir string) error {
 	return nil
 }
 
+// readVersionFile đọc file VERSION ở project root. Trả về "dev" nếu không
+// có file hoặc đọc fail.
+func readVersionFile(sourceDir string) string {
+	path := filepath.Join(sourceDir, "..", "..", "VERSION")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "dev"
+	}
+	v := strings.TrimSpace(string(data))
+	if v == "" {
+		return "dev"
+	}
+	return v
+}
+
+
+
+// gitShortHash trả về git short hash của HEAD trong sourceDir. Trả về ""
+// nếu git fail (không phải git repo, hoặc git binary không có).
+func gitShortHash(sourceDir string) string {
+	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
+	cmd.Dir = sourceDir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 // runSmokeTest chạy binary trên port random, poll /api/health đến khi 200 OK
 // hoặc timeout 10s. Trả về nil nếu pass. Sau khi xong (pass hay fail) đều kill
 // smoke binary sạch + reap child — tránh leak process, port, zombie.

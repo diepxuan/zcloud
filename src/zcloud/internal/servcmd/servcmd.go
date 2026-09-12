@@ -12,6 +12,7 @@
 //	zcloudd serv logs [-f]        journalctl -u zcloud
 //	zcloudd serv watch            foreground watch mode (fsnotify + auto-rebuild)
 //	zcloudd serv install          (re)write /etc/systemd/system/zcloud.service + daemon-reload
+//	zcloudd serv version          in version (semver + git short hash)
 package servcmd
 
 import (
@@ -23,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/diepxuan/zcloud/internal/server"
+	"github.com/diepxuan/zcloud/internal"
 )
 
 // ServiceName là tên systemd unit.
@@ -83,6 +85,9 @@ func Run(args []string) error {
 		return logs(args[1:])
 	case "watch":
 		return watchForeground()
+	case "version", "--version", "-v":
+		fmt.Printf("zcloudd %s\n", internal.Full())
+		return nil
 	case "install":
 		watch := false
 		for _, a := range args[1:] {
@@ -119,6 +124,7 @@ Usage:
   zcloudd serv logs [-f]        xem journalctl -u zcloud
   zcloudd serv watch            foreground watch + auto-rebuild (dev)
   zcloudd serv install          (re)generate systemd unit + daemon-reload
+  zcloudd serv version           in version (semver + git short hash)
   zcloudd serv help             in trợ giúp này`)
 }
 
