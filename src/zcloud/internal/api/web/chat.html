@@ -82,11 +82,52 @@ body{
   display:flex;align-items:center;gap:var(--s-3);
   flex-shrink:0;
 }
-.ha{
-  width:32px;height:32px;border-radius:var(--r-pill);
-  background:var(--c-surface-2);overflow:hidden;flex-shrink:0;
+/* === Header avatar list === */
+/* Danh sách avatar account enabled, tròn 28px. Border xanh khi selected, */
+/* xám khi không. Click để chọn account làm composer; click lại để bỏ. */
+.hdr-avatars{
+  flex:1;min-width:0;display:flex;align-items:center;gap:var(--s-2);
+  /* Padding để hover scale 1.08 (28→30.24px) không bị container clip
+     border trên/dưới (overflow-y:hidden). */
+  padding:var(--s-1) var(--s-3);
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+  -ms-overflow-style:none;
 }
-.ha img{width:100%;height:100%;object-fit:cover}
+.hdr-avatars::-webkit-scrollbar{display:none}
+.hdr-av{
+  position:relative;flex-shrink:0;
+  width:28px;height:28px;border-radius:50%;
+  background:var(--c-surface-2);
+  cursor:pointer;
+  border:2px solid var(--c-border-2);
+  overflow:hidden;
+  /* Mirror của checkbox "Hiển thị" trong panel Quản lý: hiện khi
+     account đang nghe WS, không click được. Border xanh khi composer
+     đang dùng account này (ccAccountId===id), border xám + opacity 0.55
+     cho các account còn lại đang nghe. */
+  /* Click avatar: select làm composer; click lại vào cùng avatar → bỏ chọn. */
+  opacity:0.55;
+  transition:transform var(--dur-1) var(--ease),
+             border-color var(--dur-1) var(--ease),
+             opacity var(--dur-1) var(--ease);
+}
+.hdr-av img{width:100%;height:100%;object-fit:cover;display:block}
+.hdr-av:hover{transform:scale(1.08);border-color:var(--c-text-3);opacity:0.85}
+/* Bỏ box-shadow ở .sel — border-color var(--c-brand) đã đủ nổi bật, shadow
+   1px bị .hdr-avatars overflow-x:auto clip ở rìa gây cảm giác border che. */
+.hdr-av.sel{opacity:1;border-color:var(--c-brand)}
+.hdr-av-fb{
+  width:100%;height:100%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:var(--fz-xs);font-weight:var(--fw-b);color:var(--c-text-3);
+  background:var(--c-surface-2);
+}
+.hdr-empty{
+  flex:1;display:flex;align-items:center;
+  /* Padding-left khớp với avatar để text "ZCloud" không dính sát rìa. */
+  padding-left:var(--s-2);
+  font-size:var(--fz-lg);font-weight:var(--fw-b);color:var(--c-text-2);
+}
 .hdr h1{font-size:var(--fz-lg);font-weight:var(--fw-m);color:var(--c-text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hdr a{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:var(--r-md);transition:background var(--dur-1) var(--ease)}
 .hdr a:hover{background:var(--c-surface-2)}
@@ -571,8 +612,7 @@ body{
 </style>
 </head><body>
 <header class="hdr" role="banner">
-  <div class="ha"><img id="himg" src="" onerror="this.style.display='none'" alt=""></div>
-  <h1 id="hdn">ZCloud</h1>
+  <div class="hdr-avatars" id="hdr-avatars"></div>
   <a href="/chat" aria-label="ZCloud"><img src="/favicon.svg" width="28" height="28" alt=""></a>
 </header>
 
@@ -700,7 +740,7 @@ var qrPollTimer=null;
 var qrToken='';
 
 // loadAccounts lay danh sach account tu server (kem status listening/hasActiveSession).
-async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();return true}return false}catch(e){return false}}
+async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();renderHeaderAvatars();return true}return false}catch(e){return false}}
 
 // renderAccounts ve lai danh sach account theo cache + filter search.
 function renderAccounts(){
@@ -767,6 +807,62 @@ function renderStats(){
 	s.textContent=total+' tài khoản • '+shown+' hiển thị • '+on+' đang nghe WS';
 }
 
+// renderHeaderAvatars render danh sách avatar account vào header.
+// Dùng createElement + addEventListener (không innerHTML) để tránh hoàn toàn
+// bug escape JS template string trong onclick/onerror attributes.
+// Avatar header mirror checkbox "Hiển thị" trong panel Quản lý (a.enabled).
+// Click avatar → toggle enabled qua /api/account/enabled, giống checkbox.
+// Trạng thái:
+//   - inactive (!listening)     → ẩn hoàn toàn.
+//   - enabled=false (đang nghe) → border xám + opacity 0.55 (mờ).
+//   - enabled=true  (đang nghe) → border xanh + opacity 1 (rõ).
+//   - ccAccountId (composer) là state RIÊNG, không liên quan avatar.
+// - Avatar có URL → hiển thị <img>; không có → fallback 1 chữ cái đầu.
+function renderHeaderAvatars(){
+	var box=document.getElementById('hdr-avatars');
+	if(!box)return;
+	box.innerHTML='';
+	// Chỉ hiện account đang nghe WS. enabled=true/false đều hiện (chỉ đổi
+	// màu border) để Sếp có thể toggle qua click avatar.
+	var items=accounts.filter(function(a){return a.listening;});
+	if(items.length===0){
+		var empty=document.createElement('div');
+		empty.className='hdr-empty';
+		empty.textContent='ZCloud';
+		box.appendChild(empty);
+		return;
+	}
+	for(var i=0;i<items.length;i++){
+		var a=items[i];
+		var div=document.createElement('div');
+		div.className='hdr-av'+(a.enabled?' sel':'');
+		div.dataset.id=a.id;
+		div.title=(a.displayName||a.id)+(a.listening?' (đang nghe WS)':' (offline)');
+		div.addEventListener('click',(function(id){return function(){selectHeaderAccount(id);};})(a.id));
+		if(a.avatar){
+			var img=document.createElement('img');
+			img.src=a.avatar;
+			img.alt='';
+			img.addEventListener('error',function(){this.style.display='none';});
+			div.appendChild(img);
+		}
+		var fb=document.createElement('div');
+		fb.className='hdr-av-fb';
+		fb.textContent=(a.displayName||a.id||'?').slice(0,1).toUpperCase();
+		div.appendChild(fb);
+		box.appendChild(div);
+	}
+}
+
+// selectHeaderAccount mirror checkbox "Hiển thị" trong panel: click avatar
+// → toggle enabled qua API. Cùng state với checkbox nên 2 control luôn sync.
+async function selectHeaderAccount(id){
+	var acc=accounts.find(function(a){return a.id===id;});
+	if(!acc)return;
+	await toggleAccountEnabled(id,!acc.enabled);
+	renderHeaderAvatars();
+}
+
 // switchAcc: deprecated — composer không cần biết account nào đang chat.
 // Vẫn giữ để không break code khác; chỉ làm noop.
 function switchAcc(id){sy();st('ch');}
@@ -787,7 +883,8 @@ async function toggleAccountEnabled(id,enabled){
 		if(!d.ok){console.log('toggle enabled err',d.error);return;}
 	}catch(e){console.log('toggle enabled network err',e);return;}
 	if(acc) acc.enabled=enabled;
-	// Nếu conv hiện tại thuộc account bị tắt → đóng conv.
+	// Nếu account bị tắt và đang được select qua header → bỏ chọn composer
+	// để tránh composer gửi nhầm từ account đã disabled.
 	if(!enabled && ccAccountId===id){cc='';ccAccountId='';ccAccountMe='';}
 	await loadAccounts();
 	renderAccounts();renderStats();
@@ -1332,3 +1429,7 @@ function ff(q){
 
 <!-- toggle-fix: 1789185416 -->
 <!-- 1789186151 -->
+<!-- 1789186308 -->
+<!-- 1789186475 -->
+<!-- 1789186525 -->
+
