@@ -348,9 +348,35 @@ giống `handleOldMessages` đã làm đúng.
 
 **Estimate**: ~30 phút.
 
-## 5.16. T16 — SyncV2 backup từ Zalo server (Phase B — sync sâu)
+## 5.16. T22 — SyncV2 backup từ Zalo server (Phase B — sync sâu)
 
 Chi tiết: [tasks/22-syncv2-backup.md](tasks/22-syncv2-backup.md).
+
+**Trạng thái 13/09/2026** — Infrastructure xong, **BLOCKED bởi 3 thứ cần Sếp**:
+
+| Sub | Trạng thái | Commit |
+|:--:|:--:|:--:|
+| T22.2a skeleton | ✅ | `77ab314` |
+| T22.2b PullBatch | ✅ | `77ab314` |
+| T22.3 WS hook | ✅ | `ebaabe9` |
+| T22.3 followup (transport col) | ✅ | `f088277`, `f795e5a` |
+| T22.4 scheduler resume | ✅ | `d196a03` |
+| T22.5 admin endpoints | ✅ | `a43f47b` |
+| T22.6 UI nút SyncV2 | ✅ | `ba9e221` |
+| **T22.7 WASM cipher thật** | 🟡 Blocked | cần Sếp capture live |
+| **T22.8 end-to-end smoke** | 🟡 Blocked | cần account transport=pc |
+| **T23 crossdb snapshot** | 🟡 Blocked | cần bundle Zalo + SQLCipher |
+
+**3 blockers cần Sếp cung cấp** (xem `memory/2026-09-13-phase3.md`):
+
+1. **Account `transport=pc`**: Sep hiện `transport=web` → server từ chối
+   `request-sync`. Cần Sếp login Zalo PC client thật (có GUI) + extract
+   `zpsid`/`zpw_sek` qua `POST /api/login/pc`.
+2. **WASM cipher args**: pure-Go stub (HKDF + AES-GCM) chỉ là best guess
+   dựa trên Noise pattern. Cần 1 capture WS event 590/591/592 + 1
+   `pull_mobile_msg` batch response để reverse đúng cipher layout.
+3. **Phase C (T23)**: cần bundle `ZaloSetup-26.8.10.exe` (chỉ có notes)
+   + SQLCipher key derivation (không thể reverse từ static JS).
 
 **Mục tiêu**: pull được lịch sử sâu (>6h, hiện tại WS cmd 510/511 chỉ sync
 ~50 tin gần nhất) qua SyncV2 backup flow mà Zalo PC dùng.
