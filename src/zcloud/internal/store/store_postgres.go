@@ -44,6 +44,9 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureAccountDisabledReasonPG(); err != nil {
 		return err
 	}
+	if err := s.ensureAccountSyncV2PG(); err != nil {
+		return err
+	}
 	return s.ensureSessionTransportPG()
 }
 
@@ -130,6 +133,28 @@ func (s *Store) ensureSessionTransportPG() error {
 }
 
 // ensureAccountDisabledReasonPG thêm cột disabled_reason vào accounts nếu thiếu.
+// ensureAccountSyncV2PG thêm cột syncv2_state JSONB vào accounts nếu thiếu.
+// Lưu blob JSON state machine SyncV2 (ed25519 keypair, last_seq_id, phase, ...).
+// Rỗng mặc định — chỉ fill khi account start syncv2 backup flow (T22.3).
+func (s *Store) ensureAccountSyncV2PG() error {
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'accounts' AND column_name = 'syncv2_state'
+		)`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.syncv2_state: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN syncv2_state JSONB NOT NULL DEFAULT '{}'::jsonb`); err != nil {
+		return fmt.Errorf("add accounts.syncv2_state: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ensureAccountDisabledReasonPG() error {
 	var exists bool
 	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='disabled_reason')`).Scan(&exists)

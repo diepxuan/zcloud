@@ -37,8 +37,8 @@ func (s *Store) SetAccountUserID(id, userID string) error {
 
 func (s *Store) GetAccount(id string) (*Account, error) {
 	a := &Account{}
-	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, created_at, updated_at FROM accounts WHERE id = $1"
-	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.CreatedAt, &a.UpdatedAt)
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, transport, syncv2_state, created_at, updated_at FROM accounts WHERE id = $1"
+	err := s.db.QueryRow(q, id).Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.Transport, &a.SyncV2State, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -48,7 +48,7 @@ func (s *Store) GetAccount(id string) (*Account, error) {
 // ListAccounts trả về tất cả accounts (accountType=0) hoặc theo type.
 // enabledOnly: nếu true chỉ trả account có enabled=true.
 func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, error) {
-	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, created_at, updated_at FROM accounts"
+	q := "SELECT id, display_name, user_id, avatar, account_type, status, note, enabled, disabled_reason, transport, syncv2_state, created_at, updated_at FROM accounts"
 	args := []interface{}{}
 	conds := []string{}
 	if accountType > 0 {
@@ -71,12 +71,41 @@ func (s *Store) ListAccounts(accountType int, enabledOnly bool) ([]Account, erro
 	var accounts []Account
 	for rows.Next() {
 		var a Account
-		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.DisplayName, &a.UserID, &a.Avatar, &a.AccountType, &a.Status, &a.Note, &a.Enabled, &a.DisabledReason, &a.Transport, &a.SyncV2State, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, a)
 	}
 	return accounts, nil
+}
+
+// GetAccountSyncV2State trả về raw JSON string của accounts.syncv2_state
+// (T22.3). Trả về "{}" nếu account không tồn tại (an toàn cho caller parse).
+func (s *Store) GetAccountSyncV2State(accountID string) (string, error) {
+	var raw string
+	err := s.db.QueryRow(`SELECT syncv2_state::text FROM accounts WHERE id = $1`, accountID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return "{}", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+// SetAccountSyncV2State lưu JSON blob SyncV2 state cho account.
+// Caller phải đảm bảo `stateJSON` là JSON hợp lệ (vd `core.SyncV2State`
+// marshal ra). Trả về error nếu account không tồn tại.
+func (s *Store) SetAccountSyncV2State(accountID, stateJSON string) error {
+	res, err := s.db.Exec(`UPDATE accounts SET syncv2_state = $1::jsonb, updated_at = NOW() WHERE id = $2`, stateJSON, accountID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("account not found: %s", accountID)
+	}
+	return nil
 }
 
 // SetAccountEnabled bật/tắt flag enabled của account.

@@ -398,6 +398,8 @@ func clientFromSession(sessRec *store.Session) (*core.Client, error) {
 		WSURLs:     wsURLs,
 		ServiceMap: serviceMap,
 		UserID:     sessRec.UserID,
+		Transport:  sessRec.Transport,
+		CipherKey:  sessRec.CipherKey,
 	}
 	return core.NewClient(session), nil
 }
@@ -546,6 +548,15 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 					"rawData": ds.RawData,
 				},
 			})
+			// Phase B (T22.3): feed event vào SyncV2 state machine. Cmd 590
+			// (transfer_after_login/user_confirm) là entry point; cmd 632
+			// (backup metadata) cũng trigger RequestSync nếu chưa start.
+			if ds.Type == core.EventRequestSync ||
+				ds.Type == core.EventAckDeleteSession ||
+				ds.Type == core.EventMobileWakeUp ||
+				ds.Type == core.EventBackupMeta {
+				handleSyncV2Event(ctx, st, accountID, ds.RawData, logger)
+			}
 		}
 	}
 }

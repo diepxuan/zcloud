@@ -22,6 +22,10 @@ type Account struct {
 	Transport   string    `json:"transport,omitempty"` // ""=web | "pc"
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// SyncV2State là blob JSONB persist trạng thái SyncV2 backup flow
+	// (T22.3 Phase B). Rỗng nếu account chưa từng start syncv2. Schema xem
+	// `internal/core/syncv2.go:SyncV2State`.
+	SyncV2State string `json:"syncv2State,omitempty"`
 }
 
 type Session struct {

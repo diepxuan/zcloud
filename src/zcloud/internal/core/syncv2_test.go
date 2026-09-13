@@ -64,6 +64,63 @@ func TestSyncV2_BuildCipher_EmptyTempKey(t *testing.T) {
 	}
 }
 
+// TestSyncV2_HandleEvent: state machine transitions cho Phase B (T22.3).
+// 1) user_confirm user_action=1 → phase=pulling, temp_key lưu.
+// 2) user_confirm user_action=0 → phase=error.
+// 3) transfer_error error_code=42 → phase=error.
+// 4) transfer_after_login (no temp_key) → phase giữ nguyên.
+func TestSyncV2_HandleEvent(t *testing.T) {
+	c, err := NewSyncV2Client(&Session{IMEI: "imei-1"}, &SyncV2State{
+		PCName:    "zcloud",
+		IMEI:      "imei-1",
+		PublicKey: "00",
+		Phase:     "waiting_confirm",
+	})
+	if err != nil {
+		t.Fatalf("NewSyncV2Client: %v", err)
+	}
+	// user_confirm user_action=1
+	err = c.HandleEvent([]byte(`{"act":"user_confirm","data":{"user_action":1,"pc_name":"zcloud","public_key":"00","temp_key":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}}`))
+	if err != nil {
+		t.Fatalf("user_confirm err: %v", err)
+	}
+	if c.State().Phase != "pulling" {
+		t.Fatalf("phase=%q want pulling", c.State().Phase)
+	}
+	if c.State().TempKey == "" {
+		t.Fatal("temp_key chưa lưu")
+	}
+
+	// user_confirm user_action=0 (reject) — phải lỗi + phase=error.
+	c2, _ := NewSyncV2Client(&Session{IMEI: "i"}, &SyncV2State{PCName: "z", IMEI: "i", PublicKey: "00", Phase: "waiting_confirm"})
+	err = c2.HandleEvent([]byte(`{"act":"user_confirm","data":{"user_action":0,"pc_name":"z","public_key":"00"}}`))
+	if err == nil {
+		t.Fatal("user_action=0 phải fail")
+	}
+	if c2.State().Phase != "error" {
+		t.Fatalf("phase=%q want error", c2.State().Phase)
+	}
+
+	// transfer_error error_code=42
+	c3, _ := NewSyncV2Client(&Session{IMEI: "i"}, &SyncV2State{PCName: "z", IMEI: "i", PublicKey: "00", Phase: "pulling"})
+	err = c3.HandleEvent([]byte(`{"act":"transfer_error","data":{"error_code":42}}`))
+	if err == nil {
+		t.Fatal("transfer_error code != 0 phải fail")
+	}
+	if c3.State().LastError == "" {
+		t.Fatal("LastError rỗng")
+	}
+
+	// transfer_after_login (no temp_key) — phase giữ nguyên.
+	c4, _ := NewSyncV2Client(&Session{IMEI: "i"}, &SyncV2State{PCName: "z", IMEI: "i", PublicKey: "00", Phase: "init"})
+	if err := c4.HandleEvent([]byte(`{"act":"transfer_after_login","data":{"imei":"i"}}`)); err != nil {
+		t.Fatalf("transfer_after_login err: %v", err)
+	}
+	if c4.State().Phase != "init" {
+		t.Fatalf("phase=%q want init", c4.State().Phase)
+	}
+}
+
 // TestSyncV2_DecryptMessages_MockBatch: giả lập batch 2 messages,
 // encrypt/decrypt qua cipher session rồi parse JSON wsMessage.
 func TestSyncV2_DecryptMessages_MockBatch(t *testing.T) {
