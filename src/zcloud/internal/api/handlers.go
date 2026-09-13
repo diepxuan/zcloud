@@ -557,16 +557,21 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 		convs = []core.Conversation{}
 	}
 
-	// Lưu vào DB
+	// Lưu vào DB. last_msg_id ưu tiên c.LastMsgID (từ clearUnreads API — có cho
+	// TẤT CẢ 156 conv) rồi mới fall back về c.LastMsg.ID (chỉ có khi tin nằm
+	// trong data.msgs/data.groupMsgs — thường chỉ 2-3 conv có realtime push mới).
 	for _, c := range convs {
 		conv := store.Conversation{
 			ID: c.ID, AccountID: accountID, Name: c.Name, Avatar: c.Avatar,
 			ConvType: int(c.Type), UpdatedAt: time.Now(),
+			LastMsgID: c.LastMsgID,
 		}
 		if c.LastMsg != nil {
-			conv.LastMsgID = c.LastMsg.ID
-			conv.LastMsgAt = sql.NullTime{Time: time.UnixMilli(c.LastMsg.Timestamp), Valid: true}
+			if conv.LastMsgAt.Time.IsZero() {
+				conv.LastMsgAt = sql.NullTime{Time: time.UnixMilli(c.LastMsg.Timestamp), Valid: true}
+			}
 			// Lưu message cuối vào bảng messages để có lịch sử ngay khi mở thread.
+			// CHÚ Ý: skip nếu message đã tồn tại (id = globalMsgId unique) — tránh spam.
 			attJSON, _ := json.Marshal(c.LastMsg.Attachments)
 			s.Store.SaveMessage(&store.Message{
 				ID: c.LastMsg.ID, AccountID: accountID, ConvID: c.ID,
@@ -575,11 +580,9 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 				Timestamp: c.LastMsg.Timestamp, Attachments: string(attJSON),
 			})
 		}
-		s.Store.SaveConversation(&store.Conversation{
-			ID: c.ID, AccountID: accountID, Name: conv.Name, Avatar: conv.Avatar,
-			ConvType: int(c.Type), LastMsgID: conv.LastMsgID,
-			LastMsgAt: conv.LastMsgAt, UpdatedAt: time.Now(),
-		})
+			if err := s.Store.SaveConversation(&conv); err != nil {
+			s.Logger.Printf("conversations/sync SaveConversation err: id=%s err=%v", conv.ID, err)
+		}
 	}
 
 	// Cập nhật tên + avatar cho account (đồng bộ)
@@ -600,8 +603,17 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 				if g, ok := gm[convs[i].ID]; ok {
 					convs[i].Name = g.Name
 					convs[i].Avatar = g.Avatar
+					// Preserve lastMsgID/lastMsgAt từ conv hiện tại — nếu không
+					// truyền, SaveConversation sẽ overwrite với "" (default zero value
+					// của string field) → mất last_msg_id đã populate từ clearUnreads.
+					existingLastID := convs[i].LastMsgID
+					if convs[i].LastMsg != nil && existingLastID == "" {
+						existingLastID = convs[i].LastMsg.ID
+					}
 					s.Store.SaveConversation(&store.Conversation{
-						ID: convs[i].ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar, ConvType: int(convs[i].Type), UpdatedAt: time.Now(),
+						ID: convs[i].ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar,
+						ConvType: int(convs[i].Type), LastMsgID: existingLastID,
+						UpdatedAt: time.Now(),
 					})
 				}
 			}

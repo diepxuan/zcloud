@@ -214,13 +214,18 @@ type MessageMention struct {
 
 // Conversation represents a Zalo conversation
 type Conversation struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Avatar    string   `json:"avatar,omitempty"`
-	Type      ConvType `json:"type"`
-	LastMsg   *Message `json:"lastMsg,omitempty"`
-	Unread    int      `json:"unread"`
-	UpdatedAt int64    `json:"updatedAt"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Avatar string   `json:"avatar,omitempty"`
+	Type   ConvType `json:"type"`
+	LastMsg *Message `json:"lastMsg,omitempty"`
+	// LastMsgID lưu globalMsgId của tin cuối từ Zalo `clearUnreads` API — dùng
+	// khi `LastMsg == nil` (clearUnreads không kèm content đầy đủ). Scheduler
+	// sync old messages (cmd 510/511) đọc field này để gửi WS với `lastId` chính
+	// xác, tránh re-pull toàn bộ history mỗi tick.
+	LastMsgID string `json:"lastMsgId,omitempty"`
+	Unread    int    `json:"unread"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 // User represents a Zalo user
