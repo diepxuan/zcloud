@@ -1,9 +1,8 @@
-// Package tui là terminal UI cho zcloud — wizard 3 màn tuần tự
-// (chọn account → chọn thread → chat) dùng charmbracelet/bubbletea.
+// Package tui — tui.go: entry point + lifecycle.
 //
 // Workflow yêu cầu bởi Sếp 11/09/2026:
-//   - ./zcloudd tui  hoặc  ./zcloudd  (no-arg)  mở TUI
-//   - Màn 1: chọn account (↑/↓, Enter)
+//   - ./zcloudd  hoặc  ./zcloudd tui  mở TUI
+//   - Màn 1: chọn account (↑/↓, /, Enter)
 //   - Màn 2: chọn thread (/ filter, Enter)
 //   - Màn 3: xem + gửi tin
 //   - ESC ở bất kỳ màn nào cũng thoát hẳn (exit 0)
@@ -18,12 +17,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Run khởi động TUI. Trả về error nếu terminal không hỗ trợ TUI
-// (không có TTY) — bubbletea tự lo việc restore alternate buffer
-// khi Run() trả về.
+// Run khởi động TUI: mở Postgres, tạo Model, chạy bubbletea program.
+// Trả về error nếu terminal không hỗ trợ TUI (không có TTY) hoặc store fail.
 func Run() error {
-	// Không có TTY (vd chạy trong pipe / ssh không có PTY) → in hướng dẫn
-	// thay vì để bubbletea crash.
 	if !isTTY() {
 		fmt.Fprintln(os.Stderr, "zcloud TUI cần terminal thật (TTY).")
 		fmt.Fprintln(os.Stderr, "Chạy tương tác: ./zcloudd tui")
@@ -31,28 +27,26 @@ func Run() error {
 		return fmt.Errorf("no TTY")
 	}
 
-	m := newModel()
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
-}
-
-// newModel tạo Model khởi đầu — T18.1 hardcode 1-2 account mẫu, T18.2
-// sẽ load từ Postgres.
-func newModel() Model {
-	return Model{
-		store:           &Store{},
-		screen:          screenAccounts,
-		selectedAccount: 0,
-		selectedConv:    0,
-		accounts:        dummyAccounts(),
-		convs:           nil, // màn 2 load khi user chọn account
-		messages:        nil, // màn 3 load khi user chọn conv
+	st, err := Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[zcloud-tui] không mở được store: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Kiểm tra Postgres config trong ~/.config/ductn/zcloud.yml")
+		return err
 	}
+	defer st.Close()
+
+	m := newModel()
+	m.store = st
+	// storeErr không set ở đây (Open() đã fail trên rồi).
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return err
+	}
+	return nil
 }
 
-// isTTY kiểm tra stdin/stdout có phải terminal thật không.
-// Dùng os.Stat + mode char device.
+// isTTY kiểm tra stdout có phải terminal thật không.
 func isTTY() bool {
 	fi, err := os.Stdout.Stat()
 	if err != nil {

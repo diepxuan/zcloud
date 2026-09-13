@@ -1,7 +1,9 @@
+// Package tui — model.go: bubbletea Model cho wizard 3 màn.
 package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -30,49 +32,65 @@ func (s screen) String() string {
 	return ""
 }
 
-// Model là state chính của TUI. Bubbletea yêu cầu Model implement
-// tea.Model: Init(), Update(msg), View().
-type Model struct {
-	store *Store // wrapper đọc data từ Postgres; nil = chưa load
+// composerState giữ text người dùng đang soạn + cờ sending
+// để chặn Enter kép khi gửi chưa xong.
+type composerState struct {
+	text    string
+	sending bool
+}
 
-	screen   screen // màn hiện tại
-	width    int    // chiều rộng terminal
-	height   int    // chiều cao terminal
-	quitting bool   // true khi user nhấn ESC/Ctrl+C
-	err      error  // lỗi load data (hiện ở footer nếu có)
+// Model là state chính của TUI.
+type Model struct {
+	store    *Store // wrapper đọc data từ Postgres
+	storeErr error  // lỗi Open store lúc khởi động
+
+	screen    screen
+	width     int
+	height    int
+	quitting  bool
+	err       error // lỗi load runtime (hiện ở footer)
+	loading   bool  // true khi đang chờ load async
+	lastInput string // text composer cuối cùng (để echo "[sent]" khi gửi OK)
 
 	// Màn 1: accounts
-	accounts []AccountRow
+	accounts        []AccountRow
+	selectedAccount int
+	filterAcc       string // filter text cho màn 1
+	filteringAcc    bool   // true khi đang trong filter mode
 
-	// Màn 2: conversations (của account đang chọn)
-	selectedAccount int                  // index trong accounts
-	convs           []ConversationRow
+	// Màn 2: conversations
+	selectedAccountID string // ID account đang chọn (giữ qua màn 2, 3)
+	convs             []ConversationRow
+	selectedConv      int
+	filterConv        string
+	filteringConv     bool
 
-	// Màn 3: chat (của conv đang chọn)
-	selectedConv int // index trong convs
-	messages     []MessageRow
-	composer     composerState
+	// Màn 3: chat
+	selectedConvID string
+	messages       []MessageRow
+	composer       composerState
 }
 
-// composerState giữ text người dùng đang soạn (T18.3 sẽ dùng để gửi).
-// T18.1 chỉ cần struct tồn tại để View không panic.
-type composerState struct {
-	text string
+// newModel khởi tạo Model mặc định (chưa load data — đợi Init).
+func newModel() Model {
+	return Model{
+		screen:          screenAccounts,
+		selectedAccount: 0,
+		selectedConv:    0,
+	}
 }
 
-// Init chạy 1 lần khi chương trình bắt đầu. Hiện không cần async —
-// T18.2 sẽ thêm load data tại đây.
+// Init chạy 1 lần lúc khởi động — return tea.Cmd để bubbletea execute
+// (async load để không block UI).
 func (m Model) Init() tea.Cmd {
-	return nil
+	if m.store == nil {
+		return errCmd(fmt.Errorf("store chưa mở"))
+	}
+	m.loading = true
+	return m.store.loadAccountsCmd()
 }
 
-// Update nhận message từ bubbletea và trả về Model mới + Cmd (nếu có).
-// Phím tắt (theo docs/tasks/18-tui.md):
-//   - ESC / Ctrl+C : thoát TUI (tea.Quit) — bất kỳ màn nào
-//   - q            : thoát TUI (chỉ màn 1, 2; màn 3 không có để khỏi gõ nhầm)
-//   - ↑/↓ / j/k   : di chuyển trong list
-//   - Enter        : chọn item hiện tại (chuyển màn)
-//   - /            : vào filter (T18.2)
+// Update nhận message từ bubbletea và trả về Model mới + Cmd.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -81,95 +99,436 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case loadAccountsMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.accounts = msg.rows
+		m.err = nil
+		if m.selectedAccount >= len(m.accounts) {
+			m.selectedAccount = 0
+		}
+		return m, nil
+
+	case loadConvsMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.convs = msg.rows
+		m.selectedConv = 0
+		m.filterConv = ""
+		m.err = nil
+		return m, nil
+
+	case loadMessagesMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.messages = msg.rows
+		m.err = nil
+		return m, nil
+
+	case sendMessageMsg:
+		m.composer.sending = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		// Echo optimistic: thêm row "[đã gửi] <text>" rồi refresh.
+		m.messages = append(m.messages, MessageRow{
+			FromName:  "→ Bạn",
+			Content:   msg.text + "  [đã gửi]",
+			Timestamp: "now",
+			MsgType:   1,
+		})
+		m.lastInput = msg.text
+		m.composer.text = ""
+		m.err = nil
+		// Refresh messages để lấy tin thật từ DB (qua WS broadcast SaveMessage
+		// hoặc qua REST fallback nếu WS miss).
+		return m, m.store.loadMessagesCmd(m.selectedAccountID, m.selectedConvID)
+
 	case tea.KeyMsg:
-		switch msg.String() {
+		return m.handleKey(msg)
+	}
+	return m, nil
+}
 
-		case "ctrl+c", "esc":
-			m.quitting = true
-			return m, tea.Quit
+// handleKey xử lý KeyMsg theo màn hiện tại.
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
 
-		case "q":
-			// q chỉ thoát ở màn 1, 2 (chọn); màn 3 để dành cho chat.
-			if m.screen != screenChat {
-				m.quitting = true
-				return m, tea.Quit
+	// ESC / Ctrl+C luôn thoát (kể cả khi đang loading).
+	if key == "esc" || key == "ctrl+c" {
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	// Đang loading → khoá input khác (tránh race với async load).
+	if m.loading {
+		return m, nil
+	}
+
+	switch m.screen {
+	case screenAccounts:
+		return m.handleKeyAccounts(key, msg)
+	case screenConvs:
+		return m.handleKeyConvs(key, msg)
+	case screenChat:
+		return m.handleKeyChat(key, msg)
+	}
+	return m, nil
+}
+
+// handleKeyAccounts xử lý phím ở màn 1 (chọn account + filter).
+// Khi filter active: Enter = confirm + move; Up/Down = navigate filtered;
+// Backspace = xoá filter char; Esc = clear filter (lần 2 = thoát).
+// Khi không filter: / = bật filter, các phím khác navigate.
+func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtering := m.filteringAcc
+	switch {
+	case filtering && key == "enter":
+		// Enter trong filter mode = chọn row đầu tiên khớp filter vào màn 2.
+		filtered := filteredAccounts(m.accounts, m.filterAcc)
+		if len(filtered) > 0 {
+			acc := filtered[0]
+			m.selectedAccount = indexOfAccount(m.accounts, acc.ID)
+			m.selectedAccountID = acc.ID
+			m.screen = screenConvs
+			m.selectedConv = 0
+			m.err = nil
+			if m.store != nil {
+				m.loading = true
+				return m, m.store.loadConvsCmd(acc.ID)
 			}
+		}
+		return m, nil
+	case filtering && (key == "up" || key == "k"):
+		m.moveUpAccFiltered(filteredAccounts(m.accounts, m.filterAcc), &m.selectedAccount)
+		return m, nil
+	case filtering && (key == "down" || key == "j"):
+		m.moveDownAccFiltered(filteredAccounts(m.accounts, m.filterAcc), &m.selectedAccount)
+		return m, nil
+	case filtering && key == "backspace":
+		if len(m.filterAcc) > 0 {
+			m.filterAcc = m.filterAcc[:len(m.filterAcc)-1]
+		}
+		return m, nil
+	case filtering && key == "esc":
+		// Esc trong filter = clear filter (không thoát). Nếu filter đã rỗng
+		// thì handleKey đã return từ trước rồi (early ESC check).
+		m.filterAcc = ""
+		return m, nil
+	case filtering:
+		// Ký tự khác (Rune) → thêm vào filter.
+		if len(msg.Runes) > 0 {
+			m.filterAcc += string(msg.Runes)
+		}
+		return m, nil
+	}
 
-		case "up", "k":
-			m.moveUp()
-
-		case "down", "j":
-			m.moveDown()
-
-		case "enter":
-			m.confirm()
+	// Không filter.
+	switch key {
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	case "/":
+		m.filteringAcc = true
+		m.filterAcc = ""
+		return m, nil
+	case "up", "k":
+		m.moveUpAccFiltered(m.accounts, &m.selectedAccount)
+	case "down", "j":
+		m.moveDownAccFiltered(m.accounts, &m.selectedAccount)
+	case "enter":
+		filtered := filteredAccounts(m.accounts, m.filterAcc)
+		if m.selectedAccount >= 0 && m.selectedAccount < len(filtered) {
+			acc := filtered[m.selectedAccount]
+			m.selectedAccountID = acc.ID
+			m.screen = screenConvs
+			m.selectedConv = 0
+			m.filteringAcc = false
+			m.filterAcc = ""
+			m.err = nil
+			if m.store != nil {
+				m.loading = true
+				return m, m.store.loadConvsCmd(acc.ID)
+			}
+			return m, nil
 		}
 	}
 	return m, nil
 }
 
-// moveUp di chuyển cursor lên 1 dòng trong list của màn hiện tại.
-func (m *Model) moveUp() {
-	switch m.screen {
-	case screenAccounts:
-		if m.selectedAccount > 0 {
-			m.selectedAccount--
-		}
-	case screenConvs:
-		if m.selectedConv > 0 {
-			m.selectedConv--
-		}
-	}
-}
-
-// moveDown di chuyển cursor xuống 1 dòng.
-func (m *Model) moveDown() {
-	switch m.screen {
-	case screenAccounts:
-		if m.selectedAccount < len(m.accounts)-1 {
-			m.selectedAccount++
-		}
-	case screenConvs:
-		if m.selectedConv < len(m.convs)-1 {
-			m.selectedConv++
-		}
-	}
-}
-
-// confirm xử lý Enter:
-//   - Màn 1 → chuyển sang màn 2 (load convs).
-//   - Màn 2 → chuyển sang màn 3 (load messages).
-//   - Màn 3 → gửi tin (T18.3 sẽ wire).
-func (m *Model) confirm() {
-	switch m.screen {
-	case screenAccounts:
-		if m.selectedAccount >= 0 && m.selectedAccount < len(m.accounts) {
-			m.screen = screenConvs
-			m.selectedConv = 0
-			// T18.2 sẽ load convs ở đây.
-		}
-	case screenConvs:
-		if m.selectedConv >= 0 && m.selectedConv < len(m.convs) {
+// handleKeyConvs xử lý phím ở màn 2 (chọn conv + filter).
+// Cùng pattern với handleKeyAccounts.
+func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtering := m.filteringConv
+	switch {
+	case filtering && key == "enter":
+		filtered := filteredConvs(m.convs, m.filterConv)
+		if len(filtered) > 0 {
+			conv := filtered[0]
+			m.selectedConv = indexOfConv(m.convs, conv.ID)
+			m.selectedConvID = conv.ID
 			m.screen = screenChat
-			// T18.2 sẽ load messages ở đây.
+			m.composer = composerState{}
+			m.err = nil
+			if m.store != nil {
+				m.loading = true
+				return m, m.store.loadMessagesCmd(m.selectedAccountID, conv.ID)
+			}
 		}
-	case screenChat:
-		// T18.3: nếu composer.text != "" thì gửi.
+		return m, nil
+	case filtering && (key == "up" || key == "k"):
+		m.moveUpConvFiltered(filteredConvs(m.convs, m.filterConv), &m.selectedConv)
+		return m, nil
+	case filtering && (key == "down" || key == "j"):
+		m.moveDownConvFiltered(filteredConvs(m.convs, m.filterConv), &m.selectedConv)
+		return m, nil
+	case filtering && key == "backspace":
+		if len(m.filterConv) > 0 {
+			m.filterConv = m.filterConv[:len(m.filterConv)-1]
+		}
+		return m, nil
+	case filtering && key == "esc":
+		m.filterConv = ""
+		return m, nil
+	case filtering:
+		if len(msg.Runes) > 0 {
+			m.filterConv += string(msg.Runes)
+		}
+		return m, nil
+	}
+
+	// Không filter.
+	switch key {
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	case "/":
+		m.filteringConv = true
+		m.filterConv = ""
+		return m, nil
+	case "up", "k":
+		m.moveUpConvFiltered(m.convs, &m.selectedConv)
+	case "down", "j":
+		m.moveDownConvFiltered(m.convs, &m.selectedConv)
+	case "enter":
+		filtered := filteredConvs(m.convs, m.filterConv)
+		if m.selectedConv >= 0 && m.selectedConv < len(filtered) {
+			conv := filtered[m.selectedConv]
+			m.selectedConvID = conv.ID
+			m.screen = screenChat
+			m.composer = composerState{}
+			m.filteringConv = false
+			m.filterConv = ""
+			m.err = nil
+			if m.store != nil {
+				m.loading = true
+				return m, m.store.loadMessagesCmd(m.selectedAccountID, conv.ID)
+			}
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// handleKeyChat xử lý phím ở màn 3 (xem + gửi tin).
+// Mọi phím (trừ ESC/Ctrl+C) đều thêm vào composer text trừ khi là
+// phím đặc biệt.
+func (m Model) handleKeyChat(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Phím đặc biệt trước.
+	switch key {
+	case "backspace":
+		if len(m.composer.text) > 0 {
+			m.composer.text = m.composer.text[:len(m.composer.text)-1]
+		}
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(m.composer.text)
+		if text == "" || m.composer.sending {
+			return m, nil
+		}
+		m.composer.sending = true
+		m.err = nil
+		return m, m.store.sendMessageCmd(m.selectedAccountID, m.selectedConvID, text)
+	}
+
+	// Nhận text vào composer.
+	if len(msg.Runes) > 0 {
+		m.composer.text += string(msg.Runes)
+	}
+	return m, nil
+}
+
+// appendFilterAcc thêm ký tự vào filterAcc (màn 1).
+func (m *Model) appendFilterAcc(key string) tea.Model {
+	if key == "backspace" {
+		if len(m.filterAcc) > 0 {
+			m.filterAcc = m.filterAcc[:len(m.filterAcc)-1]
+		}
+	} else if len(key) == 1 {
+		m.filterAcc += key
+	}
+	return m
+}
+
+// appendFilterConv thêm ký tự vào filterConv (màn 2).
+func (m *Model) appendFilterConv(key string) tea.Model {
+	if key == "backspace" {
+		if len(m.filterConv) > 0 {
+			m.filterConv = m.filterConv[:len(m.filterConv)-1]
+		}
+	} else if len(key) == 1 {
+		m.filterConv += key
+	}
+	return m
+}
+
+// moveUpFiltered/moveDownFiltered: di chuyển cursor trong list đã filter.
+// Trả về index trong list GỐC (không phải filtered) để Update không phá index.
+// Vì list gốc không đổi khi filter thay đổi, ta ánh xạ index đơn giản:
+// chọn row thứ N trong filtered → tìm row đó trong accounts[].
+// moveUpAccFiltered/moveDownAccFiltered: di chuyển cursor trong list accounts.
+// Nếu filter rỗng → logic đơn giản sel +/- (tối ưu + khớp test cũ).
+// Nếu filter có → ánh xạ index qua ID.
+func (m *Model) moveUpAccFiltered(filtered []AccountRow, sel *int) {
+	if m.filterAcc == "" {
+		if *sel > 0 {
+			*sel--
+		}
+		return
+	}
+	if len(filtered) == 0 || *sel <= 0 {
+		return
+	}
+	for i, r := range filtered {
+		if r.ID == m.accounts[*sel].ID && i > 0 {
+			*sel = indexOfAccount(m.accounts, filtered[i-1].ID)
+			return
+		}
+	}
+	if *sel > 0 {
+		*sel--
 	}
 }
 
-// View trả về string để bubbletea in ra terminal. View() chạy mỗi khi
-// state đổi hoặc terminal resize — phải pure (không side effect).
+func (m *Model) moveDownAccFiltered(filtered []AccountRow, sel *int) {
+	if m.filterAcc == "" {
+		if *sel < len(m.accounts)-1 {
+			*sel++
+		}
+		return
+	}
+	if len(filtered) == 0 {
+		return
+	}
+	for i, r := range filtered {
+		if r.ID == m.accounts[*sel].ID && i < len(filtered)-1 {
+			*sel = indexOfAccount(m.accounts, filtered[i+1].ID)
+			return
+		}
+	}
+	if *sel < len(m.accounts)-1 {
+		*sel++
+	}
+}
+
+// moveUpConvFiltered/moveDownConvFiltered: tương tự cho conversations.
+func (m *Model) moveUpConvFiltered(filtered []ConversationRow, sel *int) {
+	if len(filtered) == 0 || *sel <= 0 {
+		return
+	}
+	for i, r := range filtered {
+		if r.ID == m.convs[*sel].ID && i > 0 {
+			*sel = indexOfConv(m.convs, filtered[i-1].ID)
+			return
+		}
+	}
+	if *sel > 0 {
+		*sel--
+	}
+}
+
+func (m *Model) moveDownConvFiltered(filtered []ConversationRow, sel *int) {
+	if len(filtered) == 0 {
+		return
+	}
+	for i, r := range filtered {
+		if r.ID == m.convs[*sel].ID && i < len(filtered)-1 {
+			*sel = indexOfConv(m.convs, filtered[i+1].ID)
+			return
+		}
+	}
+	if *sel < len(m.convs)-1 {
+		*sel++
+	}
+}
+
+func indexOfAccount(rows []AccountRow, id string) int {
+	for i, r := range rows {
+		if r.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+func indexOfConv(rows []ConversationRow, id string) int {
+	for i, r := range rows {
+		if r.ID == id {
+			return i
+		}
+	}
+	return 0
+}
+
+// filteredAccounts trả accounts khớp filter (case + accent insensitive).
+func filteredAccounts(rows []AccountRow, filter string) []AccountRow {
+	if filter == "" || filter == " " {
+		return rows
+	}
+	// Filter text cũng bỏ dấu để so sánh với noAccent precomputed.
+	f := stripDiacritics(strings.ToLower(filter))
+	out := make([]AccountRow, 0, len(rows))
+	for _, r := range rows {
+		if strings.Contains(strings.ToLower(r.noAccent), f) {
+			out = append(out, r)
+		} else if r.UserID == filter {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filteredConvs tương tự cho conversations.
+func filteredConvs(rows []ConversationRow, filter string) []ConversationRow {
+	if filter == "" || filter == " " {
+		return rows
+	}
+	f := stripDiacritics(strings.ToLower(filter))
+	out := make([]ConversationRow, 0, len(rows))
+	for _, r := range rows {
+		if strings.Contains(strings.ToLower(r.noAccent), f) {
+			out = append(out, r)
+		} else if r.ID == filter {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// View trả string để bubbletea in ra terminal.
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
 	return renderScreen(m)
-}
-
-// helper nhỏ cho debug — dùng khi cần in nhanh trạng thái.
-func (m Model) debugString() string {
-	return fmt.Sprintf("screen=%s selA=%d/%d selC=%d/%d msgs=%d",
-		m.screen, m.selectedAccount, len(m.accounts),
-		m.selectedConv, len(m.convs), len(m.messages))
 }
