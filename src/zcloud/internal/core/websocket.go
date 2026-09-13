@@ -554,12 +554,28 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 	var rawData struct {
 		Msgs      json.RawMessage `json:"msgs"`
 		GroupMsgs json.RawMessage `json:"groupMsgs"`
+		Data      json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(data, &rawData); err != nil {
+		fmt.Printf("[zcloud] ws: 501/521 parse err=%v\n", err)
 		return
 	}
 
 	msgsRaw := rawData.Msgs
+	// Zalo cmd 501/521 wrap payload trong {error_code, data: {msgs|groupMsgs}}
+	// (tham chiếu zca-js src/apis/listen.ts:259) — unwrap layer 2 khi cần.
+	if len(msgsRaw) == 0 && len(rawData.Data) > 0 {
+		var inner struct {
+			Msgs      json.RawMessage `json:"msgs"`
+			GroupMsgs json.RawMessage `json:"groupMsgs"`
+		}
+		if json.Unmarshal(rawData.Data, &inner) == nil {
+			msgsRaw = inner.Msgs
+			if tt == ThreadGroup && len(inner.GroupMsgs) > 0 {
+				msgsRaw = inner.GroupMsgs
+			}
+		}
+	}
 	if tt == ThreadGroup && len(rawData.GroupMsgs) > 0 {
 		msgsRaw = rawData.GroupMsgs
 	}
