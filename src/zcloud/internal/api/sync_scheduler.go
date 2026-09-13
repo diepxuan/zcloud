@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -153,6 +154,9 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 			return
 		}
 	}
+	// Resume SyncV2 pull loop nếu state trong DB đang ở phase=pulling.
+	resumeSyncV2(s.store, accountID, s.logger)
+
 	s.mu.Lock()
 	s.lastTick[accountID] = time.Now()
 	s.mu.Unlock()
@@ -174,6 +178,45 @@ func syncConvViaListener(accountID, convID string, convType int, lastID string) 
 	return entry.client.WS.RequestOldMessages(context.Background(), tt, lastID) == nil
 }
 
+
+// resumeSyncV2 kiểm tra accounts.syncv2_state của account; nếu phase=pulling
+// thì đảm bảo SyncV2Client đang chạy background PullBatch loop. Resume
+// giúp restart không phải bắt đầu lại từ đầu.
+func resumeSyncV2(st *store.Store, accountID string, logger *log.Logger) {
+	raw, err := st.GetAccountSyncV2State(accountID)
+	if err != nil {
+		return
+	}
+	if raw == "" || raw == "{}" {
+		return
+	}
+	var st2 core.SyncV2State
+	if err := json.Unmarshal([]byte(raw), &st2); err != nil {
+		return
+	}
+	if st2.Phase != "pulling" {
+		return
+	}
+	// Đảm bảo session load được (cần cho cipher session + REST call).
+	sessRec, err := st.LoadSessionByAccountID(accountID)
+	if err != nil || sessRec == nil {
+		return
+	}
+	clientObj, err := clientFromSession(sessRec)
+	if err != nil {
+		return
+	}
+	entry, err := ensureSyncV2Client(st, accountID, clientObj.Session, logger)
+	if err != nil {
+		return
+	}
+	// Nếu loop đang chạy thì bỏ qua; nếu chưa thì bắt đầu.
+	// Dùng phase + check goroutine qua biến runningPull.
+	if !tryStartSyncV2PullLoop(entry, accountID) {
+		return
+	}
+	go runSyncV2PullLoop(entry, st, accountID, logger)
+}
 // LastTick trả về thời điểm tick gần nhất của account (zero time nếu chưa chạy).
 func (s *SyncScheduler) LastTick(accountID string) time.Time {
 	s.mu.Lock()

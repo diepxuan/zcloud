@@ -28,8 +28,10 @@ var (
 )
 
 type syncV2Entry struct {
-	client *core.SyncV2Client
-	cancel context.CancelFunc
+	client      *core.SyncV2Client
+	cancel      context.CancelFunc
+	pullRunning bool // guard tránh 2 goroutine cùng pull cho 1 account
+	pullMu      sync.Mutex
 }
 
 // ensureSyncV2Client nạp (hoặc tạo) SyncV2Client cho account và lưu state
@@ -144,6 +146,7 @@ func handleSyncV2Event(ctx context.Context, st *store.Store, accountID string, r
 // runSyncV2PullLoop kéo batch messages cho đến khi done hoặc lỗi.
 // Persist last_seq_id sau mỗi batch để restart resume đúng vị trí.
 func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, logger *log.Logger) {
+	defer finishSyncV2PullLoop(entry)
 	client := entry.client
 	for {
 		select {
@@ -193,4 +196,25 @@ func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, lo
 		// Throttle nhẹ giữa các batch.
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// tryStartSyncV2PullLoop trả true nếu caller nên bắt đầu PullBatch loop;
+// false nếu loop đã chạy rồi (idempotent). Dùng trong cả WS hook lẫn
+// scheduler resume.
+func tryStartSyncV2PullLoop(entry *syncV2Entry, accountID string) bool {
+	entry.pullMu.Lock()
+	defer entry.pullMu.Unlock()
+	if entry.pullRunning {
+		return false
+	}
+	entry.pullRunning = true
+	return true
+}
+
+// finishSyncV2PullLoop đánh dấu loop đã kết thúc — gọi khi PullBatch
+// return (done=true, error, hoặc context cancel).
+func finishSyncV2PullLoop(entry *syncV2Entry) {
+	entry.pullMu.Lock()
+	entry.pullRunning = false
+	entry.pullMu.Unlock()
 }
