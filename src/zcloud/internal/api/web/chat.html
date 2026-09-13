@@ -804,12 +804,16 @@ function renderAccounts(){
 			  a.transport==='web'?'<span class="mg-badge mg-badge-web" title="Đăng nhập bằng Zalo Web (fallback)">Web</span>':
 			  '<span class="mg-badge mg-badge-off" title="Đã đăng xuất">Off</span>')
 			// Nếu chưa có session (đã logout) → ẩn Restart, hiện nút Login lại.
+			// Dùng template literal (backtick) thay vì '...' để nhúng dấu '
+			// trong HTML onclick attribute — pattern cũ viết ''+uId+'' gây
+			// SyntaxError "Unexpected string" ở parser JS vì string rỗng
+			// đứng cạnh ')' không có toán tử (T24 regression).
 			+(a.hasActiveSession?
-			  '<button class="mg-btn" onclick="restartListener(''+uId+'')">Restart</button>':
-			  '<button class="mg-btn mg-btn-rel" onclick="showAddModal(''+uId+'')" title="Đăng nhập lại bằng Cookie mới">🔑 Login</button>')
-			+'<button class="mg-btn" onclick="syncV2Start(''+uId+'')" title="Sync lịch sử sâu qua SyncV2"'+(a.transport!=='pc'?' disabled':'')+'>⤓ SyncV2</button>'
-			+(a.disabledReason==='auth_expired'?'<button class="mg-btn mg-btn-rel" onclick="showAddModal(''+uId+'')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>':'')
-			+'<button class="mg-del" onclick="xd(''+uId+'')" title="Xoá toàn bộ user Zalo khỏi zcloud (cascade)">🗑</button>'
+			  `<button class="mg-btn" onclick="restartListener('+uId+')">Restart</button>`:
+			  `<button class="mg-btn mg-btn-rel" onclick="showAddModal('+uId+')" title="Đăng nhập lại bằng Cookie mới">🔑 Login</button>`)
+			+`<button class="mg-btn" onclick="syncV2Start('+uId+')" title="Sync lịch sử sâu qua SyncV2"${a.transport!=='pc'?' disabled':''}>⤓ SyncV2</button>`
+			+(a.disabledReason==='auth_expired'?`<button class="mg-btn mg-btn-rel" onclick="showAddModal('+uId+')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>`:'')
+			+`<button class="mg-del" onclick="xd('+uId+')" title="Xoá toàn bộ user Zalo khỏi zcloud (cascade)">🗑</button>`
 			+'</div>'
 		ul.appendChild(dv);
 	});
