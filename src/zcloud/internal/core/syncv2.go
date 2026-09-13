@@ -98,6 +98,9 @@ func NewSyncV2Client(session *Session, state *SyncV2State) (*SyncV2Client, error
 // State trả về snapshot state hiện tại (để persist).
 func (c *SyncV2Client) State() *SyncV2State { return c.state }
 
+// SetPhase đặt phase trực tiếp — dùng cho admin endpoints (start/stop/reset).
+func (c *SyncV2Client) SetPhase(phase string) { c.state.Phase = phase }
+
 // PrivateKey trả về ed25519 private key (32B seed), nil nếu chưa có.
 func (c *SyncV2Client) privateKey() ed25519.PrivateKey {
 	if c.state.PrivateKey == "" {
