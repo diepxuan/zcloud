@@ -478,4 +478,13 @@ Script verify: `/tmp/t2_verify_media.sh` (đếm type + jobs + disk).
 ### T2.12 — Test thật phải dùng thread Trần Ngọc Đức
 
 Theo §5.4, mọi test gửi/nhận phải dùng conv `4866700441106275565`. Sếp gửi các loại media vào thread này (không cần mở app khác — Zalo phone có sẵn account Sep), em sẽ chạy `bash /tmp/t2_verify_media.sh` để verify.
+## Phần A đã xong — 13/09/2026
 
+Commit `7239e0f`: unwrap layer 2 (`data.msgs` / `data.groupMsgs`) trong
+`handleNewMessages` (cmd 501/521). Thêm 4 test parse ở
+`websocket_parse_test.go` (wrapped user, wrapped group, plain root, empty).
+Build pass, test mới pass. Test cũ `TestEncodeDecodeAESGCM_RoundTrip/mode_2`
+vẫn fail nhưng là pre-existing (xác nhận bằng `git stash` trên HEAD).
+
+Smoke test live (gửi `[T21-...]` từ Trần Ngọc Đức) chưa chạy trong session
+này — Sếp tự verify hoặc chờ session kế tiếp.

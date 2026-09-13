@@ -1,8 +1,8 @@
 # Task 21: Fix bug parse EventNewMessage wrapper (Phase A — sync sâu)
 
 ## Liên kết
-- **Task list:** [../tasks.md](../tasks.md) §5.15 (T15 — mới)
-- **Trạng thái:** 🟡 Pending — Sếp duyệt ngày 12/09/2026
+- **Task list:** [../tasks.md](../tasks.md) §5.21 (T21)
+- **Trạng thái:** 🟢 Xong code 13/09/2026 — chờ Sếp smoke test live
 - **Phụ thuộc:**
   - [04-build-core.md](04-build-core.md) — `internal/core/websocket.go`
   - [10-sync-history.md](10-sync-history.md) — `handleOldMessages` đã làm đúng
@@ -118,4 +118,3 @@ Nếu bị ngắt giữa chừng sau khi đã inject debug log: revert file từ
 ## Estimate
 
 ~30 phút (sửa + test + commit + push).
-
