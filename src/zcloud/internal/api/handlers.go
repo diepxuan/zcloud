@@ -920,6 +920,13 @@ func parseCookie(s string) map[string]string {
 // ========== LOGIN PAGE ==========
 
 func (s *Server) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
+	// Đã có account enabled trong DB → chuyển thẳng sang /chat thay vì
+	// hiện QR login. Trước đây root / luôn trả login page bất kể session,
+	// Sếp tưởng bị logout khi mở tab mới. Lỗi DB thì fallback hiện login.
+	if accounts, err := s.Store.ListAccounts(0, true); err == nil && len(accounts) > 0 {
+		http.Redirect(w, r, "/chat", http.StatusFound)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	html, err := webFS.ReadFile("web/login.html")
 	if err != nil {
