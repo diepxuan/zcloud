@@ -488,3 +488,25 @@ vẫn fail nhưng là pre-existing (xác nhận bằng `git stash` trên HEAD).
 
 Smoke test live (gửi `[T21-...]` từ Trần Ngọc Đức) chưa chạy trong session
 này — Sếp tự verify hoặc chờ session kế tiếp.
+| 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 T22.2a xong | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
+
+## Phase B da co skeleton — 13/09/2026
+
+Commit `77ab314` push len main:
+- `docs/protocol/syncv2.md` reverse state machine + REST/WS command map
+  (khong can capture: doc source JS truc tiep).
+- `internal/core/syncv2.go` `SyncV2Client` (ed25519 keypair, RequestSync,
+  PullBatch, HandleEvent, AES-CBC REST wrapper).
+- `internal/core/syncv2_cipher.go` `BuildCipherSession` stub (ed25519
+  self-agreement + HKDF-SHA256 + AES-256-GCM) — Phase B stub, build tag
+  `syncv2_wasm` se dung WASM that sau.
+- `internal/core/syncv2_test.go` 5 unit test pass.
+
+Con lai (can Sếp live test):
+- T22.2b: PullBatch + DecryptMessages end-to-end voi Zalo PC.
+- T22.3: Hook WS 590/591/592/632 + persist state JSONB.
+- T22.4: Scheduler resume.
+
+LXC khong capture duoc traffic nen cipher session dung HKDF stub. Khi
+Sếp live test, neu giai ma fail → reverse them 13 args cua
+`zprotoSync2CreateMetadataCipher` (xem `docs/protocol/syncv2.md` §4,§9).
