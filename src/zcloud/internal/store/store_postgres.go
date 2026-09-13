@@ -47,6 +47,9 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureAccountSyncV2PG(); err != nil {
 		return err
 	}
+	if err := s.ensureAccountTransportPG(); err != nil {
+		return err
+	}
 	return s.ensureSessionTransportPG()
 }
 
@@ -151,6 +154,29 @@ func (s *Store) ensureAccountSyncV2PG() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN syncv2_state JSONB NOT NULL DEFAULT '{}'::jsonb`); err != nil {
 		return fmt.Errorf("add accounts.syncv2_state: %w", err)
+	}
+	return nil
+}
+
+// ensureAccountTransportPG thêm cột transport TEXT vào accounts nếu thiếu.
+// Mặc định '' (web). Field này song song với sessions.transport để
+// ListAccounts/GetAccount có thể lọc account theo transport (vd chỉ
+// liệt kê PC transport khi login trusted-device).
+func (s *Store) ensureAccountTransportPG() error {
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'accounts' AND column_name = 'transport'
+		)`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.transport: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN transport TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add accounts.transport: %w", err)
 	}
 	return nil
 }
