@@ -72,6 +72,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | 🟡 Pending | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Pending | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
+| 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟡 Đề xuất | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 
 ---
 
