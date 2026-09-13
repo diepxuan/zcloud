@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -146,5 +147,97 @@ func TestWindowSize(t *testing.T) {
 	mm := updated.(Model)
 	if mm.width != 120 || mm.height != 40 {
 		t.Errorf("got w=%d h=%d, want 120x40", mm.width, mm.height)
+	}
+}
+
+// === Realtime refresh tests ===
+
+// TestConvUpdatedAt_TriggersReload: khi UpdatedAt tăng → reload.
+func TestConvUpdatedAt_TriggersReload(t *testing.T) {
+	m := newModel()
+	m.screen = screenChat
+	m.lastSeenConvAt = 1000
+	m.store = &Store{} // nil DB — method receiver OK
+
+	updated, cmd := m.Update(ConvUpdatedAtMsg{updatedAtMs: 2000})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Errorf("expected reload cmd when updatedAt > lastSeen, got nil")
+	}
+	if m.lastSeenConvAt != 2000 {
+		t.Errorf("lastSeenConvAt not updated: got %d, want 2000", m.lastSeenConvAt)
+	}
+}
+
+// TestConvUpdatedAt_NoChangeContinuesTick: UpdatedAt không đổi → tiếp tục tick.
+func TestConvUpdatedAt_NoChangeContinuesTick(t *testing.T) {
+	m := newModel()
+	m.screen = screenChat
+	m.lastSeenConvAt = 2000
+	m.chatRefreshActive = true
+	m.store = &Store{}
+
+	updated, cmd := m.Update(ConvUpdatedAtMsg{updatedAtMs: 2000})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Errorf("expected tick cmd to continue, got nil")
+	}
+}
+
+// TestConvUpdatedAt_StopsWhenInactive: chatRefreshActive=false → stop tick.
+func TestConvUpdatedAt_StopsWhenInactive(t *testing.T) {
+	m := newModel()
+	m.screen = screenChat
+	m.lastSeenConvAt = 2000
+	m.chatRefreshActive = false
+	m.store = &Store{}
+
+	updated, cmd := m.Update(ConvUpdatedAtMsg{updatedAtMs: 2000})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Errorf("expected nil cmd when refresh inactive, got %v", cmd)
+	}
+}
+
+// TestTick_TriggersGetConvUpdatedAt: tickMsg → check UpdatedAt.
+func TestTick_TriggersGetConvUpdatedAt(t *testing.T) {
+	m := newModel()
+	m.screen = screenChat
+	m.chatRefreshActive = true
+	m.store = &Store{}
+
+	_, cmd := m.Update(tickMsg(time.Now()))
+	if cmd == nil {
+		t.Errorf("expected getConvUpdatedAtCmd, got nil")
+	}
+}
+
+// TestTick_StopsWhenNotInChat: tickMsg khi không ở chat → no-op.
+func TestTick_StopsWhenNotInChat(t *testing.T) {
+	m := newModel()
+	m.screen = screenConvs // không phải chat
+	m.chatRefreshActive = true
+	m.store = &Store{}
+
+	_, cmd := m.Update(tickMsg(time.Now()))
+	if cmd != nil {
+		t.Errorf("expected nil cmd when not in chat, got %v", cmd)
+	}
+}
+
+// TestESC_StopsChatRefresh: ESC set chatRefreshActive=false.
+func TestESC_StopsChatRefresh(t *testing.T) {
+	m := newModel()
+	m.screen = screenChat
+	m.chatRefreshActive = true
+	m.store = &Store{}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Errorf("expected tea.Quit cmd")
+	}
+	if m.chatRefreshActive {
+		t.Errorf("expected chatRefreshActive=false after ESC")
 	}
 }

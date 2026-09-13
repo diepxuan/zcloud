@@ -167,6 +167,23 @@ func (s *Store) LoadMessages(accountID, convID string) ([]MessageRow, error) {
 	return rows, nil
 }
 
+// GetConvUpdatedAt trả về updated_at (Unix ms) của conv — dùng để check
+// nhanh xem có tin mới không trước khi query full messages.
+// Trả 0 nếu conv không tồn tại.
+func (s *Store) GetConvUpdatedAt(accountID, convID string) (int64, error) {
+	if s == nil || s.DB == nil {
+		return 0, fmt.Errorf("store not opened")
+	}
+	var updatedAtMs int64
+	q := `SELECT COALESCE(EXTRACT(EPOCH FROM updated_at) * 1000, 0)::bigint
+		FROM conversations WHERE account_id = $1 AND id = $2`
+	err := s.DB.DB().QueryRow(q, accountID, convID).Scan(&updatedAtMs)
+	if err != nil {
+		return 0, err
+	}
+	return updatedAtMs, nil
+}
+
 // SendMessageText gửi text thuần tới convID qua core.Client.
 func (s *Store) SendMessageText(accountID, convID, text string) error {
 	if s == nil || s.DB == nil {
@@ -336,6 +353,30 @@ func (s *Store) sendMessageCmd(accountID, convID, text string) tea.Cmd {
 		err := s.SendMessageText(accountID, convID, text)
 		return sendMessageMsg{err: err, text: text}
 	}
+}
+
+// ConvUpdatedAtMsg trả updated_at hiện tại của conv (Unix ms).
+// Model so sánh với lastSeenConvAt để quyết định có reload messages không.
+type ConvUpdatedAtMsg struct {
+	updatedAtMs int64
+	err         error
+}
+
+// getConvUpdatedAtCmd gọi Store.GetConvUpdatedAt async.
+func (s *Store) getConvUpdatedAtCmd(accountID, convID string) tea.Cmd {
+	return func() tea.Msg {
+		ms, err := s.GetConvUpdatedAt(accountID, convID)
+		return ConvUpdatedAtMsg{updatedAtMs: ms, err: err}
+	}
+}
+
+// tickMsg đánh dấu 1 tick đã trôi qua (mỗi 3s).
+type tickMsg time.Time
+
+// TickCmd trả tea.Cmd sẽ fire tickMsg sau `d` duration.
+// Model dùng để chain tick lặp lại.
+func TickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func errCmd(err error) tea.Cmd {

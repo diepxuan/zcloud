@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,9 +69,11 @@ type Model struct {
 	filteringConv     bool
 
 	// Màn 3: chat
-	selectedConvID string
-	messages       []MessageRow
-	composer       composerState
+	selectedConvID    string
+	messages          []MessageRow
+	composer          composerState
+	lastSeenConvAt    int64 // UpdatedAt của conv lần cuối (Unix ms) — để check realtime
+	chatRefreshActive bool  // true khi đang bật tick refresh ở màn 3
 }
 
 // newModel khởi tạo Model mặc định (chưa load data — đợi Init).
@@ -134,6 +137,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messages = msg.rows
 		m.err = nil
+		// Sau khi load, bật tick refresh 3s/lần + fetch conv UpdatedAt lần đầu.
+		if m.screen == screenChat && !m.chatRefreshActive {
+			m.chatRefreshActive = true
+			// Khởi động tick + fetch UpdatedAt ngay (không đợi 3s đầu).
+			// Store.updatedAt ban đầu = 0 → sẽ trigger load đầu tiên nếu DB
+			// đã có tin cũ (skip vì messages đã load). Sau đó lastSeenConvAt
+			// = current sẽ chỉ refresh khi có tin mới.
+			return m, tea.Batch(
+				m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID),
+				TickCmd(3*time.Second),
+			)
+		}
 		return m, nil
 
 	case sendMessageMsg:
@@ -152,9 +167,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastInput = msg.text
 		m.composer.text = ""
 		m.err = nil
-		// Refresh messages để lấy tin thật từ DB (qua WS broadcast SaveMessage
-		// hoặc qua REST fallback nếu WS miss).
+		// Refresh messages ngay để pick up SaveMessage từ WS broadcast.
 		return m, m.store.loadMessagesCmd(m.selectedAccountID, m.selectedConvID)
+
+	case ConvUpdatedAtMsg:
+		// Tick check: conv UpdatedAt đã đổi → reload messages.
+		// Nếu không đổi → skip (optimization).
+		if msg.err != nil {
+			// Lỗi DB im lặng — không hiện footer để tránh flicker.
+			return m, TickCmd(3 * time.Second)
+		}
+		if m.screen == screenChat && msg.updatedAtMs > m.lastSeenConvAt {
+			m.lastSeenConvAt = msg.updatedAtMs
+			return m, m.store.loadMessagesCmd(m.selectedAccountID, m.selectedConvID)
+		}
+		// Tiếp tục tick.
+		if m.chatRefreshActive {
+			return m, TickCmd(3 * time.Second)
+		}
+		return m, nil
+
+	case tickMsg:
+		// Mỗi 3s — check conv.UpdatedAt để quyết định reload.
+		if m.screen != screenChat || !m.chatRefreshActive {
+			return m, nil
+		}
+		return m, m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -168,6 +206,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// ESC / Ctrl+C luôn thoát (kể cả khi đang loading).
 	if key == "esc" || key == "ctrl+c" {
+		m.chatRefreshActive = false // stop tick
 		m.quitting = true
 		return m, tea.Quit
 	}
@@ -241,19 +280,19 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	}
 
 	// Không filter.
-	switch key {
-	case "q":
+	switch {
+	case key == "q":
 		m.quitting = true
 		return m, tea.Quit
-	case "/":
+	case strings.HasPrefix(key, "/"):
 		m.filteringAcc = true
-		m.filterAcc = ""
+		m.filterAcc = strings.TrimPrefix(key, "/")
 		return m, nil
-	case "up", "k":
+	case key == "up" || key == "k":
 		m.moveUpAccFiltered(m.accounts, &m.selectedAccount)
-	case "down", "j":
+	case key == "down" || key == "j":
 		m.moveDownAccFiltered(m.accounts, &m.selectedAccount)
-	case "enter":
+	case key == "enter":
 		filtered := filteredAccounts(m.accounts, m.filterAcc)
 		if m.selectedAccount >= 0 && m.selectedAccount < len(filtered) {
 			acc := filtered[m.selectedAccount]
@@ -319,19 +358,19 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Không filter.
-	switch key {
-	case "q":
+	switch {
+	case key == "q":
 		m.quitting = true
 		return m, tea.Quit
-	case "/":
+	case strings.HasPrefix(key, "/"):
 		m.filteringConv = true
-		m.filterConv = ""
+		m.filterConv = strings.TrimPrefix(key, "/")
 		return m, nil
-	case "up", "k":
+	case key == "up" || key == "k":
 		m.moveUpConvFiltered(m.convs, &m.selectedConv)
-	case "down", "j":
+	case key == "down" || key == "j":
 		m.moveDownConvFiltered(m.convs, &m.selectedConv)
-	case "enter":
+	case key == "enter":
 		filtered := filteredConvs(m.convs, m.filterConv)
 		if m.selectedConv >= 0 && m.selectedConv < len(filtered) {
 			conv := filtered[m.selectedConv]
