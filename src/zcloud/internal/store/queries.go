@@ -308,11 +308,22 @@ func (s *Store) FindAccountByConvID(convID string) (string, error) {
 }
 
 func (s *Store) DeleteAccount(id string) error {
-	s.db.Exec("DELETE FROM sessions WHERE account_id = $1", id)
-	s.db.Exec("DELETE FROM conversations WHERE account_id = $1", id)
-	s.db.Exec("DELETE FROM messages WHERE account_id = $1", id)
-	_, err := s.db.Exec("DELETE FROM accounts WHERE id = $1", id)
-	return err
+	// Logout: xoá sessions, conversations, messages + reset transport.
+	// KHÔNG xoá account row (giữ để login lại sau). Reset transport=''
+	// để login kế tiếp chọn lại web/pc.
+	if _, err := s.db.Exec("DELETE FROM messages WHERE account_id = $1", id); err != nil {
+		return fmt.Errorf("delete messages: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM conversations WHERE account_id = $1", id); err != nil {
+		return fmt.Errorf("delete conversations: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM sessions WHERE account_id = $1", id); err != nil {
+		return fmt.Errorf("delete sessions: %w", err)
+	}
+	if _, err := s.db.Exec("UPDATE accounts SET transport = '', cipher_key = '' WHERE id = $1", id); err != nil {
+		return fmt.Errorf("reset transport: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
