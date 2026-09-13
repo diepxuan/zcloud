@@ -66,7 +66,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 13 | Media download | 🟢 Xong | [13-media-download.md](tasks/13-media-download.md) |
 | 14 | Tách Web UI ra file tĩnh | 🟢 Xong | [14-split-webui.md](tasks/14-split-webui.md) |
 | 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
-| 18 | Terminal UI (TUI) | 🟡 Mockup | [18-tui.md](tasks/18-tui.md) |
+| 18 | Terminal UI (TUI) | ✅ Done | [18-tui.md](tasks/18-tui.md) |
 | 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
 | 20 | Login Zalo PC (trusted-device) | 🟡 Pending | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
 | 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | 🟡 Pending | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
@@ -286,11 +286,16 @@ Workflow yêu cầu của Sếp (11/09/2026): `./zcloudd` hoặc `./zcloudd tui`
 
 | # | Tính năng | Mức độ | Ghi chú |
 |:-:|-----------|:------:|---------|
-| T18.1 | Bubbletea + 3 màn tuần tự (wizard) | 🟡 Pending | Hiện `./zcloudd tui` chỉ in banner. Khi implement thật dùng `charmbracelet/bubbletea` + `lipgloss` + `bubbles`. **Không được đổi `./zcloudd` no-arg** — watch fork `./zcloudd` no-arg để lấy HTTP server (xem commit `6019140`). |
-| T18.2 | Load data từ Postgres + filter `/` | 🟡 Pending | Màn 1: load accounts. Màn 2: load convs của account đang chọn. Filter `/` lọc theo displayName (case-insensitive contains) + parse ID nếu text toàn số. |
-| T18.3 | Composer + gửi tin nhắn (màn 3) | 🟡 Pending | Textinput ở bottom panel, Enter để gửi qua `core.Client.SendMessage(text, convID)`. Echo optimistic + marker `[sent]` khi nhận WS ack. Text >2000 char → chia nhỏ. Smoke test với Trần Ngọc Đức theo §5.4. |
+| T18.1 | Bubbletea + 3 màn tuần tự (wizard) | ✅ Done (commit 1c86afd) | Đổi no-arg `./zcloudd` = TUI (watch mode fork `./zcloudd serv` không break). 3 màn: Accounts → Convs → Chat. ESC thoát. |
+ |
+| T18.2 | Load data từ Postgres + filter `/` | ✅ Done | LoadAccounts/Convs/Messages qua store.Store. Filter bỏ dấu (stripDiacritics: Trần → Tran). Filter multi-rune paste handle (case `/` → HasPrefix). |
+
+| T18.3 | Composer + gửi tin nhắn (màn 3) | ✅ Done (commit 1c86afd) | UTF-8 rune-aware composer (append rune, backspace by rune theo bubbles/textarea). Realtime refresh 3s/lan qua `conversations.updated_at` tick. **Stability fix 14/09**: loadMessagesMsg reload path luôn schedule tick tiếp → chain không dừng. |
+
 | T18.5 | Cookie login bằng 2 field zpsid + zpw_sek (bỏ script) | 🟡 Pending | Modal hiện tại dùng script DevTools bị `NotAllowedError: Document is not focused`. Thay bằng 2 ô input thủ công copy từ DevTools → Application → Cookies → chat.zalo.me. `zpw_sek` dùng `type="password"` để che value. Server validate 2 field bắt buộc. |
-| T18.6 | Polish + resize + cleanup | 🟡 Pending | Detect không có TTY → in hướng dẫn `zcloudd serv` thay vì crash. Resize 20 dòng không vỡ. Thoát alternate buffer sạch. |
+
+| T18.6 | Polish + resize + cleanup | ✅ Done | No-TTY guard (`< /dev/null` in hướng dẫn). ESC cleanup alternate buffer. UTF-8 rune-aware composer/backspace. Resize OK. |
+
 
 ## 5.13. T13 — Multi-account filter (chọn account hiển thị trong UI)
 

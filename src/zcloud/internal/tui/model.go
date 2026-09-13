@@ -137,13 +137,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.messages = msg.rows
 		m.err = nil
-		// Sau khi load, bật tick refresh 3s/lần + fetch conv UpdatedAt lần đầu.
-		if m.screen == screenChat && !m.chatRefreshActive {
-			m.chatRefreshActive = true
-			return m, tea.Batch(
-				m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID),
-				TickCmd(3*time.Second),
-			)
+		// Sau khi load: bật tick refresh 3s/lần (nếu chưa) + luôn schedule
+		// tick tiếp theo để chain không bao giờ dừng (kể cả khi reload).
+		// Bug cũ: chỉ chain tick lần đầu → reload messages mất tick kế tiếp.
+		if m.screen == screenChat {
+			if !m.chatRefreshActive {
+				m.chatRefreshActive = true
+				return m, tea.Batch(
+					m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID),
+					TickCmd(3*time.Second),
+				)
+			}
+			// Đã active → schedule tick tiếp theo (không trigger reload,
+			// tick handler sẽ tự check UpdatedAt).
+			return m, TickCmd(3*time.Second)
 		}
 		return m, nil
 

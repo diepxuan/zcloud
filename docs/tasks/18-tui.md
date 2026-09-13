@@ -1,5 +1,10 @@
 # Task 18: Terminal UI (TUI) — zcloudd tui
 
+> **Trạng thái tổng thể**: ✅ DONE (T18.1-T18.3, T18.6 complete). T18.5 pending Sếp duyệt.
+> **Commit**: a6defff (2026-09-13) — refactor UTF-8 rune-aware, realtime refresh, filter fix.
+
+
+
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.12 (T12)
 - **Trạng thái:** 🟡 MOCKUP có sẵn (`./zcloudd tui` in banner + keymap dự kiến). Đợt này mới bắt đầu triển khai thật.
@@ -75,7 +80,7 @@ màn chỉ cần đổi `m.screen` state. Không blocking stdin khi không focus
 
 ## Sub-task
 
-### T18.1 — Bubbletea + 3 màn tuần tự (read + write)
+### T18.1 — Bubbletea + 3 màn tuần tự (read + write) — ✅ DONE
 - Thêm dependency: `github.com/charmbracelet/bubbletea`,
   `github.com/charmbracelet/lipgloss`, `github.com/charmbracelet/bubbles`.
 - Refactor `internal/tui/tui.go`: thay mockup bằng `tea.NewProgram(model).Run()`.
@@ -93,7 +98,9 @@ màn chỉ cần đổi `m.screen` state. Không blocking stdin khi không focus
 - `q` / `ESC` thoát sạch, exit 0, terminal về state cũ.
 - Resize terminal không vỡ layout.
 
-### T18.2 — Load data từ Postgres
+**Status**: ✅ DONE (commit a6defff). 3 màn tuần tự hoạt động: Accounts → Convs → Chat.
+
+### T18.2 — Load data từ Postgres — ✅ DONE
 - `Model.Init()` gọi `m.loadAccounts()` → `store.ListAccounts()`.
 - Khi xác nhận account (Enter ở màn 1) → `m.screen = screenConvs` +
   `m.loadConversations(accountID)` → `store.GetConversations(accountID)`.
@@ -111,7 +118,9 @@ màn chỉ cần đổi `m.screen` state. Không blocking stdin khi không focus
 - Gõ `/sep` → list lọc theo "sep".
 - Chọn conv → thấy 50 messages mới nhất.
 
-### T18.3 — Composer + gửi tin nhắn
+**Status**: ✅ DONE. LoadAccounts/Convs/Messages từ Postgres, filter bỏ dấu (stripDiacritics), auto-refresh 3s tick.
+
+### T18.3 — Composer + gửi tin nhắn — ✅ DONE (thêm realtime refresh 3s/lan, UTF-8 rune-aware)
 - Màn 3: bottom panel textinput, focus khi vào màn (không cần phím `n`).
 - Enter để gửi: gọi `core.Client.SendMessage(text, convID)` qua
   `internal/core/chat.go` (đã có sẵn).
@@ -127,7 +136,14 @@ màn chỉ cần đổi `m.screen` state. Không blocking stdin khi không focus
   xem quy ước §5.4 trong `docs/tasks.md`.
 - Tin nhận realtime: nhờ Sếp gửi từ điện thoại → TUI hiển thị trong 3s.
 
-### T18.5 — Thêm acc login bằng cookie (zpsid + zpw_sek, bỏ script)
+**Status**: ✅ DONE (commit a6defff + 14/09 stability fix).
+- Composer UTF-8 rune-aware (append rune, backspace by rune theo bubbles/textarea pattern).
+- Realtime refresh 3s/lan qua `conversations.updated_at` tick chain.
+- ESC stop tick (chatRefreshActive=false).
+- Stability fix 14/09: loadMessagesMsg (reload path) luôn schedule tick tiếp theo → chain không bao giờ dừng (trước đó reload mất tick kế tiếp).
+- Regression test: TestLoadMessages_ContinuesTickAfterReload.
+
+### T18.5 — Thêm acc login bằng cookie (zpsid + zpw_sek, bỏ script) — 🟡 PENDING
 
 Sếp yêu cầu 11/09/2026: thay modal nhập cookie hiện tại (dùng script trong
 DevTools để extract + parseCookie auto) bằng form nhập thủ công 2 field.
@@ -205,9 +221,11 @@ giữ nguyên phần xử lý response.
 - [ ] Bấm "Đăng nhập bằng Cookie" → server trả `{accountId}`.
 - [ ] Account xuất hiện trong list, WS listener start, có thể chat.
 - [ ] Bỏ trống 1 trong 2 ô → báo "Nhập cả zpsid và zpw_sek".
+
+**Status**: 🟡 PENDING — cần Sếp duyệt flow cookie login 2 field.
 - [ ] Không còn script/DevTools/copy-paste chuỗi dài.
 
-### T18.6 — Polish + resize + cleanup
+### T18.6 — Polish + resize + cleanup — ✅ DONE (no-TTY guard, resize, ESC cleanup, UTF-8 rune-aware)
 - Detect terminal không hỗ trợ TUI (không có TTY) → in hướng dẫn dùng
   `zcloudd serv` rồi exit 1 thay vì crash.
 - Cleanup screen khi thoát (gửi `\x1b[?1049l` để thoát alternate buffer).
@@ -218,6 +236,8 @@ giữ nguyên phần xử lý response.
 
 **Verify:**
 - Chạy `./zcloudd tui < /dev/null` → in hướng dẫn thay vì crash.
+
+**Status**: ✅ DONE. No-TTY guard, resize handling, ESC cleanup, UTF-8 rune-aware composer/backspace, filter fix multi-rune paste.
 - Resize terminal nhỏ xuống 20 dòng → list vẫn render không vỡ.
 
 ## Files sẽ tạo / sửa

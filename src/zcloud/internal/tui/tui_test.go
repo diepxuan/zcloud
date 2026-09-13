@@ -241,3 +241,23 @@ func TestESC_StopsChatRefresh(t *testing.T) {
 		t.Errorf("expected chatRefreshActive=false after ESC")
 	}
 }
+
+// === Regression: tick chain phải continue sau reload ===
+// Bug 13/09: loadMessagesMsg (reload path) không schedule tick tiếp theo
+// → sau 1 reload chain bị break, không refresh realtime được nữa.
+func TestLoadMessages_ContinuesTickAfterReload(t *testing.T) {
+	m := newModel()
+	m.store = &Store{}
+	m.screen = screenChat
+	m.selectedAccountID = "acc"
+	m.selectedConvID = "conv"
+	m.chatRefreshActive = true // đã active từ trước (giả lập user đang chat)
+
+	// Reload path: loadMessagesMsg với chatRefreshActive=true → phải
+	// schedule tick tiếp theo (không trigger reload, không nil cmd).
+	updated, cmd := m.Update(loadMessagesMsg{rows: nil, err: nil})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Errorf("expected TickCmd after reload, got nil — would break chain")
+	}
+}
