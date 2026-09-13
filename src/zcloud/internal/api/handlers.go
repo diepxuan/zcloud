@@ -457,6 +457,24 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 	})
 	go StartZaloListener(s.Store, accountID, s.Logger)
 
+	// Auto-detect transport dựa trên session.CipherKey:
+	//   - CipherKey != "" → PC (AES-GCM, Zalo PC client + PC QR scan tương lai)
+	//   - CipherKey == "" → Web (AES-CBC, chat.zalo.me QR scan + cookie)
+	// Reset syncv2_state khi transport đổi để request-sync lại
+	// (câu hỏi Sếp #6 — pattern giống HandleCookieLogin).
+	transport := "web"
+	if session.CipherKey != "" {
+		transport = "pc"
+	}
+	prevTransport := s.getAccountTransport(accountID)
+	if err := s.Store.SetAccountTransport(accountID, transport); err != nil {
+		s.Logger.Printf("set transport %s: %v", accountID, err)
+	}
+	if prevTransport != "" && prevTransport != transport {
+		s.Logger.Printf("login: transport changed %s → %s, resetting syncv2_state", prevTransport, transport)
+		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
+	}
+
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
 }
 
