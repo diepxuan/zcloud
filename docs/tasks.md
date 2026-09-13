@@ -2,7 +2,7 @@
 
 > File này merge nội dung từ `master-plan.md` (kiến trúc + 4 mục tiêu) và
 > `audit.md` (trạng thái chi tiết từng module + tồn đọng). Cập nhật
-> 11/08/2026.
+> 13/09/2026 (đợt task 24).
 
 ---
 
@@ -72,7 +72,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | 🟡 Pending | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Pending | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
-| 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟡 Đề xuất | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
+| 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟡 Skeleton migration | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 
 ---
 
@@ -412,6 +412,44 @@ dùng khi sync từ mobile qua SQLCipher-encrypted SQLite.
 - **Không có bundle + capture → dừng task** (SQLCipher key reverse quá khó).
 
 **Estimate**: ~4-5 ngày (không tính Sếp cung cấp bundle).
+
+## 5.18. T24 — Tách bảng `zalo_accounts` ra khỏi `accounts` (3-tier identity)
+
+Chi tiết: [tasks/24-split-zalo-account.md](tasks/24-split-zalo-account.md).
+
+**Trạng thái 13/09/2026** — Skeleton migration done, còn ~2-3 sub-task nữa
+mới hoàn thiện. **Chờ Sếp duyệt trước khi tiếp tục.**
+
+| Sub | Trạng thái | Ghi chú |
+|:--:|:--:|---------|
+| T24.1 Migration `zalo_accounts` + backfill + FK nullable → FK NOT NULL | 🟢 Done (skeleton) | `internal/store/store_postgres.go`: `ensureZaloAccountsTablePG` + `ensureAccountZaloAccountIDPG` (FK RESTRICT) + `backfillZaloAccountsPG`. Migration chạy tự động lúc `migratePostgres()`. **Hiện FK dùng `ON DELETE RESTRICT` (bảo vệ data) — đề xuất trong task file là `CASCADE`. Cần Sếp quyết trước khi wire `DeleteZaloAccount`.** |
+| T24.2 `ZaloAccount` struct + `UpsertZaloAccount` + `FindAccountByZaloAccountID` + `FindOrCreateAccountByZaloAccountID` | 🟡 Pending | queries.go |
+| T24.3 `LogoutAccount` (refactor từ `DeleteAccount` — bỏ DELETE messages/conversations) + `DeleteZaloAccount` (mới) | 🟡 Pending | queries.go + store.go interface |
+| T24.4 Refactor `HandleCookieLogin` / `HandlePCLogin` theo 4-step flow + `HandleLogout` gọi `LogoutAccount` + `HandleDeleteAccount` (mới) | 🟡 Pending | handlers.go |
+| T24.5 UI `renderAccounts` nhánh logged-out (dot off + badge "Đã logout" + ẩn nút Restart + nút Xoá) | 🟡 Pending | chat.html |
+| T24.6 Tests: `TestUpsertZaloAccount`, `TestFindOrCreateAccountByZaloAccountID`, `TestLogoutAccount_PreservesMessages`, `TestDeleteZaloAccount_Cascade`, `TestLoginFlow_ReusesAccount` | 🟡 Pending | queries_test.go |
+| T24.7 Smoke live với Trần Ngọc Đức (login → logout → verify data còn → login lại → verify reuse acc_id) | 🟡 Pending | per §5.4 (conv `4866700441106275565`) |
+
+**Câu hỏi Sếp cần trả lời trước khi code tiếp** (xem task file §"Câu hỏi Sếp"):
+
+1. Account ID deterministic `acc_<user_id>` chấp nhận mất "test account" riêng? (Em đề xuất: chấp nhận)
+2. `syncv2_state` reset khi `transport` đổi (giữ khi cùng transport)? (Em đề xuất: có)
+3. Reuse account: `enabled=true` đầu tiên (sort created_at ASC)?
+4. UI filter: hiển thị account đã logout (status off)?
+5. Giữ nút "Xoá" trong UI (cascade sạch)?
+6. `syncv2_state` giữ nguyên khi cùng transport?
+7. `transport` KHÔNG reset khi logout thường (chỉ reset khi Sếp chủ động đổi transport)?
+
+**Decision cần thống nhất trước code**: FK `ON DELETE RESTRICT` (skeleton) vs `CASCADE` (đề xuất task file).
+- `RESTRICT`: bảo vệ data, nhưng UI nút "Xoá" không xoá được nếu còn acc reference.
+- `CASCADE`: tiện UI, nhưng SQL injection / bug có thể xoá nhầm data.
+
+**Phụ thuộc**:
+- T13 (multi-account filter) — `enabled` column đã có sẵn từ commit trước.
+- T18.3 (TUI composer chọn account) — cần deterministic acc_id.
+
+**Commit hiện có** (chưa push vì skeleton chưa wire vào queries/handlers):
+- File modified: `src/zcloud/internal/store/store_postgres.go` (chưa commit)
 
 ## 6. References
 
