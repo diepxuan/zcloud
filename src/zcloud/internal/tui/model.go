@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"golang.org/x/text/unicode/norm"
 )
 
 // screen là enum các màn trong wizard 3 bước:
@@ -125,6 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.convs = msg.rows
 		m.selectedConv = 0
+		m.filteringConv = false
 		m.filterConv = ""
 		m.err = nil
 		return m, nil
@@ -140,10 +140,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Sau khi load, bật tick refresh 3s/lần + fetch conv UpdatedAt lần đầu.
 		if m.screen == screenChat && !m.chatRefreshActive {
 			m.chatRefreshActive = true
-			// Khởi động tick + fetch UpdatedAt ngay (không đợi 3s đầu).
-			// Store.updatedAt ban đầu = 0 → sẽ trigger load đầu tiên nếu DB
-			// đã có tin cũ (skip vì messages đã load). Sau đó lastSeenConvAt
-			// = current sẽ chỉ refresh khi có tin mới.
 			return m, tea.Batch(
 				m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID),
 				TickCmd(3*time.Second),
@@ -195,7 +191,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.store.getConvUpdatedAtCmd(m.selectedAccountID, m.selectedConvID)
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		mm := m; return mm.handleKey(msg)
 	}
 	return m, nil
 }
@@ -228,14 +224,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleKeyAccounts xử lý phím ở màn 1 (chọn account + filter).
-// Khi filter active: Enter = confirm + move; Up/Down = navigate filtered;
-// Backspace = xoá filter char; Esc = clear filter (lần 2 = thoát).
-// Khi không filter: / = bật filter, các phím khác navigate.
 func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	filtering := m.filteringAcc
 	switch {
 	case filtering && key == "enter":
-		// Enter trong filter mode = chọn row đầu tiên khớp filter vào màn 2.
 		filtered := filteredAccounts(m.accounts, m.filterAcc)
 		if len(filtered) > 0 {
 			acc := filtered[0]
@@ -243,11 +235,14 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 			m.selectedAccountID = acc.ID
 			m.screen = screenConvs
 			m.selectedConv = 0
+			m.filteringAcc = false
+			m.filterAcc = ""
 			m.err = nil
 			if m.store != nil {
 				m.loading = true
 				return m, m.store.loadConvsCmd(acc.ID)
 			}
+			return m, nil
 		}
 		return m, nil
 	case filtering && (key == "up" || key == "k"):
@@ -260,7 +255,11 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 		if m.filterAcc == "" {
 			return m, nil
 		}
-		m.filterAcc = popLastGrapheme(m.filterAcc)
+		// Backspace xoá 1 rune (không phải 1 byte) — đủ cho emoji + dấu VN.
+		_, size := utf8.DecodeLastRuneInString(m.filterAcc)
+		if size > 0 {
+			m.filterAcc = m.filterAcc[:len(m.filterAcc)-size]
+		}
 		return m, nil
 	case filtering && key == "esc":
 		// Esc trong filter = clear filter (không thoát). Nếu filter đã rỗng
@@ -284,9 +283,15 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 	case key == "q":
 		m.quitting = true
 		return m, tea.Quit
-	case strings.HasPrefix(key, "/"):
+	case key == "/" || (len(key) > 1 && key[0] == '/'):
+		// "/" để bật filter. Nếu user gõ nhanh "/tran" 1 phát → match
+		// HasPrefix('/') + lấy phần sau làm filter text.
 		m.filteringAcc = true
-		m.filterAcc = strings.TrimPrefix(key, "/")
+		if len(key) > 1 {
+			m.filterAcc = key[1:]
+		} else {
+			m.filterAcc = ""
+		}
 		return m, nil
 	case key == "up" || key == "k":
 		m.moveUpAccFiltered(m.accounts, &m.selectedAccount)
@@ -299,8 +304,6 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 			m.selectedAccountID = acc.ID
 			m.screen = screenConvs
 			m.selectedConv = 0
-			m.filteringAcc = false
-			m.filterAcc = ""
 			m.err = nil
 			if m.store != nil {
 				m.loading = true
@@ -325,11 +328,14 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedConvID = conv.ID
 			m.screen = screenChat
 			m.composer = composerState{}
+			m.filteringConv = false
+			m.filterConv = ""
 			m.err = nil
 			if m.store != nil {
 				m.loading = true
 				return m, m.store.loadMessagesCmd(m.selectedAccountID, conv.ID)
 			}
+			return m, nil
 		}
 		return m, nil
 	case filtering && (key == "up" || key == "k"):
@@ -342,7 +348,10 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.filterConv == "" {
 			return m, nil
 		}
-		m.filterConv = popLastGrapheme(m.filterConv)
+		_, size := utf8.DecodeLastRuneInString(m.filterConv)
+		if size > 0 {
+			m.filterConv = m.filterConv[:len(m.filterConv)-size]
+		}
 		return m, nil
 	case filtering && key == "esc":
 		m.filterConv = ""
@@ -362,9 +371,13 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key == "q":
 		m.quitting = true
 		return m, tea.Quit
-	case strings.HasPrefix(key, "/"):
+	case key == "/" || (len(key) > 1 && key[0] == '/'):
 		m.filteringConv = true
-		m.filterConv = strings.TrimPrefix(key, "/")
+		if len(key) > 1 {
+			m.filterConv = key[1:]
+		} else {
+			m.filterConv = ""
+		}
 		return m, nil
 	case key == "up" || key == "k":
 		m.moveUpConvFiltered(m.convs, &m.selectedConv)
@@ -377,8 +390,6 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedConvID = conv.ID
 			m.screen = screenChat
 			m.composer = composerState{}
-			m.filteringConv = false
-			m.filterConv = ""
 			m.err = nil
 			if m.store != nil {
 				m.loading = true
@@ -400,10 +411,12 @@ func (m Model) handleKeyChat(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.composer.text == "" {
 			return m, nil
 		}
-		// Strip 1 grapheme cluster (bao gồm combining marks) cuối cùng.
-		// Backspace trên "ầ" (NFD = 3 runes) chỉ xoá 1 cluster,
-		// không strip 1 byte (sẽ corrupt UTF-8 multi-byte).
-		m.composer.text = popLastGrapheme(m.composer.text)
+		// Strip 1 rune (không phải 1 byte) để Backspace trên emoji (4 bytes)
+		// hoặc dấu combining bị corrupt không xảy ra.
+		_, size := utf8.DecodeLastRuneInString(m.composer.text)
+		if size > 0 {
+			m.composer.text = m.composer.text[:len(m.composer.text)-size]
+		}
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.composer.text)
@@ -417,39 +430,11 @@ func (m Model) handleKeyChat(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Nhận text vào composer.
 	if len(msg.Runes) > 0 {
-		m.composer.text = appendGrapheme(m.composer.text, msg.Runes)
+		m.composer.text += string(msg.Runes)
 	}
 	return m, nil
 }
 
-// appendFilterAcc thêm ký tự vào filterAcc (màn 1).
-func (m *Model) appendFilterAcc(key string) tea.Model {
-	if key == "backspace" {
-		if len(m.filterAcc) > 0 {
-			m.filterAcc = m.filterAcc[:len(m.filterAcc)-1]
-		}
-	} else if len(key) == 1 {
-		m.filterAcc += key
-	}
-	return m
-}
-
-// appendFilterConv thêm ký tự vào filterConv (màn 2).
-func (m *Model) appendFilterConv(key string) tea.Model {
-	if key == "backspace" {
-		if len(m.filterConv) > 0 {
-			m.filterConv = m.filterConv[:len(m.filterConv)-1]
-		}
-	} else if len(key) == 1 {
-		m.filterConv += key
-	}
-	return m
-}
-
-// moveUpFiltered/moveDownFiltered: di chuyển cursor trong list đã filter.
-// Trả về index trong list GỐC (không phải filtered) để Update không phá index.
-// Vì list gốc không đổi khi filter thay đổi, ta ánh xạ index đơn giản:
-// chọn row thứ N trong filtered → tìm row đó trong accounts[].
 // moveUpAccFiltered/moveDownAccFiltered: di chuyển cursor trong list accounts.
 // Nếu filter rỗng → logic đơn giản sel +/- (tối ưu + khớp test cũ).
 // Nếu filter có → ánh xạ index qua ID.
@@ -577,51 +562,6 @@ func filteredConvs(rows []ConversationRow, filter string) []ConversationRow {
 		}
 	}
 	return out
-}
-
-// appendGrapheme thêm 1 grapheme cluster (base char + combining marks)
-// vào text. Normalize thành NFC để:
-//   - NFD input ("a" + "̂" + "̀" = 3 runes) trở thành 1 cluster "ầ"
-//   - Hiển thị trong terminal ổn định
-//   - Backspace xoá đúng 1 grapheme visible
-func appendGrapheme(text string, runes []rune) string {
-	if len(runes) == 0 {
-		return text
-	}
-	cluster := string(runes)
-	// Nếu cluster đã là NFC form (1 rune) → append trực tiếp.
-	// Nếu là NFD (base + combining marks) → normalize → NFC.
-	normalized := norm.NFC.String(cluster)
-	return text + normalized
-}
-
-// popLastGrapheme xoá 1 grapheme cluster (NFC) cuối cùng của text.
-// Trả về text mới + số bytes đã xoá.
-func popLastGrapheme(text string) string {
-	if text == "" {
-		return text
-	}
-	// Normalize cả text thành NFC để cluster boundary rõ ràng.
-	nfc := norm.NFC.String(text)
-	// Tìm cluster cuối: iterate rune ngược, nếu gặp combining mark
-	// → tiếp tục lùi cho đến khi gặp base char (Mark nonspacing = Mn).
-	runes := []rune(nfc)
-	if len(runes) == 0 {
-		return text
-	}
-	// Pop combining marks trước (cuối → base).
-	lastBase := len(runes)
-	for i := len(runes) - 1; i >= 0; i-- {
-		if !unicode.Is(unicode.Mn, runes[i]) {
-			lastBase = i + 1
-			break
-		}
-	}
-	if lastBase == 0 {
-		// Toàn combining marks — giữ lại 1.
-		lastBase = 1
-	}
-	return nfc[:lastBase-1]
 }
 
 // View trả string để bubbletea in ra terminal.

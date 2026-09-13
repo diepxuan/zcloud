@@ -255,6 +255,13 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 						name = n
 					}
 					conv := Conversation{ID: idTo, Name: name}
+					// Pull lastMsgId từ clearUnreads — fix sync old messages khi
+					// data.msgs/data.groupMsgs rỗng cho hầu hết conv. Zalo cung cấp
+					// lastMsgId cho TẤT CẢ 156 conversations ở đây (kể cả khi không
+					// có realtime message mới).
+					if lastID := toString(m["lastMsgId"]); lastID != "" {
+						conv.LastMsgID = lastID
+					}
 					if g, ok := m["isGroup"].(float64); ok && g == 1 {
 						conv.Type = ConvGroup
 					}
