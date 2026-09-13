@@ -309,6 +309,15 @@ body{
   transition:all var(--dur-1) var(--ease);
 }
 .mg-item .mg-del:hover{background:var(--c-danger);color:var(--c-text-onbrand)}
+.mg-item .mg-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:20px;padding:0 var(--s-2);border-radius:var(--r-sm);
+  font-size:var(--fz-xs);font-weight:var(--fw-m);line-height:1;
+  margin-right:var(--s-1);user-select:none;
+}
+.mg-item .mg-badge-pc{background:#dbeafe;color:#1e40af}
+.mg-item .mg-badge-web{background:#f1f5f9;color:#475569}
+.mg-item .mg-badge-off{background:#fee2e2;color:#991b1b}
 .mg-item .mg-enabled-wrap{
   display:flex;align-items:center;justify-content:center;
   padding:0 var(--s-1);flex-shrink:0;
@@ -786,15 +795,22 @@ function renderAccounts(){
 			+'<div class="mg-row2">'
 			+'<span class="mg-meta">'+esc(a.id)+'</span>'
 			+'</div>'
-			// row 3: badge trang thai + nut Restart + nut Xoa
+			// row 3: badge trang thai + transport + nut Restart + nut Xoa (T24)
 			+'<div class="mg-row3">'
 			+showBadge
-			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button>'
-			+'<button class="mg-btn" onclick="syncV2Start(\''+uId+'\')" title="Sync lịch sử sâu qua SyncV2">⤓ SyncV2</button>'
-			+(a.disabledReason==='auth_expired'?'<button class="mg-btn mg-btn-rel" onclick="showAddModal(\''+uId+'\')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>':'')
-			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
+			// Transport badge: 'pc' (primary — xanh dương), 'web' (fallback — xám),
+			// '' (đã logout — đỏ nhạt).
+			+(a.transport==='pc'?'<span class="mg-badge mg-badge-pc" title="Đăng nhập bằng Zalo PC (primary)">PC</span>':
+			  a.transport==='web'?'<span class="mg-badge mg-badge-web" title="Đăng nhập bằng Zalo Web (fallback)">Web</span>':
+			  '<span class="mg-badge mg-badge-off" title="Đã đăng xuất">Off</span>')
+			// Nếu chưa có session (đã logout) → ẩn Restart, hiện nút Login lại.
+			+(a.hasActiveSession?
+			  '<button class="mg-btn" onclick="restartListener(''+uId+'')">Restart</button>':
+			  '<button class="mg-btn mg-btn-rel" onclick="showAddModal(''+uId+'')" title="Đăng nhập lại bằng Cookie mới">🔑 Login</button>')
+			+'<button class="mg-btn" onclick="syncV2Start(''+uId+'')" title="Sync lịch sử sâu qua SyncV2"'+(a.transport!=='pc'?' disabled':'')+'>⤓ SyncV2</button>'
+			+(a.disabledReason==='auth_expired'?'<button class="mg-btn mg-btn-rel" onclick="showAddModal(''+uId+'')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>':'')
+			+'<button class="mg-del" onclick="xd(''+uId+'')" title="Xoá toàn bộ user Zalo khỏi zcloud (cascade)">🗑</button>'
 			+'</div>'
-			+'</div>';
 		ul.appendChild(dv);
 	});
 }
@@ -1454,9 +1470,12 @@ if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg 
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
 dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);
 scrollLastMessage(ml,dv,false);}}catch(e){}}
-async function xd(id){if(!confirm('Xoá user '+id+'?'))return;
-try{await fetch('/api/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id})})}catch(e){}
-window.location.reload()}
+// xd xoá toàn bộ user Zalo khỏi zcloud (T24.3 — cascade: accounts +
+// sessions + messages + conversations + media + contacts + zalo_accounts).
+// Confirm 2 lần vì hành động không thể undo. Khác HandleLogout (chỉ xoá
+// session, giữ data) — UI có 2 nút riêng: "Đăng xuất" (gọi /api/logout)
+// và nút "🗑" (gọi hàm này).
+async function xd(id){if(!confirm('Xoá user '+id+' khỏi zcloud? Hành động này KHÔNG THỂ undo — toàn bộ tin nhắn, media, danh bạ sẽ bị xoá.'))return;if(!confirm('Xác nhận lần 2: xoá vĩnh viễn '+id+'?'))return;try{var r=await fetch('/api/account/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:id})});var d=await r.json();if(!r.ok||!d.ok){alert('Xoá thất bại: '+(d&&d.error||r.statusText));return}}catch(e){alert('Xoá thất bại: '+e);return}window.location.reload()}
 function rd(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'d').toLowerCase()}
 function fc(q){
   // Chỉ filter theo tên conv (.cv-n), KHÔNG match tên account (.cv-acc)

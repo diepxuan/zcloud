@@ -31,6 +31,7 @@ const (
 	defaultAutoSyncInterval = 10 * time.Minute
 	autoSyncMinInterval     = 30 * time.Second
 	autoSyncConvDelay       = 500 * time.Millisecond // throttle giữa các conv
+	sessionCleanupMaxAge    = 30 * 24 * time.Hour     // xoá sessions is_active=0 cũ hơn 30 ngày (T24.8)
 )
 
 // NewSyncScheduler tạo scheduler. interval <= 0 → dùng mặc định 10 phút.
@@ -99,6 +100,15 @@ func (s *SyncScheduler) tick(ctx context.Context) {
 		s.running = false
 		s.mu.Unlock()
 	}()
+
+	// Session cleanup (T24.8 câu hỏi Sếp #3): xoá sessions is_active=0 cũ hơn 30 ngày
+	// mỗi tick (interval = 10 phút mặc định). Best-effort, không block scheduler
+	// nếu fail.
+	if n, err := s.store.DeleteExpiredSessions(sessionCleanupMaxAge); err != nil {
+		s.logger.Printf("session-cleanup: %v", err)
+	} else if n > 0 {
+		s.logger.Printf("session-cleanup: removed %d expired sessions (older than %s)", n, sessionCleanupMaxAge)
+	}
 
 	accounts, err := s.store.ListActiveAccountIDs()
 	if err != nil {

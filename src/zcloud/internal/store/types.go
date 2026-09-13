@@ -20,12 +20,31 @@ type Account struct {
 	Enabled     bool      `json:"enabled"` // false = ẩn khỏi UI nhưng vẫn listen WS
 	DisabledReason string  `json:"disabledReason,omitempty"` // "" | "auth_expired" | "user"
 	Transport   string    `json:"transport,omitempty"` // ""=web | "pc"
+	ZaloAccountID string  `json:"-"` // FK → zalo_accounts.id (T24 3-tier identity). sql.NullString khi scan.
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	// SyncV2State là blob JSONB persist trạng thái SyncV2 backup flow
 	// (T22.3 Phase B). Rỗng nếu account chưa từng start syncv2. Schema xem
 	// `internal/core/syncv2.go:SyncV2State`.
 	SyncV2State string `json:"syncv2State,omitempty"`
+}
+
+// ZaloAccount lưu thông tin identity Zalo (UID, tên, avatar) ở tầng immutable
+// — KHÔNG bị xoá khi logout. Tách khỏi Account (zcloud-side state) để:
+//   - Logout giữ identity + data đã sync, chỉ xoá sessions.
+//   - DeleteZaloAccount cascade sạch toàn bộ footprint khi Sếp bấm Xoá.
+//
+// Quan hệ: 1 zalo_account → N accounts (1 UID có thể login qua nhiều
+// transport — vd PC chính + Web backup — nhưng em quyết định reuse cùng
+// accounts row cho cùng UID theo câu hỏi #3 Sếp duyệt).
+type ZaloAccount struct {
+	ID          string    `json:"id"`          // 'za_<user_id>'
+	ZaloUserID  string    `json:"zaloUserId"`  // UID thuần
+	DisplayName string    `json:"displayName"`
+	Avatar      string    `json:"avatar"`
+	Phone       string    `json:"phone"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type Session struct {

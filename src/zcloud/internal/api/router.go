@@ -33,6 +33,7 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	mux.HandleFunc("GET /api/account/list", s.HandleAccountList)
 	mux.HandleFunc("POST /api/account/restart", s.HandleAccountRestart)
 	mux.HandleFunc("POST /api/account/enabled", s.HandleAccountSetEnabled)
+	mux.HandleFunc("POST /api/account/delete", s.HandleDeleteAccount)
 	mux.HandleFunc("GET /api/media/jobs", s.HandleMediaJobs)
 	mux.HandleFunc("POST /api/media/redownload", s.HandleMediaRedownload)
 	mux.HandleFunc("POST /api/sync/v2/start", s.HandleSyncV2Start)

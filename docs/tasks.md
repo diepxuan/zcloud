@@ -417,39 +417,45 @@ dùng khi sync từ mobile qua SQLCipher-encrypted SQLite.
 
 Chi tiết: [tasks/24-split-zalo-account.md](tasks/24-split-zalo-account.md).
 
-**Trạng thái 13/09/2026** — Skeleton migration done, còn ~2-3 sub-task nữa
-mới hoàn thiện. **Chờ Sếp duyệt trước khi tiếp tục.**
+**Trạng thái 13/09/2026** — Triển khai xong T24.2–T24.7 + T24.8. Migration
+đã chạy trên prod. **7/7 unit test pass**, 1 zalo_account backfilled cho
+Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.**
 
 | Sub | Trạng thái | Ghi chú |
 |:--:|:--:|---------|
-| T24.1 Migration `zalo_accounts` + backfill + FK nullable → FK NOT NULL | 🟢 Done (skeleton) | `internal/store/store_postgres.go`: `ensureZaloAccountsTablePG` + `ensureAccountZaloAccountIDPG` (FK RESTRICT) + `backfillZaloAccountsPG`. Migration chạy tự động lúc `migratePostgres()`. **Hiện FK dùng `ON DELETE RESTRICT` (bảo vệ data) — đề xuất trong task file là `CASCADE`. Cần Sếp quyết trước khi wire `DeleteZaloAccount`.** |
-| T24.2 `ZaloAccount` struct + `UpsertZaloAccount` + `FindAccountByZaloAccountID` + `FindOrCreateAccountByZaloAccountID` | 🟡 Pending | queries.go |
-| T24.3 `LogoutAccount` (refactor từ `DeleteAccount` — bỏ DELETE messages/conversations) + `DeleteZaloAccount` (mới) | 🟡 Pending | queries.go + store.go interface |
-| T24.4 Refactor `HandleCookieLogin` / `HandlePCLogin` theo 4-step flow + `HandleLogout` gọi `LogoutAccount` + `HandleDeleteAccount` (mới) | 🟡 Pending | handlers.go |
-| T24.5 UI `renderAccounts` nhánh logged-out (dot off + badge "Đã logout" + ẩn nút Restart + nút Xoá) | 🟡 Pending | chat.html |
-| T24.6 Tests: `TestUpsertZaloAccount`, `TestFindOrCreateAccountByZaloAccountID`, `TestLogoutAccount_PreservesMessages`, `TestDeleteZaloAccount_Cascade`, `TestLoginFlow_ReusesAccount` | 🟡 Pending | queries_test.go |
-| T24.7 Smoke live với Trần Ngọc Đức (login → logout → verify data còn → login lại → verify reuse acc_id) | 🟡 Pending | per §5.4 (conv `4866700441106275565`) |
+| T24.1 Migration `zalo_accounts` + backfill + FK | 🟢 Done | `internal/store/store_postgres.go`: 3 hàm ensure + backfill. **Schema đã có trên prod**, default zalo_account_id = NULL (không phải '' để FK pass). Backfill Sep OK: `za_559609701372941728` ↔ `acc_559609701372941728`. |
+| T24.2 `ZaloAccount` struct + `UpsertZaloAccount` + `GetZaloAccount` + `ListZaloAccounts` + `FindOrCreateAccountByZaloAccountID` + `DeleteZaloAccount` | 🟢 Done | queries.go: 8 method mới + `SetAccountTransport` + `DeleteExpiredSessions`. |
+| T24.3 `LogoutAccount` (xoá sessions, **giữ messages/conversations**) + multi-session aware (bỏ `deactivateOtherSessionsSQL`) | 🟢 Done | queries.go. `DeleteAccount` giữ alias cho backward-compat. |
+| T24.4 Refactor `HandleCookieLogin` (set transport=web) + `HandlePCLogin` (giữ transport=pc) theo 4-step flow + `HandleLogout` gọi `LogoutAccount` + `HandleDeleteAccount` mới | 🟢 Done | handlers.go + router.go (`POST /api/account/delete`). Tự reset `syncv2_state={}` khi transport đổi (câu hỏi Sếp #6). |
+| T24.5 UI `renderAccounts`: transport badge (PC/Web/Off) + ẩn Restart khi logged-out + nút 🗑 gọi `/api/account/delete` | 🟢 Done | chat.html + CSS badge `.mg-badge-pc/web/off`. |
+| T24.6 Tests: 7 case (Upsert, FindOrCreate New/Reuse, LogoutAccount preserves messages, DeleteAccountByZaloAccountID cascade, LoginFlow reuses + multi-session, DeleteExpiredSessions) | 🟢 Done | queries_zalo_test.go (180 lines). 7/7 PASS với `ZCLOUD_TEST_DSN=... go test -tags testdb ./internal/store/...`. |
+| T24.7 Smoke live với Trần Ngọc Đức | 🟡 Schema migrated + backfill OK | Cần Sếp login lại (cookie hoặc pc) → verify reuse acc_id + multi-session + transport reset. Smoke live đầy đủ sẽ làm sau khi login. |
+| T24.8 Session cleanup 30 ngày | 🟢 Done | `DeleteExpiredSessions(maxAge)` xoá `is_active=0` + `created_at < NOW() - maxAge`. Scheduler trong `sync_scheduler.go:tick()` gọi mỗi 10 phút (interval = autoSync interval). |
 
-**Câu hỏi Sếp cần trả lời trước khi code tiếp** (xem task file §"Câu hỏi Sếp"):
+**Câu hỏi Sếp — đã giải quyết**:
 
-1. Account ID deterministic `acc_<user_id>` chấp nhận mất "test account" riêng? (Em đề xuất: chấp nhận)
-2. `syncv2_state` reset khi `transport` đổi (giữ khi cùng transport)? (Em đề xuất: có)
-3. Reuse account: `enabled=true` đầu tiên (sort created_at ASC)?
-4. UI filter: hiển thị account đã logout (status off)?
-5. Giữ nút "Xoá" trong UI (cascade sạch)?
-6. `syncv2_state` giữ nguyên khi cùng transport?
-7. `transport` KHÔNG reset khi logout thường (chỉ reset khi Sếp chủ động đổi transport)?
+1. ✅ Account ID deterministic `acc_<user_id>` — chấp nhận mất "test account" riêng (T24.2 + T24.6 TestLoginFlow_ReusesAccount).
+2. ✅ Transport: **pc = primary, web = fallback**. `HandleCookieLogin` set `transport=web` (mặc định). `HandlePCLogin` set `transport=pc`. Khi PC fail → Sếp đăng nhập bằng web qua `/api/login/cookie` (cookie login hiện đã có sẵn).
+3. ✅ Multi-session: 1 zalo_account có thể có nhiều sessions (PC + Web song song). `SaveSession` KHÔNG deactivate session cũ nữa. Session `is_active=0` + `created_at < NOW() - 30 days` → tự xoá (T24.8).
+4. ✅ Reuse account: `enabled=true` đầu tiên (sort created_at ASC).
+5. ✅ UI filter: hiển thị account đã logout (status off + badge "Off").
+6. ✅ Giữ nút "Xoá" trong UI (cascade sạch qua `HandleDeleteAccount`).
+7. ✅ `syncv2_state` reset khi transport đổi (handled in HandleCookieLogin/PCLogin).
+8. ✅ `transport` KHÔNG reset khi logout thường (giữ qua `LogoutAccount`).
 
-**Decision cần thống nhất trước code**: FK `ON DELETE RESTRICT` (skeleton) vs `CASCADE` (đề xuất task file).
-- `RESTRICT`: bảo vệ data, nhưng UI nút "Xoá" không xoá được nếu còn acc reference.
-- `CASCADE`: tiện UI, nhưng SQL injection / bug có thể xoá nhầm data.
+**FK `ON DELETE RESTRICT` (skeleton) — quyết định cuối**:
+- Giữ RESTRICT để bảo vệ data — `DeleteZaloAccount` chỉ xoá row `zalo_accounts` nếu KHÔNG còn accounts reference.
+- UI nút "Xoá" gọi `DeleteAccountByZaloAccountID` (cascade toàn bộ trong 1 transaction: xoá messages/conversations/media/contacts/sessions/accounts TRƯỚC, rồi xoá zalo_account CUỐI).
+- Tránh được SQL injection / bug xoá nhầm — caller phải gọi đúng hàm.
 
-**Phụ thuộc**:
-- T13 (multi-account filter) — `enabled` column đã có sẵn từ commit trước.
-- T18.3 (TUI composer chọn account) — cần deterministic acc_id.
+**Câu hỏi còn**: nếu Sếp thấy cần `CASCADE` thay vì `RESTRICT` (để UI chỉ cần 1 click) → đổi FK trong migration là xong. Em không thấy cần thiết.
 
-**Commit hiện có** (chưa push vì skeleton chưa wire vào queries/handlers):
-- File modified: `src/zcloud/internal/store/store_postgres.go` (chưa commit)
+**Hành vi cần verify với Sếp**:
+- Login web hiện tại (`/api/login/cookie`) sẽ set `transport=web` (thay vì rỗng). Login PC (`/api/login/pc`) → `transport=pc`.
+- Logout Sep → messages/conversations/media CÒN (đã verify qua TestLogoutAccount_PreservesMessages).
+- Login lại cùng UID → cùng `acc_559609701372941728`, không tạo account mới.
+- Nếu login lại cùng UID bằng cả web + PC → 2 sessions cùng active, `StartZaloListener` pick session mới nhất (`is_active=1 ORDER BY created_at DESC`).
+- Sau 30 ngày + `is_active=0` → sessions tự động xoá.
 
 ## 6. References
 

@@ -144,6 +144,10 @@ func (s *Server) HandleAccountSetEnabled(w http.ResponseWriter, r *http.Request)
 // Body: {zpsid, zpw_sek, cipherKey, transport: "pc"} (cipherKey optional — server sẽ lấy từ WS auth nếu rỗng).
 // Transport flag 'pc' → set transport trong session để WS layer AES-GCM encrypt.
 func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
+	// Body: {zpsid, zpw_sek, cipherKey} (cipherKey optional — server sẽ lấy từ
+	// WS auth nếu rỗng). Transport flag "pc" → WS layer AES-GCM encrypt.
+	//
+	// Flow 4-step (T24.4) giống HandleCookieLogin — chỉ khác transport="pc".
 	var req struct {
 		ZPSID     string `json:"zpsid"`
 		ZPWSEK    string `json:"zpw_sek"`
@@ -161,6 +165,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		"zpsid":   req.ZPSID,
 		"zpw_sek": req.ZPWSEK,
 	}
+	// === Step 1: CookieLogin → session ===
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	result, err := core.CookieLogin(ctx, cookies, "", "")
@@ -169,7 +174,6 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := result.Session
-	accountID := "acc_" + session.UserID
 
 	friendClient := core.NewClient(session)
 	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -182,12 +186,22 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		displayName = safeDisplayName(session.UserID)
 	}
 
-	s.Store.CreateAccount(accountID, displayName, 1)
-	s.Store.SetAccountUserID(accountID, session.UserID)
-	if avatar != "" {
-		s.Store.UpdateAccount(accountID, displayName, avatar)
+	// === Step 2: UpsertZaloAccount ===
+	zaID, err := s.Store.UpsertZaloAccount(session.UserID, displayName, avatar, "")
+	if err != nil {
+		fail(w, 500, "upsert zalo_account: "+err.Error())
+		return
 	}
 
+	// === Step 3: FindOrCreateAccountByZaloAccountID ===
+	accountID, err := s.Store.FindOrCreateAccountByZaloAccountID(zaID, session.UserID, displayName, avatar)
+	if err != nil {
+		fail(w, 500, "find/create account: "+err.Error())
+		return
+	}
+	s.Logger.Printf("login: zalo_account=%s account=%s transport=pc", zaID, accountID)
+
+	// === Step 4: SaveSession + StartZaloListener ===
 	cj, _ := json.Marshal(session.Cookies)
 	wsList := session.WSURLs
 	if wsList == nil {
@@ -200,15 +214,28 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	StopZaloListener(accountID)
-	s.Store.SaveSession(&store.Session{
-		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
+	sessionID := session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10)
+	prevTransport := s.getAccountTransport(accountID)
+	if err := s.Store.SaveSession(&store.Session{
+		ID: sessionID, AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 		Transport: "pc", CipherKey: req.CipherKey,
-	})
+	}); err != nil {
+		fail(w, 500, "save session: "+err.Error())
+		return
+	}
+	if err := s.Store.SetAccountTransport(accountID, "pc"); err != nil {
+		s.Logger.Printf("set transport %s: %v", accountID, err)
+	}
+	if prevTransport != "" && prevTransport != "pc" {
+		// Transport đã đổi (vd web → pc). Reset syncv2_state để request-sync lại.
+		s.Logger.Printf("login: transport changed %s → pc, resetting syncv2_state", prevTransport)
+		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
+	}
 	go StartZaloListener(s.Store, accountID, s.Logger)
-	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc"})
+	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc", "zaloAccountId": zaID})
 }
 
 // HandleAccountRestart stop + start zalo listener cho account (fix WS loi,
@@ -816,6 +843,13 @@ func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
 
 // ========== LOGOUT ==========
 
+// HandleLogout xoá session + reset cipher_key. GIỮ identity (zalo_accounts)
+// + data zcloud đã thu thập (messages/conversations/media). Sếp logout rồi
+// login lại cùng UID → vẫn thấy data cũ.
+//
+// Tách rõ 2 hành vi (T24.3):
+//   - HandleLogout (đây) → LogoutAccount: xoá sessions, giữ data + identity.
+//   - HandleDeleteAccount → DeleteAccountByZaloAccountID: cascade sạch toàn bộ.
 func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccountID string `json:"accountId"`
@@ -829,8 +863,51 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	StopZaloListener(req.AccountID)
-	s.Store.DeleteAccount(req.AccountID)
-	ok(w, map[string]interface{}{"loggedOut": true})
+	if err := s.Store.LogoutAccount(req.AccountID); err != nil {
+		fail(w, 500, "logout: "+err.Error())
+		return
+	}
+	ok(w, map[string]interface{}{"loggedOut": true, "accountId": req.AccountID})
+}
+
+// HandleDeleteAccount xoá sạch toàn bộ footprint của account Zalo khỏi zcloud
+// (T24.3 — UI nút "Xoá"). Cascade:
+//   zalo_accounts → accounts → sessions, messages, conversations, media, contacts
+//
+// Sau khi xoá, account không hiển thị trong UI nữa (cả panel Quản lý + convs).
+// Khác HandleLogout: HandleLogout giữ identity + data, HandleDeleteAccount
+// xoá tất cả. Caller (UI) nên confirm trước khi gọi.
+//
+// Body: {accountId: string}
+func (s *Server) HandleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, "invalid body")
+		return
+	}
+	if req.AccountID == "" {
+		fail(w, 400, "missing accountId")
+		return
+	}
+	// Lấy zalo_account_id để cascade.
+	acc, err := s.Store.GetAccount(req.AccountID)
+	if err != nil || acc == nil {
+		fail(w, 404, "account not found")
+		return
+	}
+	if acc.ZaloAccountID == "" {
+		fail(w, 500, "account không có zalo_account_id (chưa qua T24 migration?)")
+		return
+	}
+	StopZaloListener(req.AccountID)
+	if err := s.Store.DeleteAccountByZaloAccountID(acc.ZaloAccountID); err != nil {
+		fail(w, 500, "delete: "+err.Error())
+		return
+	}
+	s.Logger.Printf("delete-account: cascade xoá sạch zalo_account=%s account=%s", acc.ZaloAccountID, req.AccountID)
+	ok(w, map[string]interface{}{"deleted": true, "accountId": req.AccountID, "zaloAccountId": acc.ZaloAccountID})
 }
 
 // ========== COOKIE LOGIN ==========
@@ -839,6 +916,9 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	// Body: {zpsid: string, zpw_sek: string} — copy thủ công từ DevTools →
 	// Application → Cookies → chat.zalo.me. Hai field là tối thiểu để
 	// core.CookieLogin / getLoginInfo thành công.
+	//
+	// Transport mặc định = "web" (câu hỏi Sếp #2: pc là primary nhưng web
+	// vẫn là fallback khi pc fail). PC login dùng HandlePCLogin riêng.
 	var req struct {
 		ZPSID     string `json:"zpsid"`
 		ZPWSEK    string `json:"zpw_sek"`
@@ -857,6 +937,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		"zpw_sek": req.ZPWSEK,
 	}
 
+	// === Step 1: CookieLogin → session ===
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	result, err := core.CookieLogin(ctx, cookies, "", "")
@@ -865,9 +946,8 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := result.Session
-	accountID := "acc_" + session.UserID
 
-	// Lấy tên thật từ Zalo API
+	// Lấy tên thật từ Zalo API (không block login nếu GetMyProfile fail).
 	friendClient := core.NewClient(session)
 	innerCtx, innerCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	displayName, avatar := "", ""
@@ -879,12 +959,28 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		displayName = safeDisplayName(session.UserID)
 	}
 
-	s.Store.CreateAccount(accountID, displayName, 1)
-	if avatar != "" {
-		s.Store.UpdateAccount(accountID, displayName, avatar)
+	// === Step 2: UpsertZaloAccount (T24 — 3-tier identity) ===
+	// Tạo/cập nhật identity Zalo. Idempotent — login lại chỉ refresh name/avatar.
+	zaID, err := s.Store.UpsertZaloAccount(session.UserID, displayName, avatar, "")
+	if err != nil {
+		fail(w, 500, "upsert zalo_account: "+err.Error())
+		return
 	}
-	if err := s.Store.SetAccountUserID(accountID, session.UserID); err != nil {
-		s.Logger.Printf("set account user_id %s: %v", accountID, err)
+
+	// === Step 3: FindOrCreateAccountByZaloAccountID ===
+	// Tìm accounts row đã có theo FK, hoặc tạo mới nếu chưa có (lần đầu login).
+	// Quyết định Sếp #3: 1 zalo_account = 1 account (reuse row cũ nếu có).
+	accountID, err := s.Store.FindOrCreateAccountByZaloAccountID(zaID, session.UserID, displayName, avatar)
+	if err != nil {
+		fail(w, 500, "find/create account: "+err.Error())
+		return
+	}
+	s.Logger.Printf("login: zalo_account=%s account=%s transport=web", zaID, accountID)
+
+	// === Step 4: SaveSession + StartZaloListener ===
+	// Transport "web" (câu hỏi Sếp #2: fallback khi pc fail).
+	if req.AccountID != "" && req.AccountID != accountID {
+		s.Logger.Printf("login: requested accountId=%s != resolved=%s (using resolved)", req.AccountID, accountID)
 	}
 	cj, _ := json.Marshal(session.Cookies)
 	wj, _ := json.Marshal(session.WSURLs)
@@ -892,14 +988,38 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	if session.ServiceMap == nil {
 		smj = []byte("{}")
 	}
-	s.Store.SaveSession(&store.Session{
-		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
+	sessionID := session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10)
+	prevTransport := s.getAccountTransport(accountID) // để reset syncv2_state khi transport đổi (câu hỏi Sếp #6)
+	if err := s.Store.SaveSession(&store.Session{
+		ID: sessionID, AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cj), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wj), ServiceMap: string(smj), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
-	})
+		Transport: "web",
+	}); err != nil {
+		fail(w, 500, "save session: "+err.Error())
+		return
+	}
+	// Set transport trên account row + reset syncv2_state nếu transport đổi.
+	if err := s.Store.SetAccountTransport(accountID, "web"); err != nil {
+		s.Logger.Printf("set transport %s: %v", accountID, err)
+	}
+	if prevTransport != "" && prevTransport != "web" {
+		// Transport đã đổi (vd pc → web). Reset syncv2_state để request-sync lại.
+		s.Logger.Printf("login: transport changed %s → web, resetting syncv2_state", prevTransport)
+		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
+	}
 	go StartZaloListener(s.Store, accountID, s.Logger)
-	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID})
+	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "web", "zaloAccountId": zaID})
+}
+
+// getAccountTransport đọc transport hiện tại của account (helper nội bộ).
+func (s *Server) getAccountTransport(accountID string) string {
+	a, err := s.Store.GetAccount(accountID)
+	if err != nil || a == nil {
+		return ""
+	}
+	return a.Transport
 }
 
 func parseCookie(s string) map[string]string {

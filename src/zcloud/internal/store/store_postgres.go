@@ -50,6 +50,15 @@ func (s *Store) migratePostgres() error {
 	if err := s.ensureAccountTransportPG(); err != nil {
 		return err
 	}
+	if err := s.ensureZaloAccountsTablePG(); err != nil {
+		return err
+	}
+	if err := s.ensureAccountZaloAccountIDPG(); err != nil {
+		return err
+	}
+	if err := s.backfillZaloAccountsPG(); err != nil {
+		return err
+	}
 	return s.ensureSessionTransportPG()
 }
 
@@ -89,6 +98,22 @@ CREATE TABLE IF NOT EXISTS accounts (
     note            TEXT DEFAULT '',
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
+);`
+
+// migrationZaloAccountsPG tạo bảng zalo_accounts — lưu thông tin Zalo user
+// (zalo_user_id, display_name, avatar, phone) **không bao giờ xoá khi logout**.
+// accounts.zalo_account_id FK trỏ về đây (ON DELETE RESTRICT = bảo vệ nếu
+// còn accounts tham chiếu). Sep account vẫn hiển thị trong panel Quản lý
+// sau khi logout, chỉ status dot=off vì không có session.
+const migrationZaloAccountsPG = `
+CREATE TABLE IF NOT EXISTS zalo_accounts (
+    id              TEXT PRIMARY KEY,
+    zalo_user_id    TEXT NOT NULL UNIQUE,
+    display_name    TEXT NOT NULL DEFAULT '',
+    avatar          TEXT NOT NULL DEFAULT '',
+    phone           TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`
 
 // ensureAccountUserIDPG thêm cột user_id vào accounts nếu thiếu.
@@ -365,3 +390,86 @@ CREATE TABLE IF NOT EXISTS contacts (
     PRIMARY KEY (account_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_account ON contacts(account_id);`
+
+// ensureZaloAccountsTablePG tạo bảng zalo_accounts nếu chưa có.
+// Xem migrationZaloAccountsPG ở trên.
+func (s *Store) ensureZaloAccountsTablePG() error {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='zalo_accounts')`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check zalo_accounts: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := s.db.Exec(migrationZaloAccountsPG); err != nil {
+		return fmt.Errorf("create zalo_accounts: %w", err)
+	}
+	return nil
+}
+
+// ensureAccountZaloAccountIDPG thêm cột accounts.zalo_account_id FK → zalo_accounts.id.
+// RESTRICT: không xoá zalo_account nếu còn accounts tham chiếu (bảo vệ data).
+func (s *Store) ensureAccountZaloAccountIDPG() error {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='accounts' AND column_name='zalo_account_id')`).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check accounts.zalo_account_id: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	// Step 1: add nullable column (no FK yet to allow backfill).
+	// zalo_account_id nullable (NULL = tài khoản chưa qua T24, vd OA).
+	// Dùng NULL thay vì '' vì FK RESTRICT không match được empty string.
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS zalo_account_id TEXT DEFAULT NULL`); err != nil {
+		return fmt.Errorf("add accounts.zalo_account_id: %w", err)
+	}
+	// Step 2: add FK constraint if missing. ON DELETE RESTRICT = không xoá zalo_acc khi còn acc reference.
+	var fkExists bool
+	err = s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_schema=current_schema() AND table_name='accounts' AND constraint_name='accounts_zalo_account_id_fkey')`).Scan(&fkExists)
+	if err != nil {
+		return fmt.Errorf("check FK: %w", err)
+	}
+	if !fkExists {
+		if _, err := s.db.Exec(`ALTER TABLE accounts ADD CONSTRAINT accounts_zalo_account_id_fkey FOREIGN KEY (zalo_account_id) REFERENCES zalo_accounts(id) ON DELETE RESTRICT`); err != nil {
+			return fmt.Errorf("add FK: %w", err)
+		}
+	}
+	return nil
+}
+
+// backfillZaloAccountsPG backfill zalo_accounts từ accounts hiện có + set FK.
+// Chạy 1 lần sau migration: với mỗi account có user_id, tạo zalo_account nếu
+// chưa có (id='za_'+user_id) rồi set accounts.zalo_account_id.
+func (s *Store) backfillZaloAccountsPG() error {
+	// Chỉ backfill account chưa có zalo_account_id mà có user_id.
+	rows, err := s.db.Query(`SELECT id, user_id, display_name, avatar FROM accounts WHERE zalo_account_id IS NULL AND user_id <> ''`)
+	if err != nil {
+		return fmt.Errorf("query accounts to backfill: %w", err)
+	}
+	defer rows.Close()
+	type backfill struct{ id, userID, name, avatar string }
+	var bs []backfill
+	for rows.Next() {
+		var b backfill
+		if err := rows.Scan(&b.id, &b.userID, &b.name, &b.avatar); err != nil {
+			return err
+		}
+		bs = append(bs, b)
+	}
+	if len(bs) == 0 {
+		return nil
+	}
+	for _, b := range bs {
+		zaID := "za_" + b.userID
+		// Insert zalo_account (idempotent — ON CONFLICT DO NOTHING).
+		if _, err := s.db.Exec(`INSERT INTO zalo_accounts (id, zalo_user_id, display_name, avatar) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING`, zaID, b.userID, b.name, b.avatar); err != nil {
+			return fmt.Errorf("insert zalo_account %s: %w", zaID, err)
+		}
+		if _, err := s.db.Exec(`UPDATE accounts SET zalo_account_id = $1 WHERE id = $2`, zaID, b.id); err != nil {
+			return fmt.Errorf("update account %s: %w", b.id, err)
+		}
+	}
+	return nil
+}
