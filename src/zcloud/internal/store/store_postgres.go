@@ -60,7 +60,8 @@ func (s *Store) ensureSessionServiceMapPG() error {
 	err := s.db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'sessions' AND column_name = 'service_map'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'sessions' AND column_name = 'service_map'
 		)`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check service_map: %w", err)
@@ -68,7 +69,7 @@ func (s *Store) ensureSessionServiceMapPG() error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN service_map TEXT DEFAULT '{}'`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS service_map TEXT DEFAULT '{}'`); err != nil {
 		return fmt.Errorf("add service_map: %w", err)
 	}
 	return nil
@@ -93,10 +94,12 @@ CREATE TABLE IF NOT EXISTS accounts (
 // ensureAccountUserIDPG thêm cột user_id vào accounts nếu thiếu.
 func (s *Store) ensureAccountUserIDPG() error {
 	var exists bool
+	// current_schema() để không leak từ public (regression T22.3).
 	err := s.db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'accounts' AND column_name = 'user_id'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'accounts' AND column_name = 'user_id'
 		)`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check accounts.user_id: %w", err)
@@ -104,7 +107,7 @@ func (s *Store) ensureAccountUserIDPG() error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN user_id TEXT DEFAULT ''`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT ''`); err != nil {
 		return fmt.Errorf("add accounts.user_id: %w", err)
 	}
 	return nil
@@ -121,14 +124,14 @@ func (s *Store) ensureSessionTransportPG() error {
 		{"cipher_key", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var exists bool
-		err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sessions' AND column_name=$1)`, col.def).Scan(&exists)
+		err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='sessions' AND column_name=$1)`, col.def).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("check sessions.%s: %w", col.def, err)
 		}
 		if exists {
 			continue
 		}
-		if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN %s %s", col.def, col.typ)); err != nil {
+		if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS %s %s", col.def, col.typ)); err != nil {
 			return fmt.Errorf("add sessions.%s: %w", col.def, err)
 		}
 	}
@@ -139,12 +142,14 @@ func (s *Store) ensureSessionTransportPG() error {
 // ensureAccountSyncV2PG thêm cột syncv2_state JSONB vào accounts nếu thiếu.
 // Lưu blob JSON state machine SyncV2 (ed25519 keypair, last_seq_id, phase, ...).
 // Rỗng mặc định — chỉ fill khi account start syncv2 backup flow (T22.3).
+// Lọc theo current_schema() tránh cross-schema leak từ public.
 func (s *Store) ensureAccountSyncV2PG() error {
 	var exists bool
 	err := s.db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'accounts' AND column_name = 'syncv2_state'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'accounts' AND column_name = 'syncv2_state'
 		)`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check accounts.syncv2_state: %w", err)
@@ -152,7 +157,7 @@ func (s *Store) ensureAccountSyncV2PG() error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN syncv2_state JSONB NOT NULL DEFAULT '{}'::jsonb`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS syncv2_state JSONB NOT NULL DEFAULT '{}'::jsonb`); err != nil {
 		return fmt.Errorf("add accounts.syncv2_state: %w", err)
 	}
 	return nil
@@ -167,7 +172,8 @@ func (s *Store) ensureAccountTransportPG() error {
 	err := s.db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'accounts' AND column_name = 'transport'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'accounts' AND column_name = 'transport'
 		)`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check accounts.transport: %w", err)
@@ -175,7 +181,7 @@ func (s *Store) ensureAccountTransportPG() error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN transport TEXT NOT NULL DEFAULT ''`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS transport TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("add accounts.transport: %w", err)
 	}
 	return nil
@@ -183,14 +189,14 @@ func (s *Store) ensureAccountTransportPG() error {
 
 func (s *Store) ensureAccountDisabledReasonPG() error {
 	var exists bool
-	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='disabled_reason')`).Scan(&exists)
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='accounts' AND column_name='disabled_reason')`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check accounts.disabled_reason: %w", err)
 	}
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS disabled_reason TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("add accounts.disabled_reason: %w", err)
 	}
 	return nil
@@ -201,7 +207,8 @@ func (s *Store) ensureAccountEnabledPG() error {
 	err := s.db.QueryRow(`
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name = 'accounts' AND column_name = 'enabled'
+			WHERE table_schema = current_schema()
+			  AND table_name = 'accounts' AND column_name = 'enabled'
 		)`).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check accounts.enabled: %w", err)
@@ -209,7 +216,7 @@ func (s *Store) ensureAccountEnabledPG() error {
 	if exists {
 		return nil
 	}
-	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
+	if _, err := s.db.Exec(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
 		return fmt.Errorf("add accounts.enabled: %w", err)
 	}
 	return nil
