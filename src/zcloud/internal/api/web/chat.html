@@ -790,6 +790,7 @@ function renderAccounts(){
 			+'<div class="mg-row3">'
 			+showBadge
 			+'<button class="mg-btn" onclick="restartListener(\''+uId+'\')">Restart</button>'
+			+'<button class="mg-btn" onclick="syncV2Start(\''+uId+'\')" title="Sync lịch sử sâu qua SyncV2">⤓ SyncV2</button>'
 			+(a.disabledReason==='auth_expired'?'<button class="mg-btn mg-btn-rel" onclick="showAddModal(\''+uId+'\')" title="Đăng nhập lại bằng Cookie mới">🔑 Re-login</button>':'')
 			+'<button class="mg-del" onclick="xd(\''+uId+'\')">Xoá</button>'
 			+'</div>'
@@ -918,6 +919,54 @@ async function restartListener(id){
 		await fetch('/api/account/restart?accountId='+encodeURIComponent(id),{method:'POST'});
 		setTimeout(loadAccounts,500);
 	}catch(e){console.log('restart err',e)}
+}
+
+// syncV2Start trigger SyncV2 (Phase B) cho 1 account: gọi
+// POST /api/sync/v2/start — server tạo ed25519 keypair + gửi
+// /api/transfer-sync-v2/request-sync. Khi server push WS event
+// user_confirm, PullBatch loop tự chạy lưu messages 2022-2024 vào DB.
+async function syncV2Start(id){
+	try{
+		var r=await fetch('/api/sync/v2/start?accountId='+encodeURIComponent(id),{method:'POST'});
+		var d=await r.json();
+		renderAck(d.ok?{ok:true,data:'SyncV2 started — chờ WS user_confirm rồi tự kéo tin'}:{ok:false,data:(d.data||'fail')+''});
+		if(d.ok) setTimeout(function(){syncV2ShowStatus(id);},500);
+	}catch(e){renderAck({ok:false,data:'syncV2 err: '+(e||'')});}
+}
+
+// syncV2ShowStatus poll status endpoint và hiện phase + lastSeqId.
+// Nếu phase=pulling → tiếp tục poll mỗi 3s cho đến done/error.
+async function syncV2ShowStatus(id){
+	try{
+		var r=await fetch('/api/sync/v2/status?accountId='+encodeURIComponent(id));
+		var d=await r.json();
+		if(!d.ok) return;
+		var s=d.data||{};
+		var msg='phase='+(s.phase||'?')+' lastSeqId='+(s.lastSeqId||0)+
+			' pc='+(s.pcName||'-')+' hasTempKey='+(!!s.hasTempKey)+
+			(s.lastError?' err='+s.lastError:'');
+		renderAck({ok:true,data:msg});
+		if(s.phase==='pulling') setTimeout(function(){syncV2ShowStatus(id);},3000);
+	}catch(e){console.log('syncV2 status err',e);}
+}
+
+// syncV2Stop dừng PullBatch loop cho account.
+async function syncV2Stop(id){
+	try{
+		var r=await fetch('/api/sync/v2/stop?accountId='+encodeURIComponent(id),{method:'POST'});
+		var d=await r.json();
+		renderAck(d.ok?{ok:true,data:'SyncV2 stopped'}:{ok:false,data:(d.data||'fail')+''});
+	}catch(e){renderAck({ok:false,data:'syncV2 stop err: '+(e||'')});}
+}
+
+// syncV2Reset xóa hoàn toàn state, generate keypair mới lần start kế tiếp.
+async function syncV2Reset(id){
+	if(!confirm('Reset SyncV2 state cho '+id+'? Keypair + lastSeqId sẽ bị xoá.')) return;
+	try{
+		var r=await fetch('/api/sync/v2/reset?accountId='+encodeURIComponent(id),{method:'POST'});
+		var d=await r.json();
+		renderAck(d.ok?{ok:true,data:'SyncV2 reset'}:{ok:false,data:(d.data||'fail')+''});
+	}catch(e){renderAck({ok:false,data:'syncV2 reset err: '+(e||'')});}
 }
 
 // Hien thi modal them tai khoan.
