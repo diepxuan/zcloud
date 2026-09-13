@@ -510,3 +510,19 @@ Con lai (can Sếp live test):
 LXC khong capture duoc traffic nen cipher session dung HKDF stub. Khi
 Sếp live test, neu giai ma fail → reverse them 13 args cua
 `zprotoSync2CreateMetadataCipher` (xem `docs/protocol/syncv2.md` §4,§9).
+
+## Phase B T22.3 (WS hook + state JSONB) xong — 13/09/2026
+
+Commit `ebaabe9` push len main:
+- `store.Account.SyncV2State` (JSONB) + migration `ensureAccountSyncV2PG`.
+- `store.GetAccountSyncV2State` / `SetAccountSyncV2State` (load/persist).
+- `api/syncv2_handler.go` (moi): `syncV2Registry` + `handleSyncV2Event`
+  feed WS 590/591/592/632 vao `core.SyncV2Client`. Khi phase=init tu
+  trigger `RequestSync`. Khi phase=pulling tu goi `PullBatch` loop,
+  decrypt, SaveMessage, persist `last_seq_id` cho restart resume.
+- `api/ws.go`: hook `EventRequestSync/AckDelete/MobileWakeUp/BackupMeta`
+  vao handler. Them `Transport/CipherKey` vao `clientFromSession`.
+- `core/syncv2_test`: them `TestSyncV2_HandleEvent` (4 transitions).
+
+Verify: build PASS, 6/6 test pass, migration tu chay, cot `syncv2_state`
+JSONB da co trong DB (psql \d accounts).
