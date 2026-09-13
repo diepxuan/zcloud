@@ -4,8 +4,10 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/text/unicode/norm"
 )
 
 // screen là enum các màn trong wizard 3 bước:
@@ -216,15 +218,20 @@ func (m Model) handleKeyAccounts(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 		m.moveDownAccFiltered(filteredAccounts(m.accounts, m.filterAcc), &m.selectedAccount)
 		return m, nil
 	case filtering && key == "backspace":
-		if len(m.filterAcc) > 0 {
-			m.filterAcc = m.filterAcc[:len(m.filterAcc)-1]
+		if m.filterAcc == "" {
+			return m, nil
 		}
+		m.filterAcc = popLastGrapheme(m.filterAcc)
 		return m, nil
 	case filtering && key == "esc":
 		// Esc trong filter = clear filter (không thoát). Nếu filter đã rỗng
 		// thì handleKey đã return từ trước rồi (early ESC check).
 		m.filterAcc = ""
 		return m, nil
+	case filtering && key == "q":
+		// q trong filter = quit (giống non-filter).
+		m.quitting = true
+		return m, tea.Quit
 	case filtering:
 		// Ký tự khác (Rune) → thêm vào filter.
 		if len(msg.Runes) > 0 {
@@ -293,13 +300,17 @@ func (m Model) handleKeyConvs(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveDownConvFiltered(filteredConvs(m.convs, m.filterConv), &m.selectedConv)
 		return m, nil
 	case filtering && key == "backspace":
-		if len(m.filterConv) > 0 {
-			m.filterConv = m.filterConv[:len(m.filterConv)-1]
+		if m.filterConv == "" {
+			return m, nil
 		}
+		m.filterConv = popLastGrapheme(m.filterConv)
 		return m, nil
 	case filtering && key == "esc":
 		m.filterConv = ""
 		return m, nil
+	case filtering && key == "q":
+		m.quitting = true
+		return m, tea.Quit
 	case filtering:
 		if len(msg.Runes) > 0 {
 			m.filterConv += string(msg.Runes)
@@ -347,9 +358,13 @@ func (m Model) handleKeyChat(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Phím đặc biệt trước.
 	switch key {
 	case "backspace":
-		if len(m.composer.text) > 0 {
-			m.composer.text = m.composer.text[:len(m.composer.text)-1]
+		if m.composer.text == "" {
+			return m, nil
 		}
+		// Strip 1 grapheme cluster (bao gồm combining marks) cuối cùng.
+		// Backspace trên "ầ" (NFD = 3 runes) chỉ xoá 1 cluster,
+		// không strip 1 byte (sẽ corrupt UTF-8 multi-byte).
+		m.composer.text = popLastGrapheme(m.composer.text)
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.composer.text)
@@ -363,7 +378,7 @@ func (m Model) handleKeyChat(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Nhận text vào composer.
 	if len(msg.Runes) > 0 {
-		m.composer.text += string(msg.Runes)
+		m.composer.text = appendGrapheme(m.composer.text, msg.Runes)
 	}
 	return m, nil
 }
@@ -523,6 +538,51 @@ func filteredConvs(rows []ConversationRow, filter string) []ConversationRow {
 		}
 	}
 	return out
+}
+
+// appendGrapheme thêm 1 grapheme cluster (base char + combining marks)
+// vào text. Normalize thành NFC để:
+//   - NFD input ("a" + "̂" + "̀" = 3 runes) trở thành 1 cluster "ầ"
+//   - Hiển thị trong terminal ổn định
+//   - Backspace xoá đúng 1 grapheme visible
+func appendGrapheme(text string, runes []rune) string {
+	if len(runes) == 0 {
+		return text
+	}
+	cluster := string(runes)
+	// Nếu cluster đã là NFC form (1 rune) → append trực tiếp.
+	// Nếu là NFD (base + combining marks) → normalize → NFC.
+	normalized := norm.NFC.String(cluster)
+	return text + normalized
+}
+
+// popLastGrapheme xoá 1 grapheme cluster (NFC) cuối cùng của text.
+// Trả về text mới + số bytes đã xoá.
+func popLastGrapheme(text string) string {
+	if text == "" {
+		return text
+	}
+	// Normalize cả text thành NFC để cluster boundary rõ ràng.
+	nfc := norm.NFC.String(text)
+	// Tìm cluster cuối: iterate rune ngược, nếu gặp combining mark
+	// → tiếp tục lùi cho đến khi gặp base char (Mark nonspacing = Mn).
+	runes := []rune(nfc)
+	if len(runes) == 0 {
+		return text
+	}
+	// Pop combining marks trước (cuối → base).
+	lastBase := len(runes)
+	for i := len(runes) - 1; i >= 0; i-- {
+		if !unicode.Is(unicode.Mn, runes[i]) {
+			lastBase = i + 1
+			break
+		}
+	}
+	if lastBase == 0 {
+		// Toàn combining marks — giữ lại 1.
+		lastBase = 1
+	}
+	return nfc[:lastBase-1]
 }
 
 // View trả string để bubbletea in ra terminal.

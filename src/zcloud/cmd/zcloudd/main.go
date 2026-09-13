@@ -14,7 +14,6 @@ import (
 
 	"github.com/diepxuan/zcloud/internal"
 	"github.com/diepxuan/zcloud/internal/servcmd"
-	"github.com/diepxuan/zcloud/internal/server"
 	"github.com/diepxuan/zcloud/internal/tui"
 )
 
@@ -28,9 +27,9 @@ func init() {
 
 func main() {
 	if len(os.Args) < 2 {
-		// Không có subcommand → chạy server trực tiếp (backward compat).
-		if err := server.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "[zcloud] server error: %v\n", err)
+		// Không có subcommand → mở TUI (alias của `zcloudd tui`).
+		if err := tui.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "[zcloud] tui error: %v\n", err)
 			os.Exit(1)
 		}
 		return
