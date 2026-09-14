@@ -717,7 +717,7 @@ body{
 <script>
 var cu=0,ld=false,pt=null,cvCache={};
 // me: userId (uid thuần) của account đang chọn, dùng để so sánh m.fromId.
-var ccAccountId='';var ccAccountMe='';
+var ccAccountId='';var ccAccountMe='';var ccOtherUid='';
 // Browser WS đã bỏ — backend tự broadcast new_message qua API endpoint
 // (TODO: thay bằng SSE hoặc polling nếu cần realtime). Composer tự
 // load messages khi gửi xong.
@@ -1394,7 +1394,7 @@ function scrollLastMessage(ml, smooth){
 }
 
 
-function sc(id,accId,accMe,nm,av){cc=id;ccAccountId=accId;ccAccountMe=accMe;cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
+function sc(id,accId,accMe,nm,av){cc=id;ccAccountId=accId;ccAccountMe=accMe;ccOtherUid='';cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
 document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ctt-id').textContent=id;document.getElementById('ia').classList.remove('hd');
 el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
@@ -1435,6 +1435,19 @@ async function lm(manual){
         // layout xong (ảnh cần load height); không thì scrollTop set trước
         // khi content thực sự render → chỉ cuộn được 1 phần.
         scrollLastMessage(ml,null,false);
+        // Thread 1-1: dò tìm UID người kia từ batch đầu để header hiển thị
+        // UID người chat thay vì conv_id (vd Phan Xuân 6036488311923736737
+        // hiển thị UID người đó thay vì thread id khác nhau theo từng acc).
+        if(ccAccountMe){
+          for(var mi=0;mi<d.data.length;mi++){
+            var fm=d.data[mi];
+            if(fm.fromId && fm.fromId!==ccAccountMe && !fm.isAck){
+              ccOtherUid=fm.fromId;
+              document.getElementById('ctt-id').textContent=ccOtherUid;
+              break;
+            }
+          }
+        }
       }else{
         ml.scrollTop=oldT+(newH-oldH);
       }
