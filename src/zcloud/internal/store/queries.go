@@ -647,10 +647,23 @@ func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
 
 const maxLastMsgPreview = 80
 
+// insertMessageSQL: merge logic thay vì DO NOTHING.
+// - INSERT nếu (id, account_id) chưa tồn tại.
+// - Nếu conflict (row đã có, vd do WS sync trước với from_name rỗng):
+//   chỉ UPDATE các field phụ (from_name, attachments) khi row cũ rỗng
+//   và payload mới có. KHÔNG BAO GIỜ ghi đè:
+//     - conv_id, from_id, content, timestamp, msg_type (data gốc từ Zalo,
+//       DeliveryAck JSON có thể wrap content — không muốn mất text thật).
+// Mục tiêu: lưu nhiều data nhất có thể từ nhiều nguồn (WS realtime, WS
+// sync history 510/511, REST get-last-msgs) mà KHÔNG mất/ghi đè/duplicate.
 const insertMessageSQL = `INSERT INTO messages
 	(id, account_id, conv_id, from_id, from_name, content, msg_type, timestamp, attachments)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	ON CONFLICT (id, account_id) DO NOTHING`
+	ON CONFLICT (id, account_id) DO UPDATE SET
+		from_name   = CASE WHEN EXCLUDED.from_name != '' AND messages.from_name = ''
+		                    THEN EXCLUDED.from_name ELSE messages.from_name END,
+		attachments = CASE WHEN EXCLUDED.attachments != '[]' AND messages.attachments = '[]'
+		                    THEN EXCLUDED.attachments ELSE messages.attachments END`
 
 func (s *Store) SaveMessage(m *Message) error {
 	_, err := s.db.Exec(insertMessageSQL, m.ID, m.AccountID, m.ConvID, m.FromID, m.FromName, m.Content, m.MsgType, m.Timestamp, m.Attachments)

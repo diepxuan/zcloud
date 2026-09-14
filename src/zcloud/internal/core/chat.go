@@ -150,17 +150,23 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	}, nil
 }
 
-func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
+// GetConversations trả về (conversations, lastMessages, error).
+// - conversations: danh sách conv từ clearUnreads (156 entries đầy đủ).
+// - lastMessages: gộp tất cả tin từ data.msgs + data.groupMsgs (~15-18 tin).
+//   Handler lưu LastMessages vào DB để backfill history cho thread 1-1
+//   khi WS sync 510/511 trả cache queue rỗng (xem MEMORY.md). Merge logic
+//   ở store.SaveMessage đảm bảo không ghi đè content/timestamp/from_id.
+func (c *Client) GetConversations(ctx context.Context) ([]Conversation, []Message, error) {
 	if c.Session == nil || c.Session.SecretKey == "" {
-		return nil, ErrNotLoggedIn
+		return nil, nil, ErrNotLoggedIn
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
 	if err != nil {
-		return nil, fmt.Errorf("decode key: %w", err)
+		return nil, nil, fmt.Errorf("decode key: %w", err)
 	}
 	paramsEnc, err := EncodeAESCBC(rawKey, `{"threadIdLocalMsgId":"{}","imei":"`+c.Session.IMEI+`"}`)
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+		return nil, nil, fmt.Errorf("encrypt: %w", err)
 	}
 	query := url.Values{}
 	query.Set("zpw_ver", fmt.Sprintf("%d", c.Session.APIVersion))
@@ -177,12 +183,12 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 	c.setHeaders(req)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("convs: %w", err)
+		return nil, nil, fmt.Errorf("convs: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) > 0 && body[0] == '<' {
-		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
+		return nil, nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
 	}
 
 	var convResp struct {
@@ -190,27 +196,27 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 		Data      *json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &convResp); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
 	if convResp.ErrorCode != 0 {
-		return nil, fmt.Errorf("conv error %d", convResp.ErrorCode)
+		return nil, nil, fmt.Errorf("conv error %d", convResp.ErrorCode)
 	}
 	if convResp.Data == nil {
-		return []Conversation{}, nil
+		return []Conversation{}, []Message{}, nil
 	}
 
 	var dataStr string
 	if err := json.Unmarshal(*convResp.Data, &dataStr); err != nil {
-		return nil, fmt.Errorf("data str: %w", err)
+		return nil, nil, fmt.Errorf("data str: %w", err)
 	}
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
+		return nil, nil, fmt.Errorf("decrypt: %w", err)
 	}
 
 	var rawData map[string]any
 	if err := json.Unmarshal(decrypted, &rawData); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
 
 	// Build name map từ msgs
@@ -273,13 +279,15 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 	// Resolve names từ API
 	resolveNames(c, convs)
 
-	// Build last-message map cho mỗi conversation từ msgs/groupMsgs.
-	// Endpoint get-last-msgs trả về danh sách tin cuối; ta lấy tin có timestamp
-	// lớn nhất theo từng convId để gắn vào Conversation.LastMsg và để handler
-	// lưu vào DB.
+	// Build full list messages từ msgs/groupMsgs. Endpoint get-last-msgs trả
+	// về ~15-18 tin cuối của các conv có realtime push gần đây.
+	// - lastMessages: gộp tất cả → handler sẽ bulk save vào DB (merge logic).
+	// - lastByConv: giữ 1 last_msg cho mỗi conv → gắn vào Conversation.LastMsg
+	//   để sidebar preview.
 	lastByConv := map[string]*Message{}
+	var lastMessages []Message
 	if dataObj, ok := rawData["data"].(map[string]any); ok {
-		collectLast := func(arr []any) {
+		collect := func(arr []any) {
 			for _, item := range arr {
 				m, ok := item.(map[string]any)
 				if !ok {
@@ -301,18 +309,20 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 				if msg == nil || msg.ID == "" || msg.ConvID == "" {
 					continue
 				}
+				// Đánh dấu delivery ack để SaveMessage không bị ack JSON ghi đè.
+				MarkDeliveryAck(msg)
+				lastMessages = append(lastMessages, *msg)
 				cur, exists := lastByConv[msg.ConvID]
 				if !exists || msg.Timestamp > cur.Timestamp {
-					cp := *msg
-					lastByConv[msg.ConvID] = &cp
+					lastByConv[msg.ConvID] = msg
 				}
 			}
 		}
 		if msgs, ok := dataObj["msgs"].([]any); ok {
-			collectLast(msgs)
+			collect(msgs)
 		}
 		if gmsgs, ok := dataObj["groupMsgs"].([]any); ok {
-			collectLast(gmsgs)
+			collect(gmsgs)
 		}
 	}
 	for i := range convs {
@@ -321,12 +331,7 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, error) {
 		}
 	}
 
-	// Đánh dấu delivery ack cho mọi message (last + raw).
-	for _, m := range lastByConv {
-		MarkDeliveryAck(m)
-	}
-
-	return convs, nil
+	return convs, lastMessages, nil
 }
 
 func resolveNames(c *Client, convs []Conversation) {

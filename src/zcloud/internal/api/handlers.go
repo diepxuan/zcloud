@@ -531,7 +531,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	client := core.NewClient(session)
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	convs, err := client.GetConversations(ctx)
+	convs, lastMsgs, err := client.GetConversations(ctx)
 	if err != nil {
 		if sessRec2 := s.autoRefresh(sessRec); sessRec2.ID != sessRec.ID {
 			// Refresh thành công, thử lại
@@ -540,7 +540,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 			session.Cookies = cookies
 			session.SecretKey = sessRec.SecretKey
 			client = core.NewClient(session)
-			convs, err = client.GetConversations(ctx)
+			convs, lastMsgs, err = client.GetConversations(ctx)
 		}
 	}
 	if err != nil {
@@ -560,6 +560,25 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	// Lưu vào DB. last_msg_id ưu tiên c.LastMsgID (từ clearUnreads API — có cho
 	// TẤT CẢ 156 conv) rồi mới fall back về c.LastMsg.ID (chỉ có khi tin nằm
 	// trong data.msgs/data.groupMsgs — thường chỉ 2-3 conv có realtime push mới).
+	// Bulk save lastMsgs (tất cả ~15-18 tin từ data.msgs/data.groupMsgs) vào
+	// DB để backfill history cho thread 1-1 mà WS sync 510/511 trả rỗng.
+	// SaveMessage có merge logic: insert nếu chưa có, update field phụ nếu row
+	// cũ rỗng, KHÔNG ghi đè content/timestamp/from_id. An toàn khi chạy nhiều lần.
+	for _, m := range lastMsgs {
+		if m.ID == "" || m.ConvID == "" {
+			continue
+		}
+		attJSON, _ := json.Marshal(m.Attachments)
+		if err := s.Store.SaveMessage(&store.Message{
+			ID: m.ID, AccountID: accountID, ConvID: m.ConvID,
+			FromID: m.FromID, FromName: m.FromName,
+			Content: m.Content, MsgType: int(m.Type),
+			Timestamp: m.Timestamp, Attachments: string(attJSON),
+		}); err != nil {
+			s.Logger.Printf("conversations/sync SaveMessage err: id=%s err=%v", m.ID, err)
+		}
+	}
+
 	for _, c := range convs {
 		conv := store.Conversation{
 			ID: c.ID, AccountID: accountID, Name: c.Name, Avatar: c.Avatar,
@@ -570,17 +589,8 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 			if conv.LastMsgAt.Time.IsZero() {
 				conv.LastMsgAt = sql.NullTime{Time: time.UnixMilli(c.LastMsg.Timestamp), Valid: true}
 			}
-			// Lưu message cuối vào bảng messages để có lịch sử ngay khi mở thread.
-			// CHÚ Ý: skip nếu message đã tồn tại (id = globalMsgId unique) — tránh spam.
-			attJSON, _ := json.Marshal(c.LastMsg.Attachments)
-			s.Store.SaveMessage(&store.Message{
-				ID: c.LastMsg.ID, AccountID: accountID, ConvID: c.ID,
-				FromID: c.LastMsg.FromID, FromName: c.LastMsg.FromName,
-				Content: c.LastMsg.Content, MsgType: int(c.LastMsg.Type),
-				Timestamp: c.LastMsg.Timestamp, Attachments: string(attJSON),
-			})
 		}
-			if err := s.Store.SaveConversation(&conv); err != nil {
+		if err := s.Store.SaveConversation(&conv); err != nil {
 			s.Logger.Printf("conversations/sync SaveConversation err: id=%s err=%v", conv.ID, err)
 		}
 	}
