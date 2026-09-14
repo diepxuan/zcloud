@@ -2,7 +2,7 @@
 
 > File này merge nội dung từ `master-plan.md` (kiến trúc + 4 mục tiêu) và
 > `audit.md` (trạng thái chi tiết từng module + tồn đọng). Cập nhật
-> 13/09/2026 (đợt task 24).
+> 15/09/2026 (đợt task 21 verified live).
 
 ---
 
@@ -69,7 +69,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 18 | Terminal UI (TUI) | ✅ Done | [18-tui.md](tasks/18-tui.md) |
 | 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
 | 20 | Login Zalo PC (trusted-device) | 🟡 Pending | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
-| 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | 🟡 Pending | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
+| 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | ✅ Done (15/09/2026) | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Pending | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟡 Skeleton migration | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
@@ -332,7 +332,7 @@ key exchange) — không bị kickout khi có session khác.
 
 ## 5.15. T15 — Fix bug parse EventNewMessage wrapper (Phase A — sync sâu)
 
-Chi tiết: [tasks/21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md).
+Chi tiết: [tasks/21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md). ✅ Done live verified 15/09/2026.
 
 **Bug phát hiện 12/09/2026**: WS cmd 501/521 (realtime new message) parse OK
 nhưng `SaveMessage` không bao giờ được gọi. Verify bằng debug log:
@@ -353,6 +353,16 @@ giống `handleOldMessages` đã làm đúng.
 - DB chỉ có tin từ WS cmd 510/511 (sync history), không có tin realtime.
 
 **Estimate**: ~30 phút.
+
+**Live verified 15/09/2026** — Sếp gửi từ Trần Ngọc Đức vào thread chính Sếp
+(conv `4866700441106275565`, marker `[T21-1789200000] test unwrap`):
+- DB: messages tăng 22 → 24, row mới `8263979324749` `from_id=4866700441106275565`
+  (Trần Ngọc Đức), content match, `conv_id=4866700441106275565`.
+- zcloudd log `05:53:55 ws.go:474 new msg from 4866700441106275565 in 4866700441106275565`
+  → WS cmd 501 → `handleNewMessages` unwrap layer 2 → `SaveMessage` OK → DB có row.
+- Trước fix: `msgs_len=0` → drop. Sau fix: row được lưu → T21 PASS.
+- Commit fix: `7239e0f` (unwrap + 4 unit test parse), 13/09/2026.
+- Cột `task 21` trong bảng §3 chuyển từ 🟡 Pending → ✅ Done.
 
 ## 5.16. T22 — SyncV2 backup từ Zalo server (Phase B — sync sâu)
 
@@ -562,8 +572,8 @@ Commit `7239e0f`: unwrap layer 2 (`data.msgs` / `data.groupMsgs`) trong
 Build pass, test mới pass. Test cũ `TestEncodeDecodeAESGCM_RoundTrip/mode_2`
 vẫn fail nhưng là pre-existing (xác nhận bằng `git stash` trên HEAD).
 
-Smoke test live (gửi `[T21-...]` từ Trần Ngọc Đức) chưa chạy trong session
-này — Sếp tự verify hoặc chờ session kế tiếp.
+Smoke test live (gửi `[T21-...]` từ Trần Ngọc Đức) đã verify 15/09/2026 —
+xem chi tiết tại §5.15 phía trên. PASS.
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 T22.2a xong | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 
 ## Phase B da co skeleton — 13/09/2026
