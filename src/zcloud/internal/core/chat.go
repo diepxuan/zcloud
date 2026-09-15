@@ -436,9 +436,11 @@ func resolveNames(c *Client, convs []Conversation) {
 
 	for i := range convs {
 		if p, ok := profiles.ChangedProfiles[convs[i].ID]; ok {
-			n := p.ZaloName
+			// Zalo app hiển thị displayName (có dấu) trong danh bạ / conversation
+			// list; zaloName là tên gốc không dấu, chỉ dùng khi displayName rỗng.
+			n := p.DisplayName
 			if n == "" {
-				n = p.DisplayName
+				n = p.ZaloName
 			}
 			if n != "" {
 				convs[i].Name = n
@@ -528,9 +530,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		}
 		if err := json.Unmarshal(decrypted, &flat); err == nil {
 			if p, ok := flat.ChangedProfiles[c.Session.UserID+"_0"]; ok {
-				n := p.ZaloName
+				n := p.DisplayName
 				if n == "" {
-					n = p.DisplayName
+					n = p.ZaloName
 				}
 				return n, p.Avatar, nil
 			}
@@ -553,9 +555,9 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	// Thử key có _0 và không có _0
 	for _, key := range []string{c.Session.UserID + "_0", c.Session.UserID} {
 		if p, ok := profiles.ChangedProfiles[key]; ok {
-			n := p.ZaloName
+			n := p.DisplayName
 			if n == "" {
-				n = p.DisplayName
+				n = p.ZaloName
 			}
 			return n, p.Avatar, nil
 		}
@@ -643,11 +645,9 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 		if m, ok := item.(map[string]any); ok {
 			u := User{
 				ID:     toString(m["userId"]),
-				Name:   toString(m["zaloName"]),
+				// displayName có dấu khớp Zalo app; zaloName chỉ dùng khi displayName rỗng
+				Name:   firstNonEmpty(toString(m["displayName"]), toString(m["zaloName"])),
 				Avatar: toString(m["avatar"]),
-			}
-			if u.Name == "" {
-				u.Name = toString(m["displayName"])
 			}
 			if u.ID != "" {
 				users = append(users, u)
