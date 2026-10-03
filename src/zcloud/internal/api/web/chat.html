@@ -376,32 +376,72 @@ body{
 .em-text{font-size:var(--fz-md);color:var(--c-text-3)}
 
 /* === Chat bubble === */
+/* Layout: mỗi .msg là 1 flex row. .msg.in có avatar bên trái,
+   .msg.out dính lề phải không có avatar. Các bubble liền kề
+   (cùng fromId + trong GROUP_WINDOW_MS) gộp thành "group":
+   - ẩn avatar + tên ở middle
+   - chỉ hiện ở tin cuối group (.group-tail) hoặc tin đầu group (.group-head).
+*/
 .msg{
-  max-width:70%;padding:var(--s-2) var(--s-3);
-  border-radius:var(--r-md);font-size:var(--fz-md);line-height:var(--lh);
-  word-wrap:break-word;
+  display:flex;align-items:flex-end;gap:var(--s-2);
+  max-width:85%;padding:0;
+  font-size:var(--fz-md);line-height:var(--lh);word-wrap:break-word;
 }
-.msg.in{
-  background:var(--c-surface);align-self:flex-start;
+.msg.in{align-self:flex-start;flex-direction:row}
+.msg.out{align-self:flex-end;flex-direction:row-reverse}
+.msg .av{
+  width:28px;height:28px;border-radius:var(--r-pill);flex-shrink:0;
+  background:var(--c-surface-2) center/cover no-repeat;
+  align-self:flex-end;margin-bottom:2px;
+}
+.msg .av.empty{background:var(--c-surface-2)}
+.msg .bubble{
+  padding:var(--s-2) var(--s-3);border-radius:var(--r-md);
+  max-width:100%;min-width:60px;
+}
+.msg.in .bubble{
+  background:var(--c-surface);
   border-bottom-left-radius:var(--r-sm);
   box-shadow:var(--sh-1);
 }
-.msg.out{
+.msg.out .bubble{
   background:var(--c-brand);color:var(--c-text-onbrand);
-  align-self:flex-end;border-bottom-right-radius:var(--r-sm);
+  border-bottom-right-radius:var(--r-sm);
 }
 .msg .nm{
   font-size:var(--fz-sm);color:var(--c-brand);font-weight:var(--fw-m);
   margin-bottom:2px;
 }
+.msg.out .nm{color:var(--c-text-onbrand);opacity:.9}
 .msg .tm{
-  font-size:var(--fz-xs);opacity:.85;margin-top:var(--s-1);text-align:right;
+  font-size:var(--fz-xs);opacity:.7;margin-top:var(--s-1);text-align:right;
   color:var(--c-text-2);
 }
-.msg.out .tm{color:var(--c-text-onbrand);opacity:.9}
+.msg.out .tm{color:var(--c-text-onbrand);opacity:.85}
 .msg.img-only .tm{color:var(--c-text-2);opacity:.85}
 
-.msg .imgs{display:flex;flex-wrap:wrap;gap:var(--s-1);margin-top:var(--s-1)}
+/* Group consecutive: ẩn avatar + tên + timestamp ở middle messages.
+   Middle = .msg.grouped (không phải head/tail).
+   Tail (.group-tail) = tin cuối của group: hiện avatar + timestamp (không hiện tên).
+   Head (.group-head) = tin đầu: hiện tên, có thể ẩn avatar.
+   Quy tắc:
+     .msg.grouped .av { display:none }   /* middle: không avatar */
+     .msg.grouped:not(.group-head) .nm { display:none }  /* middle + không phải head: ẩn tên */
+     .msg.grouped:not(.group-tail) .tm { display:none }  /* middle + không phải tail: ẩn tm */
+*/
+.msg.grouped{margin-top:1px}
+.msg.grouped .av{display:none}
+.msg.grouped:not(.group-head) .nm{display:none}
+.msg.grouped:not(.group-tail) .tm{display:none}
+/* Bubble của tin grouped dính liền: bỏ border-radius phía dưới tuỳ hướng */
+.msg.in.grouped:not(.group-tail) .bubble{border-bottom-left-radius:var(--r-md)}
+.msg.in.grouped.group-tail .bubble{border-bottom-left-radius:var(--r-sm)}
+.msg.out.grouped:not(.group-tail) .bubble{border-bottom-right-radius:var(--r-md)}
+.msg.out.grouped.group-tail .bubble{border-bottom-right-radius:var(--r-sm)}
+/* Tin đầu tiên sau avatar trống (out) — bubble dính lề phải sát */
+.msg.out .av.empty{display:none}
+
+.msg .bubble .imgs{display:flex;flex-wrap:wrap;gap:var(--s-1);margin-top:var(--s-1)}
 .msg .imgs .img{
   width:160px;height:160px;object-fit:cover;border-radius:var(--r-md);
   cursor:pointer;background:var(--c-surface-2);display:block;
@@ -412,12 +452,9 @@ body{
 .msg .imgs.imgs-2-3 .img{width:calc(50% - 2px);height:160px}
 .msg .imgs.imgs-4p .img{width:calc(33.333% - 3px);height:120px}
 /* Tin chi co anh: full-bleed, khong bubble, border-radius nhe de mem mai */
-.msg.img-only{padding:0;background:transparent;box-shadow:none}
-.msg.img-only .imgs{margin-top:0}
+.msg.img-only .bubble{padding:0;background:transparent;box-shadow:none}
 .msg.img-only .imgs .img{border-radius:var(--r-md)}
-.msg.img-only .tm{margin-top:var(--s-1)}
-.msg.in.img-only{align-self:flex-start}
-.msg.out.img-only{align-self:flex-end}
+.msg.img-only .bubble{border-radius:var(--r-md)}
 .msg .imgs .img-spinner,.msg .imgs .img-err{
   width:160px;height:160px;display:flex;align-items:center;
   justify-content:center;background:var(--c-surface-2);border-radius:var(--r-md);
@@ -425,15 +462,15 @@ body{
 }
 .msg .imgs .img-err{color:var(--c-danger);background:var(--c-danger-soft)}
 
-.msg video.media{max-width:320px;max-height:320px;border-radius:var(--r-md);display:block;margin-top:var(--s-1)}
-.msg a.file{
+.msg .bubble video.media{max-width:320px;max-height:320px;border-radius:var(--r-md);display:block;margin-top:var(--s-1)}
+.msg .bubble a.file{
   display:inline-flex;align-items:center;gap:var(--s-2);
   margin-top:var(--s-1);padding:var(--s-2) var(--s-3);
   background:var(--c-brand-soft);color:var(--c-brand);
   border-radius:var(--r-sm);font-weight:var(--fw-m);font-size:var(--fz-sm);
   text-decoration:none;
 }
-.msg.out a.file{background:var(--c-onbrand-trans);color:var(--c-text-onbrand)}
+.msg.out .bubble a.file{background:var(--c-onbrand-trans);color:var(--c-text-onbrand)}
 
 /* === Delivery ack badge === */
 .msg.ack{
@@ -1121,22 +1158,115 @@ function renderAck(m){
   return dv;
 }
 
+// GROUP_WINDOW_MS: 2 tin cùng fromId + cách nhau ≤ window → group lại.
+// Zalo mobile mặc định 60s. Có thể chỉnh nếu Sếp thấy chật/chậm.
+var GROUP_WINDOW_MS=60000;
+
+// renderMsg trả về DOM node cho 1 message bubble.
+// Layout mới (Zalo style): mỗi bubble có:
+//   - avatar (chỉ .msg.in, 28x28 pill)
+//   - .bubble wrapper chứa tên + body + timestamp
+// Group consecutive (cùng fromId trong GROUP_WINDOW_MS):
+//   - middle ẩn avatar + tên + timestamp (sẽ được toggle bởi regroupMessages)
+//   - tin đầu group giữ tên (.group-head)
+//   - tin cuối group giữ avatar + timestamp (.group-tail)
+// data-from + data-ts được gán để regroupMessages quét nhanh.
 function renderMsg(m){
   // Nếu server đánh dấu đây là delivery ack → render badge thay vì text thô.
   if(m.isAck||(m.content&&m.content.charAt(0)==='['&&m.content.indexOf('actionType')>=0)){
     return renderAck(m);
   }
-  var dv=document.createElement('div');dv.className='msg '+(m.fromId===ccAccountMe?'out':'in');dv.dataset.msg=m.id;
+  var isMe=m.fromId===ccAccountMe;
+  var dv=document.createElement('div');
+  dv.className='msg '+(isMe?'out':'in');
+  dv.dataset.msg=m.id;
+  dv.dataset.from=m.fromId||'';
+  dv.dataset.ts=m.timestamp||0;
+
+  // Avatar: chỉ .msg.in có avatar (tin mình gửi dính lề phải, không avatar).
+  // Out bubble không cần avatar — CSS .msg.out .av{display:none} đã lo.
+  // Nhưng ta vẫn cần placeholder div để flex layout ổn định khi sender đổi từ in↔out.
+  var avUrl=(m.fromId && cvCache[m.fromId] && cvCache[m.fromId].avatar) || '';
+  var avCls='av'+(avUrl?'':' empty');
+  var avStyle=avUrl?('background-image:url('+esc(avUrl)+')'):'';
+  var avHtml='<div class="'+avCls+'" style="'+avStyle+'"></div>';
+
   var attHtml=renderAttachments(m.attachments||[],m.id,m.convId||cc,m.content);
   if(attHtml.indexOf('data-only-imgs="1"')>=0) dv.classList.add('img-only');
   var t=new Date(m.timestamp);
   var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-  var fn=(m.fromName&&m.fromId!==ccAccountMe)?m.fromName:(cvCache[m.fromId]?cvCache[m.fromId].name:'');
-  var body='';
-  body+=attHtml;
-  body+=esc(m.content||'');
-  dv.innerHTML=(fn?'<div class="nm">'+esc(fn)+'</div>':'')+body+'<div class="tm">'+ts+'</div>';
+
+  // Tên: hiện cho MỌI bubble (kể cả tin mình gửi — dùng "Bạn" nếu là mình).
+  // Tên thật ưu tiên: m.fromName > cvCache[m.fromId].name > ''.
+  var senderName='';
+  if(isMe){
+    senderName='Bạn';
+  } else {
+    senderName=(m.fromName && m.fromId!==ccAccountMe)?m.fromName
+              :((cvCache[m.fromId]&&cvCache[m.fromId].name)||'');
+  }
+  var body=attHtml+esc(m.content||'');
+  var bubbleInner=(senderName?'<div class="nm">'+esc(senderName)+'</div>':'')
+                +body
+                +'<div class="tm">'+ts+'</div>';
+  dv.innerHTML=avHtml+'<div class="bubble">'+bubbleInner+'</div>';
   return dv;
+}
+
+// regroupMessages quét toàn bộ .msg trong thread và gán class group-head/tail/grouped.
+// Quy tắc: cùng fromId + timestamp diff ≤ GROUP_WINDOW_MS → group lại.
+// Middle: .grouped (ẩn avatar/tên/tm qua CSS).
+// Head: .grouped.group-head (giữ tên).
+// Tail: .grouped.group-tail (giữ avatar + tm).
+// Ack (.msg.ack) là đường viền riêng, KHÔNG group.
+function regroupMessages(){
+  var ml=document.getElementById('ml');
+  if(!ml) return;
+  var nodes=ml.querySelectorAll('.msg');
+  var prevFrom='',prevTs=0,groupStart=-1,groupCount=0;
+  function endGroup(tailIdx){
+    if(groupStart<0) return;
+    var len=tailIdx-groupStart+1;
+    if(len>1){
+      // group có > 1 tin → đánh head/tail
+      nodes[groupStart].classList.add('grouped','group-head');
+      for(var k=groupStart+1;k<tailIdx;k++){
+        nodes[k].classList.add('grouped');
+        nodes[k].classList.remove('group-head','group-tail');
+      }
+      nodes[tailIdx].classList.add('grouped','group-tail');
+      nodes[tailIdx].classList.remove('group-head');
+    } else {
+      // group 1 tin → reset hết
+      nodes[groupStart].classList.remove('grouped','group-head','group-tail');
+    }
+  }
+  for(var i=0;i<nodes.length;i++){
+    var n=nodes[i];
+    var fid=n.dataset.from||'';
+    var ts=parseInt(n.dataset.ts||'0',10);
+    // Ack không group
+    if(n.classList.contains('ack')){
+      endGroup(i-1);
+      groupStart=-1;prevFrom='';prevTs=0;
+      n.classList.remove('grouped','group-head','group-tail');
+      continue;
+    }
+    var samePerson=fid===prevFrom && fid!=='';
+    var inWindow=Math.abs(ts-prevTs)<=GROUP_WINDOW_MS;
+    if(samePerson && inWindow && groupStart>=0){
+      // tiếp tục group hiện tại
+      groupCount++;
+    } else {
+      // kết thúc group trước, mở group mới
+      endGroup(i-1);
+      groupStart=i;groupCount=1;
+      n.classList.remove('grouped','group-head','group-tail');
+    }
+    prevFrom=fid;prevTs=ts;
+  }
+  // kết thúc group cuối
+  endGroup(nodes.length-1);
 }
 
 // imageExt: đuôi ảnh browser hiểu được. Trả về ext nếu là ảnh, '' nếu không.
@@ -1433,6 +1563,8 @@ async function lm(manual){
       // Sau khi xóa spinner (nếu có), chèn fragment lên đầu.
       var sp=document.getElementById('lm-load');if(sp)sp.remove();
       ml.insertBefore(frag,ml.firstChild);
+      // Group consecutive messages (cùng fromId + GROUP_WINDOW_MS).
+      regroupMessages();
       // Bù scroll để giữ vị trí.
       var newH=ml.scrollHeight;
       if(cu===0){
@@ -1493,8 +1625,15 @@ document.addEventListener('DOMContentLoaded',function(){
 async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc)return;inp.value='';
 try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:cc,content:c})});var d=await r.json();
 if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
+dv.dataset.from=ccAccountMe||'';
+dv.dataset.ts=Date.now();
+// Self-render không có id từ server (id đến sau qua broadcast). Để tránh
+// trùng dataset.msg khi broadcast về, KHÔNG set dataset.msg ở đây —
+// broadcast sẽ set hoặc replace.
 var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-dv.innerHTML='<div>'+c+'</div><div class="tm">'+ts+'</div>';ml.appendChild(dv);
+dv.innerHTML='<div class="av empty"></div><div class="bubble"><div class="nm">Bạn</div><div>'+esc(c)+'</div><div class="tm">'+ts+'</div></div>';
+ml.appendChild(dv);
+regroupMessages();
 scrollLastMessage(ml,dv,false);}}catch(e){}}
 // xd xoá toàn bộ user Zalo khỏi zcloud (T24.3 — cascade: accounts +
 // sessions + messages + conversations + media + contacts + zalo_accounts).
