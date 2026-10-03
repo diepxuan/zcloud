@@ -1423,8 +1423,13 @@ async function lm(manual){
       var oldH=ml.scrollHeight,oldT=ml.scrollTop;
       if(cu===0){el('ml','');ml=document.getElementById('ml');}
       // Chèn tin cũ vào đầu, giữ nguyên các node hiện tại.
+      // Dedupe theo msg id: tránh thêm node trùng với node đã có trong
+      // thread (vd khi batch có nhiều tin cùng timestamp ở ranh giới cursor,
+      // hoặc khi user đã có sẵn tin realtime từ WS trước khi load cũ).
+      var existing=new Set();
+      ml.querySelectorAll('.msg').forEach(function(n){if(n.dataset.msg)existing.add(n.dataset.msg)});
       var frag=document.createDocumentFragment();
-      d.data.forEach(function(m){frag.appendChild(renderMsg(m))});
+      d.data.forEach(function(m){if(existing.has(m.id))return;existing.add(m.id);frag.appendChild(renderMsg(m))});
       // Sau khi xóa spinner (nếu có), chèn fragment lên đầu.
       var sp=document.getElementById('lm-load');if(sp)sp.remove();
       ml.insertBefore(frag,ml.firstChild);
@@ -1451,7 +1456,11 @@ async function lm(manual){
       }else{
         ml.scrollTop=oldT+(newH-oldH);
       }
-      cu=d.data[d.data.length-1].timestamp;
+      // Lấy timestamp tin CŨ NHẤT trong batch (d.data[0]) để page sau lấy
+      // được tin cũ hơn. Trước đây lấy d.data[len-1] (tin mới nhất) khiến
+      // query strict "<" trùng 29/30 tin với page trước → user thấy "load
+      // đi lặp lại tin mới nhất".
+      cu=d.data[0].timestamp;
       // Nếu batch đầy → vẫn còn tin cũ hơn → giữ button.
       // Nếu batch < limit → hết → đổi sang thông báo end.
       if(d.data.length<30){
