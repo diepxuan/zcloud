@@ -471,6 +471,46 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 - Login lại cùng UID → cùng `acc_559609701372941728`, không tạo account mới.
 - Nếu login lại cùng UID bằng cả web + PC → 2 sessions cùng active, `StartZaloListener` pick session mới nhất (`is_active=1 ORDER BY created_at DESC`).
 - Sau 30 ngày + `is_active=0` → sessions tự động xoá.
+## 5.19. Refactor cải tiến (đợt 11/10/2026) — H7 split `core/websocket.go`
+
+
+**Bối cảnh**: Sếp yêu cầu khảo sát cấu trúc dự án, lên phương án cải tiến để tiếp tục phát triển nhiều hạng mục hơn. Em đề xuất 7 hạng mục, Sếp duyệt 5: H3 (bỏ global state), H6 (schema versioning), H7 (tách ws.go), H5 (structured log), H1 (tách chat.html). Loại trừ H2 (tách handlers — tạm dừng) + H4 (dọn tmp/ — KHÔNG dọn, giữ làm tư liệu).
+
+**Quy tắc phòng lỗi** (Sếp yêu cầu): mỗi sub-task = build pass + test pass + live verify 1 endpoint liên quan. Khi đổi signature nhiều callsite, giữ hàm cũ forward sang method mới 1 commit riêng trước khi xóa.
+
+**Log format** (Sếp yêu cầu): key=value để `journalctl -u zcloud -o cat | grep key=val` tiện. Verify systemd unit `StandardOutput=journal`.
+
+### H7.1 — Tách event handler ✅ done (commit c7ab3e0)
+
+- `core/websocket.go`: 1052 → 828 dòng.
+- `core/websocket_events.go` (mới): 236 dòng.
+- Move 8 function (line 552-775 của file cũ): `handleNewMessages`, `handleOldMessages`, `parseMessages`, `handleMessageStatus`, `handleControl`, `handleActions`, `handleReactions`, `emitRawEvent`.
+- Build pass, 123/123 test pass, coverage `internal/core` giữ 30.6% (chỉ split file).
+- Live verify: WS listening=true cho cả 2 account Sep + Chăn Ga Gối Nệm.
+
+### H7.2 — Move WS command wrapper desktop sync ✅ done (commit ca178e2)
+
+- `core/websocket.go`: 828 → 778 dòng.
+- `core/desktop_sync.go`: 167 → 218 dòng.
+- Move 9 WS method (line 469-518): `RequestSyncMessage`, `AckDeleteSyncSession`, `RequestMobileWakeUp`, `CreateBackupSession`, `InitBackupSession`, `GetBackupPcMetadata`, `SignalRestoreOnMobile`, `GetBackupConfigs`.
+- Live verify: `GET /api/sync/v2/status?accountId=acc_2291602426651082808` trả `{"ok":true,"data":{"accountId":"acc_2291602426651082808","raw":"{}"}}`.
+
+### H7.3 — Verify ✅ done (không commit, chỉ check)
+
+- `core/websocket.go` hiện 778 dòng — không đạt mục tiêu ~400 dòng (em đề xuất ban đầu) do `wsMessage` parser + 5 method chiếm 191 dòng (24%).
+- Coverage `internal/core` vẫn 30.7%.
+
+### H7.4 (đề xuất) — Tách `websocket_message.go` 🟡 Pending Sếp duyệt
+
+- `wsMessage` struct + 5 method parser (toMessage, attachments, contentObject, contentText, ts, msgType) chiếm 191 dòng, 24% `websocket.go`.
+- Tách sang `websocket_message.go` (parser helper, không phải WS protocol).
+- Sau tách: `websocket.go` còn ~587 dòng, file mới ~200 dòng.
+- Estimate: ~30 phút. Không có behavior change, chỉ split file.
+
+### H3, H6, H5, H1 — Còn lại trong plan
+
+Xem plan chi tiết ở `memory/2026-10-11.md` và báo cáo gốc trước đó.
+
 
 ## 6. References
 
