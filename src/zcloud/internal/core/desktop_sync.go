@@ -165,3 +165,54 @@ func mustParseQuery(s string) url.Values {
 	q, _ := url.ParseQuery(s)
 	return q
 }
+
+
+// RequestSyncMessage yêu cầu server bắt đầu cross-device sync (cmd 590).
+func (w *WSClient) RequestSyncMessage(ctx context.Context, data any) error {
+	return w.SendWSWithID(ctx, 590, 0, map[string]any{"data": data})
+}
+
+// AckDeleteSyncSession xác nhận xoá session sync (cmd 591).
+func (w *WSClient) AckDeleteSyncSession(ctx context.Context, data any) error {
+	return w.SendWSWithID(ctx, 591, 0, map[string]any{"data": data})
+}
+
+// RequestMobileWakeUp đánh thức mobile để sync (cmd 592).
+func (w *WSClient) RequestMobileWakeUp(ctx context.Context, data any) error {
+	var payload map[string]any
+	switch v := data.(type) {
+	case map[string]any:
+		payload = v
+	case nil:
+		payload = map[string]any{}
+	default:
+		payload = map[string]any{"data": v}
+	}
+	return w.SendWSWithID(ctx, 592, 0, payload)
+}
+
+// CreateBackupSession mở session backup (cmd 631).
+func (w *WSClient) CreateBackupSession(ctx context.Context) error {
+	return w.SendWSWithID(ctx, 631, 0, map[string]any{})
+}
+
+// InitBackupSession init session backup (cmd 630).
+func (w *WSClient) InitBackupSession(ctx context.Context, data any) error {
+	return w.SendWSWithID(ctx, 630, 0, map[string]any{"data": data})
+}
+
+// GetBackupPcMetadata lấy metadata backup từ PC (cmd 632).
+func (w *WSClient) GetBackupPcMetadata(ctx context.Context) error {
+	return w.SendWSWithID(ctx, 632, 0, map[string]any{})
+}
+
+// SignalRestoreOnMobile báo mobile khôi phục backup (cmd 633).
+func (w *WSClient) SignalRestoreOnMobile(ctx context.Context) error {
+	return w.SendWSWithID(ctx, 633, 0, map[string]any{})
+}
+
+// GetBackupConfigs lấy cấu hình backup (cmd 634).
+func (w *WSClient) GetBackupConfigs(ctx context.Context) error {
+	return w.SendWSWithID(ctx, 634, 0, map[string]any{})
+}
+
