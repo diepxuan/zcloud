@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver cho database/sql
 )
@@ -10,56 +12,124 @@ import (
 // Postgres-specific migration + dialect helpers
 // ====================================
 
+const migrationSchemaMigrationsPG = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);`
+
+type postgresMigration struct {
+	Version int
+	Name    string
+	Run     func(*Store) error
+}
+
+// postgresMigrationPlan là danh sách version tăng dần. Mỗi bước phải idempotent
+// vì database hiện hữu chưa có bản ghi schema_migrations khi nâng cấp.
+var postgresMigrationPlan = []postgresMigration{
+	{Version: 1, Name: "accounts", Run: execPostgresSQL(migrationAccountsPG)},
+	{Version: 2, Name: "sessions", Run: execPostgresSQL(migrationSessionsPG)},
+	{Version: 3, Name: "conversations", Run: execPostgresSQL(migrationConversationsPG)},
+	{Version: 4, Name: "messages", Run: execPostgresSQL(migrationMessagesPG)},
+	{Version: 5, Name: "media", Run: execPostgresSQL(migrationMediaPG)},
+	{Version: 6, Name: "oa_configs", Run: execPostgresSQL(migrationOAPG)},
+	{Version: 7, Name: "oa_webhook_logs", Run: execPostgresSQL(migrationOAWebhookPG)},
+	{Version: 8, Name: "media_jobs", Run: execPostgresSQL(migrationMediaJobsPG)},
+	{Version: 9, Name: "contacts", Run: execPostgresSQL(migrationContactsPG)},
+	{Version: 10, Name: "session_service_map", Run: (*Store).ensureSessionServiceMapPG},
+	{Version: 11, Name: "account_user_id", Run: (*Store).ensureAccountUserIDPG},
+	{Version: 12, Name: "account_enabled", Run: (*Store).ensureAccountEnabledPG},
+	{Version: 13, Name: "account_disabled_reason", Run: (*Store).ensureAccountDisabledReasonPG},
+	{Version: 14, Name: "account_syncv2_state", Run: (*Store).ensureAccountSyncV2PG},
+	{Version: 15, Name: "account_transport", Run: (*Store).ensureAccountTransportPG},
+	{Version: 16, Name: "zalo_accounts", Run: (*Store).ensureZaloAccountsTablePG},
+	{Version: 17, Name: "account_zalo_account_id", Run: (*Store).ensureAccountZaloAccountIDPG},
+	{Version: 18, Name: "zalo_accounts_backfill", Run: (*Store).backfillZaloAccountsPG},
+	{Version: 19, Name: "session_transport_cipher_key", Run: (*Store).ensureSessionTransportPG},
+}
+
+func execPostgresSQL(sql string) func(*Store) error {
+	return func(s *Store) error {
+		_, err := s.db.Exec(sql)
+		return err
+	}
+}
+
+// SchemaMigration là một bước migration đã áp dụng vào Postgres.
+type SchemaMigration struct {
+	Version   int       `json:"version"`
+	Name      string    `json:"name"`
+	AppliedAt time.Time `json:"appliedAt"`
+}
+
 // migratePostgres tạo schema Postgres (khi cần migration mới).
 // - DATETIME → TIMESTAMP WITH TIME ZONE
 // - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL PRIMARY KEY
 // - TEXT DEFAULT CURRENT_TIMESTAMP → TIMESTAMPTZ DEFAULT NOW()
 // - Indexes tương đương (Postgres hỗ trợ DESC và partial WHERE)
 func (s *Store) migratePostgres() error {
-	migrations := []string{
-		migrationAccountsPG,
-		migrationSessionsPG,
-		migrationConversationsPG,
-		migrationMessagesPG,
-		migrationMediaPG,
-		migrationOAPG,
-		migrationOAWebhookPG,
-		migrationMediaJobsPG,
-		migrationContactsPG,
+	if _, err := s.db.Exec(migrationSchemaMigrationsPG); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	for _, m := range migrations {
-		if _, err := s.db.Exec(m); err != nil {
-			return fmt.Errorf("postgres migration failed: %w\nSQL: %s", err, m[:min(80, len(m))])
+
+	seen := make(map[int]string, len(postgresMigrationPlan))
+	for i, migration := range postgresMigrationPlan {
+		if migration.Version != i+1 {
+			return fmt.Errorf("migration plan: version %d at index %d, want %d", migration.Version, i, i+1)
+		}
+		if migration.Name == "" || migration.Run == nil {
+			return fmt.Errorf("migration %d: missing name or runner", migration.Version)
+		}
+		if previous, ok := seen[migration.Version]; ok {
+			return fmt.Errorf("migration plan: duplicate version %d (%s, %s)", migration.Version, previous, migration.Name)
+		}
+		seen[migration.Version] = migration.Name
+
+		var appliedName string
+		err := s.db.QueryRow(`SELECT name FROM schema_migrations WHERE version = $1`, migration.Version).Scan(&appliedName)
+		if err == nil {
+			if appliedName != migration.Name {
+				return fmt.Errorf("migration plan: version %d renamed from %q to %q", migration.Version, appliedName, migration.Name)
+			}
+			continue
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("check migration %03d_%s: %w", migration.Version, migration.Name, err)
+		}
+		if err := migration.Run(s); err != nil {
+			return fmt.Errorf("apply migration %03d_%s: %w", migration.Version, migration.Name, err)
+		}
+		if _, err := s.db.Exec(`
+			INSERT INTO schema_migrations (version, name)
+			VALUES ($1, $2)
+			ON CONFLICT (version) DO NOTHING`, migration.Version, migration.Name); err != nil {
+			return fmt.Errorf("record migration %03d_%s: %w", migration.Version, migration.Name, err)
 		}
 	}
-	if err := s.ensureSessionServiceMapPG(); err != nil {
-		return err
+	return nil
+}
+
+// ListSchemaMigrations trả về các migration đã áp dụng theo version tăng dần.
+func (s *Store) ListSchemaMigrations() ([]SchemaMigration, error) {
+	rows, err := s.db.Query(`SELECT version, name, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("list schema migrations: %w", err)
 	}
-	if err := s.ensureAccountUserIDPG(); err != nil {
-		return err
+	defer rows.Close()
+
+	migrations := make([]SchemaMigration, 0)
+	for rows.Next() {
+		var migration SchemaMigration
+		if err := rows.Scan(&migration.Version, &migration.Name, &migration.AppliedAt); err != nil {
+			return nil, fmt.Errorf("scan schema migration: %w", err)
+		}
+		migrations = append(migrations, migration)
 	}
-	if err := s.ensureAccountEnabledPG(); err != nil {
-		return err
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate schema migrations: %w", err)
 	}
-	if err := s.ensureAccountDisabledReasonPG(); err != nil {
-		return err
-	}
-	if err := s.ensureAccountSyncV2PG(); err != nil {
-		return err
-	}
-	if err := s.ensureAccountTransportPG(); err != nil {
-		return err
-	}
-	if err := s.ensureZaloAccountsTablePG(); err != nil {
-		return err
-	}
-	if err := s.ensureAccountZaloAccountIDPG(); err != nil {
-		return err
-	}
-	if err := s.backfillZaloAccountsPG(); err != nil {
-		return err
-	}
-	return s.ensureSessionTransportPG()
+	return migrations, nil
 }
 
 // ensureSessionServiceMapPG thêm cột service_map nếu thiếu.
@@ -139,7 +209,7 @@ func (s *Store) ensureAccountUserIDPG() error {
 }
 
 // ensureSessionTransportPG thêm cột transport + cipher_key vào sessions nếu thiếu.
-// Mặc định transport='' (web), cipher_key rỗng.
+// Mặc định transport=” (web), cipher_key rỗng.
 func (s *Store) ensureSessionTransportPG() error {
 	for _, col := range []struct {
 		def string
@@ -189,7 +259,7 @@ func (s *Store) ensureAccountSyncV2PG() error {
 }
 
 // ensureAccountTransportPG thêm cột transport TEXT vào accounts nếu thiếu.
-// Mặc định '' (web). Field này song song với sessions.transport để
+// Mặc định ” (web). Field này song song với sessions.transport để
 // ListAccounts/GetAccount có thể lọc account theo transport (vd chỉ
 // liệt kê PC transport khi login trusted-device).
 func (s *Store) ensureAccountTransportPG() error {
@@ -226,6 +296,7 @@ func (s *Store) ensureAccountDisabledReasonPG() error {
 	}
 	return nil
 }
+
 // Default TRUE cho backward compat — account cũ vẫn enabled mặc định.
 func (s *Store) ensureAccountEnabledPG() error {
 	var exists bool

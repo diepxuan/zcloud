@@ -144,3 +144,31 @@ func TestMigration_AccountSyncV2State(t *testing.T) {
 		t.Fatalf("Get(not exist): raw=%q err=%v", raw2, err)
 	}
 }
+
+func TestMigration_VersioningIsIdempotent(t *testing.T) {
+	st := newTestStore(t)
+
+	first, err := st.ListSchemaMigrations()
+	if err != nil {
+		t.Fatalf("ListSchemaMigrations: %v", err)
+	}
+	if len(first) != len(postgresMigrationPlan) {
+		t.Fatalf("recorded migrations=%d, want %d", len(first), len(postgresMigrationPlan))
+	}
+	for i, migration := range postgresMigrationPlan {
+		if first[i].Version != migration.Version || first[i].Name != migration.Name {
+			t.Fatalf("migration[%d]=%v, want version=%d name=%s", i, first[i], migration.Version, migration.Name)
+		}
+	}
+
+	if err := st.migratePostgres(); err != nil {
+		t.Fatalf("second migratePostgres: %v", err)
+	}
+	second, err := st.ListSchemaMigrations()
+	if err != nil {
+		t.Fatalf("ListSchemaMigrations after rerun: %v", err)
+	}
+	if len(second) != len(first) {
+		t.Fatalf("rerun changed migration count: got %d want %d", len(second), len(first))
+	}
+}
