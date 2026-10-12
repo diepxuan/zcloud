@@ -42,7 +42,7 @@ func (s *Server) HandleSyncV2Start(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "build client: "+err.Error())
 		return
 	}
-	entry, err := ensureSyncV2Client(s.Store, accountID, clientObj.Session, s.Logger)
+	entry, err := s.ensureSyncV2Client(accountID, clientObj.Session)
 	if err != nil {
 		fail(w, 500, "ensure syncv2 client: "+err.Error())
 		return
@@ -72,9 +72,9 @@ func (s *Server) HandleSyncV2Stop(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "missing accountId")
 		return
 	}
-	syncV2Mu.Lock()
-	entry, hasEntry := syncV2Registry[accountID]
-	syncV2Mu.Unlock()
+	s.syncV2Mu.Lock()
+	entry, hasEntry := s.syncV2Registry[accountID]
+	s.syncV2Mu.Unlock()
 	if !hasEntry || entry == nil {
 		fail(w, 404, "no syncv2 client for account")
 		return
@@ -102,9 +102,9 @@ func (s *Server) HandleSyncV2Reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Drop client khỏi registry để lần start kế tiếp generate keypair mới.
-	syncV2Mu.Lock()
-	delete(syncV2Registry, accountID)
-	syncV2Mu.Unlock()
+	s.syncV2Mu.Lock()
+	delete(s.syncV2Registry, accountID)
+	s.syncV2Mu.Unlock()
 	ok(w, map[string]any{"reset": true, "accountId": accountID})
 }
 
@@ -135,9 +135,9 @@ func (s *Server) HandleSyncV2Status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Check runtime client.
-	syncV2Mu.Lock()
-	entry, hasEntry := syncV2Registry[accountID]
-	syncV2Mu.Unlock()
+	s.syncV2Mu.Lock()
+	entry, hasEntry := s.syncV2Registry[accountID]
+	s.syncV2Mu.Unlock()
 	if hasEntry && entry != nil {
 		entry.pullMu.Lock()
 		out["pullRunning"] = entry.pullRunning
@@ -145,4 +145,3 @@ func (s *Server) HandleSyncV2Status(w http.ResponseWriter, r *http.Request) {
 	}
 	ok(w, out)
 }
-

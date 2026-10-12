@@ -24,10 +24,23 @@ type Server struct {
 	qrFlows   map[string]*qrFlow
 	WSManager *WSManager
 	clients   map[string]*core.Client
+
+	zaloListenerMu sync.Mutex
+	zaloListeners  map[string]*zaloListenerEntry
+	syncV2Mu       sync.Mutex
+	syncV2Registry map[string]*syncV2Entry
 }
 
 func NewServer(s *store.Store, logger *log.Logger) *Server {
-	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client), qrFlows: make(map[string]*qrFlow), WSManager: &WSManager{rooms: make(map[string]map[*wsConn]bool)}}
+	svr := &Server{
+		Store:          s,
+		Logger:         logger,
+		clients:        make(map[string]*core.Client),
+		qrFlows:        make(map[string]*qrFlow),
+		WSManager:      &WSManager{rooms: make(map[string]map[*wsConn]bool)},
+		zaloListeners:  make(map[string]*zaloListenerEntry),
+		syncV2Registry: make(map[string]*syncV2Entry),
+	}
 	return svr
 }
 
@@ -98,7 +111,7 @@ func (s *Server) HandleAccountList(w http.ResponseWriter, r *http.Request) {
 	sessStatus, _ := s.Store.GetActiveSessionsForAccounts()
 	// Build listener status map (in-memory).
 	listenerSet := make(map[string]bool)
-	for _, snap := range ListListeners() {
+	for _, snap := range s.ListListeners() {
 		listenerSet[snap.AccountID] = snap.Listening
 	}
 	// Enriched list: them listening + hasActiveSession.
@@ -214,7 +227,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		smj = []byte("{}")
 	}
 
-	StopZaloListener(accountID)
+	s.StopZaloListener(accountID)
 	sessionID := session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10)
 	prevTransport := s.getAccountTransport(accountID)
 	if err := s.Store.SaveSession(&store.Session{
@@ -235,7 +248,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → pc, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc", "zaloAccountId": zaID})
 }
 
@@ -247,7 +260,7 @@ func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "missing accountId")
 		return
 	}
-	StopZaloListener(accountID)
+	s.StopZaloListener(accountID)
 	// Nếu session is_active=0 (do bị deactivate bởi DeleteSession hoặc setAccountEnabled),
 	// thử refresh bằng cookie login trước khi StartZaloListener — nếu không StartZaloListener
 	// sẽ log "no active session" và listener không start.
@@ -266,7 +279,7 @@ func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no session + refresh failed, please re-login")
 		return
 	}
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 	ok(w, map[string]interface{}{"restarted": true, "accountId": accountID})
 }
 
@@ -447,14 +460,14 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 
 	// Chỉ giữ 1 session active cho account. Stop listener cũ trước khi lưu
 	// session mới để không còn WebSocket cũ bị Zalo coi là duplicate/kickout.
-	StopZaloListener(accountID)
+	s.StopZaloListener(accountID)
 	s.Store.SaveSession(&store.Session{
 		ID: session.UserID + "_" + strconv.FormatInt(time.Now().Unix(), 10), AccountID: accountID,
 		UserID: session.UserID, Cookies: string(cookiesJSON), SecretKey: session.SecretKey,
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wsURLsJSON), ServiceMap: string(serviceMapJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 
 	// Auto-detect transport dựa trên session.CipherKey:
 	//   - CipherKey != "" → PC (AES-GCM, Zalo PC client + PC QR scan tương lai)
@@ -505,12 +518,12 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Start Zalo WS listener nền (Go server tự làm Zalo client)
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
 	// Start listener lại với session mới sau autoRefresh.
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 
 	var cookies map[string]string
 	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
@@ -799,7 +812,7 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 			lastID = conv.LastMsgID
 		}
 	}
-	if RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType, lastID) {
+	if s.RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType, lastID) {
 		synced++
 	}
 
@@ -902,7 +915,7 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "missing accountId")
 		return
 	}
-	StopZaloListener(req.AccountID)
+	s.StopZaloListener(req.AccountID)
 	if err := s.Store.LogoutAccount(req.AccountID); err != nil {
 		fail(w, 500, "logout: "+err.Error())
 		return
@@ -942,7 +955,7 @@ func (s *Server) HandleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "account không có zalo_account_id (chưa qua T24 migration?)")
 		return
 	}
-	StopZaloListener(req.AccountID)
+	s.StopZaloListener(req.AccountID)
 	if err := s.Store.DeleteAccountByZaloAccountID(acc.ZaloAccountID); err != nil {
 		fail(w, 500, "delete: "+err.Error())
 		return
@@ -1050,7 +1063,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → web, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "web", "zaloAccountId": zaID})
 }
 
@@ -1196,11 +1209,11 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	}
 	// Ngừng listener cũ trước khi đổi session; nếu không, Zalo vẫn giữ
 	// WebSocket cũ và có thể kick connection mới.
-	StopZaloListener(accountID)
+	s.StopZaloListener(accountID)
 	saveErr := s.Store.SaveSession(newSession)
 	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s", saveErr, newSession.ID)
 	// SaveSession tự vô hiệu hoá session active cũ của account.
-	go s.startZaloListener(accountID)
+	go s.StartZaloListener(accountID)
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }

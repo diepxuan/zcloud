@@ -15,10 +15,10 @@ import (
 // đang có session active. Chạy nền trong goroutine; idempotent — chỉ chạy
 // khi tới interval và skip nếu lần trước chưa xong.
 type SyncScheduler struct {
-	store     *store.Store
-	logger    *log.Logger
-	wsManager *WSManager
-	interval  time.Duration
+	server   *Server
+	store    *store.Store
+	logger   *log.Logger
+	interval time.Duration
 
 	mu       sync.Mutex
 	running  bool
@@ -37,17 +37,26 @@ const (
 
 // NewSyncScheduler tạo scheduler. interval <= 0 → dùng mặc định 10 phút.
 func NewSyncScheduler(st *store.Store, logger *log.Logger, wsManager *WSManager, interval time.Duration) *SyncScheduler {
+	server := NewServer(st, logger)
+	if wsManager != nil {
+		server.WSManager = wsManager
+	}
+	return NewSyncSchedulerForServer(server, interval)
+}
+
+// NewSyncSchedulerForServer tạo scheduler dùng chung runtime state với HTTP Server.
+func NewSyncSchedulerForServer(server *Server, interval time.Duration) *SyncScheduler {
 	if interval < autoSyncMinInterval {
 		interval = defaultAutoSyncInterval
 	}
 	return &SyncScheduler{
-		store:     st,
-		logger:    logger,
-		wsManager: wsManager,
-		interval:  interval,
-		lastTick:  make(map[string]time.Time),
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+		server:   server,
+		store:    server.Store,
+		logger:   server.Logger,
+		interval: interval,
+		lastTick: make(map[string]time.Time),
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -132,7 +141,7 @@ func (s *SyncScheduler) tick(ctx context.Context) {
 // syncAccount đồng bộ tất cả conversation của 1 account.
 func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 	// Listener phải chạy thì WS sync mới có hiệu lực.
-	StartZaloListener(s.store, s.wsManager, accountID, s.logger)
+	s.server.StartZaloListener(accountID)
 
 	convs, err := s.store.GetConversations(accountID)
 	if err != nil {
@@ -152,7 +161,7 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 			return
 		default:
 		}
-		ok := syncConvViaListener(accountID, c.ID, c.ConvType, c.LastMsgID)
+		ok := s.server.syncConvViaListener(accountID, c.ID, c.ConvType, c.LastMsgID)
 		if ok {
 			s.logger.Printf("auto-sync %s: requested conv=%s type=%d lastId=%s",
 				accountID, c.ID, c.ConvType, c.LastMsgID)
@@ -167,7 +176,7 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 		}
 	}
 	// Resume SyncV2 pull loop nếu state trong DB đang ở phase=pulling.
-	resumeSyncV2(s.store, accountID, s.logger)
+	s.server.resumeSyncV2(accountID)
 
 	s.mu.Lock()
 	s.lastTick[accountID] = time.Now()
@@ -176,10 +185,10 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 
 // syncConvViaListener gửi WS cmd 510/511 với lastId cụ thể.
 // Trả về true nếu listener gửi request thành công.
-func syncConvViaListener(accountID, convID string, convType int, lastID string) bool {
-	zaloListenerMu.Lock()
-	entry := zaloListeners[accountID]
-	zaloListenerMu.Unlock()
+func (s *Server) syncConvViaListener(accountID, convID string, convType int, lastID string) bool {
+	s.zaloListenerMu.Lock()
+	entry := s.zaloListeners[accountID]
+	s.zaloListenerMu.Unlock()
 	if entry == nil || entry.client == nil || entry.client.WS == nil {
 		return false
 	}
@@ -193,7 +202,10 @@ func syncConvViaListener(accountID, convID string, convType int, lastID string) 
 // resumeSyncV2 kiểm tra accounts.syncv2_state của account; nếu phase=pulling
 // thì đảm bảo SyncV2Client đang chạy background PullBatch loop. Resume
 // giúp restart không phải bắt đầu lại từ đầu.
-func resumeSyncV2(st *store.Store, accountID string, logger *log.Logger) {
+func (s *Server) resumeSyncV2(accountID string) {
+	st := s.Store
+	logger := s.Logger
+
 	raw, err := st.GetAccountSyncV2State(accountID)
 	if err != nil {
 		return
@@ -217,7 +229,7 @@ func resumeSyncV2(st *store.Store, accountID string, logger *log.Logger) {
 	if err != nil {
 		return
 	}
-	entry, err := ensureSyncV2Client(st, accountID, clientObj.Session, logger)
+	entry, err := s.ensureSyncV2Client(accountID, clientObj.Session)
 	if err != nil {
 		return
 	}

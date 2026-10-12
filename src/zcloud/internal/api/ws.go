@@ -121,7 +121,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Start Zalo listener nếu chưa có
-	s.startZaloListener(accountID)
+	s.StartZaloListener(accountID)
 
 	<-ctx.Done()
 }
@@ -142,11 +142,6 @@ type zaloListenerEntry struct {
 	reconnectAttempts int
 }
 
-var (
-	zaloListeners  = make(map[string]*zaloListenerEntry)
-	zaloListenerMu sync.Mutex
-)
-
 const (
 	maxReconnectDelay = 30 * time.Second
 )
@@ -154,10 +149,10 @@ const (
 // StartZaloListener khởi động Zalo WebSocket listener cho account
 // RequestOldMessagesViaListener gửi yêu cầu old messages qua WS listener nền
 // lastID = "" → listener dùng sentinel lấy batch mới nhất.
-func RequestOldMessagesViaListener(accountID, convID string, convType int, lastID string) bool {
-	zaloListenerMu.Lock()
-	entry := zaloListeners[accountID]
-	zaloListenerMu.Unlock()
+func (s *Server) RequestOldMessagesViaListener(accountID, convID string, convType int, lastID string) bool {
+	s.zaloListenerMu.Lock()
+	entry := s.zaloListeners[accountID]
+	s.zaloListenerMu.Unlock()
 	ok := entry != nil
 	var client *core.Client
 	if entry != nil {
@@ -181,16 +176,13 @@ func RequestOldMessagesViaListener(accountID, convID string, convType int, lastI
 	return true
 }
 
-// StartZaloListener khởi động listener từ các caller chưa sở hữu *Server.
-// Wrapper này chỉ tạo Server tương thích và delegate vào method để giữ
-// lifecycle của session listener cùng một implementation.
-func StartZaloListener(st *store.Store, wsManager *WSManager, accountID string, logger *log.Logger) {
-	(&Server{Store: st, Logger: logger, WSManager: wsManager}).startZaloListener(accountID)
-}
-
-func (s *Server) startZaloListener(accountID string) {
-	zaloListenerMu.Lock()
-	defer zaloListenerMu.Unlock()
+// StartZaloListener khởi động Zalo WebSocket listener cho account.
+func (s *Server) StartZaloListener(accountID string) {
+	s.zaloListenerMu.Lock()
+	defer s.zaloListenerMu.Unlock()
+	if s.zaloListeners == nil {
+		s.zaloListeners = make(map[string]*zaloListenerEntry)
+	}
 
 	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
@@ -199,19 +191,19 @@ func (s *Server) startZaloListener(accountID string) {
 	}
 
 	// Nếu đã chạy với cùng session thì giữ nguyên, tránh tạo duplicate WS.
-	if entry, ok := zaloListeners[accountID]; ok {
+	if entry, ok := s.zaloListeners[accountID]; ok {
 		if entry.sessionID == sessRec.ID {
 			return
 		}
 		entry.cancel()
-		delete(zaloListeners, accountID)
+		delete(s.zaloListeners, accountID)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	entry := &zaloListenerEntry{server: s, cancel: cancel, sessionID: sessRec.ID}
-	zaloListeners[accountID] = entry
+	s.zaloListeners[accountID] = entry
 
-	go runZaloListener(ctx, entry, s.Store, s.WSManager, accountID, s.Logger)
+	go runZaloListener(ctx, entry, accountID)
 
 	s.Logger.Printf("zalo-ws: started listener for %s", accountID)
 }
@@ -257,25 +249,29 @@ func (s *Server) handleExpiredSession(accountID string) {
 }
 
 // StopZaloListener dừng Zalo listener
-func StopZaloListener(accountID string) {
-	zaloListenerMu.Lock()
-	defer zaloListenerMu.Unlock()
-	if entry, ok := zaloListeners[accountID]; ok {
+func (s *Server) StopZaloListener(accountID string) {
+	s.zaloListenerMu.Lock()
+	defer s.zaloListenerMu.Unlock()
+	if entry, ok := s.zaloListeners[accountID]; ok {
 		entry.cancel()
-		delete(zaloListeners, accountID)
+		delete(s.zaloListeners, accountID)
 	}
 }
 
-func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.Store, wsManager *WSManager, accountID string, logger *log.Logger) {
+func runZaloListener(ctx context.Context, current *zaloListenerEntry, accountID string) {
+	server := current.server
+	st := server.Store
+	logger := server.Logger
+
 	defer func() {
 		if current != nil && current.client != nil && current.client.WS != nil {
 			_ = current.client.WS.Close()
 		}
-		zaloListenerMu.Lock()
-		if zaloListeners[accountID] == current {
-			delete(zaloListeners, accountID)
+		server.zaloListenerMu.Lock()
+		if server.zaloListeners[accountID] == current {
+			delete(server.zaloListeners, accountID)
 		}
-		zaloListenerMu.Unlock()
+		server.zaloListenerMu.Unlock()
 	}()
 
 	// Panic recovery: nếu goroutine chết vì panic (bug code, OOM edge case...),
@@ -313,13 +309,13 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 			return
 		}
 
-		zaloListenerMu.Lock()
-		if zaloListeners[accountID] != current {
-			zaloListenerMu.Unlock()
+		server.zaloListenerMu.Lock()
+		if server.zaloListeners[accountID] != current {
+			server.zaloListenerMu.Unlock()
 			return
 		}
 		current.client = client
-		zaloListenerMu.Unlock()
+		server.zaloListenerMu.Unlock()
 
 		logger.Printf("zalo-ws: connecting %s (attempt %d)", accountID, attempt+1)
 
@@ -348,7 +344,7 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 		attempt = 0
 
 		// Nhận events từ Zalo WebSocket
-		reason := listenLoop(ctx, st, wsManager, client, accountID, logger)
+		reason := listenLoop(ctx, server, client, accountID)
 
 		// Mất kết nối → reconnect sau backoff
 		if reason.Code == 3000 || reason.Code == 3003 {
@@ -395,7 +391,9 @@ func clientFromSession(sessRec *store.Session) (*core.Client, error) {
 	return core.NewClient(session), nil
 }
 
-func listenLoop(ctx context.Context, st *store.Store, wsManager *WSManager, client *core.Client, accountID string, logger *log.Logger) core.CloseEvent {
+func listenLoop(ctx context.Context, server *Server, client *core.Client, accountID string) core.CloseEvent {
+	logger := server.Logger
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -404,7 +402,7 @@ func listenLoop(ctx context.Context, st *store.Store, wsManager *WSManager, clie
 			if !ok {
 				return core.CloseEvent{Code: -1}
 			}
-			handleZaloEvent(ctx, st, wsManager, event, accountID, logger)
+			handleZaloEvent(ctx, server, event, accountID)
 
 		case err, ok := <-client.WS.Errors():
 			if !ok {
@@ -422,7 +420,11 @@ func listenLoop(ctx context.Context, st *store.Store, wsManager *WSManager, clie
 	}
 }
 
-func handleZaloEvent(ctx context.Context, st *store.Store, wsManager *WSManager, event core.Event, accountID string, logger *log.Logger) {
+func handleZaloEvent(ctx context.Context, server *Server, event core.Event, accountID string) {
+	st := server.Store
+	wsManager := server.WSManager
+	logger := server.Logger
+
 	switch event.Type {
 	case core.EventNewMessage:
 		if event.Message == nil {
@@ -546,7 +548,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, wsManager *WSManager,
 				ds.Type == core.EventAckDeleteSession ||
 				ds.Type == core.EventMobileWakeUp ||
 				ds.Type == core.EventBackupMeta {
-				handleSyncV2Event(ctx, st, accountID, ds.RawData, logger)
+				server.handleSyncV2Event(ctx, accountID, ds.RawData)
 			}
 		}
 	}
@@ -798,10 +800,10 @@ func uploadAttachmentURL(event core.Event) string {
 }
 
 // IsListening tra ve true neu zalo listener dang chay cho accountID.
-func IsListening(accountID string) bool {
-	zaloListenerMu.Lock()
-	defer zaloListenerMu.Unlock()
-	_, ok := zaloListeners[accountID]
+func (s *Server) IsListening(accountID string) bool {
+	s.zaloListenerMu.Lock()
+	defer s.zaloListenerMu.Unlock()
+	_, ok := s.zaloListeners[accountID]
 	return ok
 }
 
@@ -821,11 +823,11 @@ type ListenerSnapshot struct {
 }
 
 // ListListeners tra ve snapshot cho moi account dang co listener.
-func ListListeners() []ListenerSnapshot {
-	zaloListenerMu.Lock()
-	defer zaloListenerMu.Unlock()
-	out := make([]ListenerSnapshot, 0, len(zaloListeners))
-	for id := range zaloListeners {
+func (s *Server) ListListeners() []ListenerSnapshot {
+	s.zaloListenerMu.Lock()
+	defer s.zaloListenerMu.Unlock()
+	out := make([]ListenerSnapshot, 0, len(s.zaloListeners))
+	for id := range s.zaloListeners {
 		out = append(out, ListenerSnapshot{AccountID: id, Listening: true})
 	}
 	return out

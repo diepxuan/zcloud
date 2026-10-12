@@ -96,7 +96,7 @@ func Run() error {
 	} else {
 		logger.Printf("zalo-ws: boot — starting listeners for %d account(s)", len(activeIDs))
 		for _, accID := range activeIDs {
-			api.StartZaloListener(db, s.WSManager, accID, logger)
+			s.StartZaloListener(accID)
 		}
 	}
 
@@ -110,7 +110,7 @@ func Run() error {
 				continue
 			}
 			for _, accID := range ids {
-				api.StartZaloListener(db, s.WSManager, accID, logger)
+				s.StartZaloListener(accID)
 			}
 		}
 	}()
@@ -131,7 +131,7 @@ func Run() error {
 			syncInterval = d
 		}
 	}
-	scheduler := api.NewSyncScheduler(db, logger, s.WSManager, syncInterval)
+	scheduler := api.NewSyncSchedulerForServer(s, syncInterval)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	scheduler.Start(schedulerCtx)
 	defer scheduler.Stop()

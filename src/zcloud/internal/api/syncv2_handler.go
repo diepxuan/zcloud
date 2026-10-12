@@ -20,13 +20,6 @@ import (
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
-// syncV2Registry map accountID → *core.SyncV2Client + cancel function.
-// Lifecycle: tạo 1 lần khi account start syncv2; cancel khi stop/reset.
-var (
-	syncV2Mu       sync.Mutex
-	syncV2Registry = map[string]*syncV2Entry{}
-)
-
 type syncV2Entry struct {
 	client      *core.SyncV2Client
 	cancel      context.CancelFunc
@@ -36,21 +29,24 @@ type syncV2Entry struct {
 
 // ensureSyncV2Client nạp (hoặc tạo) SyncV2Client cho account và lưu state
 // vào DB. Trả về entry hiện tại (có thể là cũ nếu đã từng start).
-func ensureSyncV2Client(st *store.Store, accountID string, sess *core.Session, logger *log.Logger) (*syncV2Entry, error) {
-	syncV2Mu.Lock()
-	defer syncV2Mu.Unlock()
-	if e, ok := syncV2Registry[accountID]; ok {
+func (s *Server) ensureSyncV2Client(accountID string, sess *core.Session) (*syncV2Entry, error) {
+	s.syncV2Mu.Lock()
+	defer s.syncV2Mu.Unlock()
+	if s.syncV2Registry == nil {
+		s.syncV2Registry = make(map[string]*syncV2Entry)
+	}
+	if e, ok := s.syncV2Registry[accountID]; ok {
 		return e, nil
 	}
 	// Nạp state từ DB (nếu có) để resume sau restart.
-	raw, err := st.GetAccountSyncV2State(accountID)
+	raw, err := s.Store.GetAccountSyncV2State(accountID)
 	if err != nil {
 		return nil, fmt.Errorf("load syncv2 state: %w", err)
 	}
 	var state core.SyncV2State
 	if raw != "" && raw != "{}" {
 		if err := json.Unmarshal([]byte(raw), &state); err != nil {
-			logger.Printf("syncv2: parse state for %s fail %v — reset", accountID, err)
+			s.Logger.Printf("syncv2: parse state for %s fail %v — reset", accountID, err)
 			state = core.SyncV2State{Phase: "init"}
 		}
 	} else {
@@ -60,14 +56,14 @@ func ensureSyncV2Client(st *store.Store, accountID string, sess *core.Session, l
 	if err != nil {
 		return nil, fmt.Errorf("new syncv2 client: %w", err)
 	}
-	if err := persistSyncV2State(st, accountID, client); err != nil {
+	if err := persistSyncV2State(s.Store, accountID, client); err != nil {
 		return nil, err
 	}
 	// cancel hook cho future use (vd stop pull loop khi logout).
 	_, cancel := context.WithCancel(context.Background())
 	entry := &syncV2Entry{client: client, cancel: cancel}
-	syncV2Registry[accountID] = entry
-	logger.Printf("syncv2: init for %s phase=%s", accountID, state.Phase)
+	s.syncV2Registry[accountID] = entry
+	s.Logger.Printf("syncv2: init for %s phase=%s", accountID, state.Phase)
 	return entry, nil
 }
 
@@ -82,10 +78,10 @@ func persistSyncV2State(st *store.Store, accountID string, c *core.SyncV2Client)
 
 // getSyncV2Client trả client hiện tại (không tạo mới). Trả nil nếu chưa
 // init — caller xử lý bằng cách bỏ qua event.
-func getSyncV2Client(accountID string) *core.SyncV2Client {
-	syncV2Mu.Lock()
-	defer syncV2Mu.Unlock()
-	if e, ok := syncV2Registry[accountID]; ok {
+func (s *Server) getSyncV2Client(accountID string) *core.SyncV2Client {
+	s.syncV2Mu.Lock()
+	defer s.syncV2Mu.Unlock()
+	if e, ok := s.syncV2Registry[accountID]; ok {
 		return e.client
 	}
 	return nil
@@ -95,7 +91,10 @@ func getSyncV2Client(accountID string) *core.SyncV2Client {
 // - event.Data là raw JSON từ server (vd {act: "user_confirm", data: {...}}).
 // - Trigger RequestSync (nếu phase=init) hoặc HandleEvent (cập nhật state).
 // - Khi user_confirm → chạy PullBatch loop background.
-func handleSyncV2Event(ctx context.Context, st *store.Store, accountID string, rawData []byte, logger *log.Logger) {
+func (s *Server) handleSyncV2Event(ctx context.Context, accountID string, rawData []byte) {
+	st := s.Store
+	logger := s.Logger
+
 	if len(rawData) == 0 {
 		return
 	}
@@ -110,7 +109,7 @@ func handleSyncV2Event(ctx context.Context, st *store.Store, accountID string, r
 		logger.Printf("syncv2: build client for %s fail: %v", accountID, err)
 		return
 	}
-	entry, err := ensureSyncV2Client(st, accountID, clientObj.Session, logger)
+	entry, err := s.ensureSyncV2Client(accountID, clientObj.Session)
 	if err != nil {
 		logger.Printf("syncv2: ensureSyncV2Client fail: %v", err)
 		return
