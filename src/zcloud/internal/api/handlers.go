@@ -21,11 +21,12 @@ type Server struct {
 	Store   *store.Store
 	Logger  *log.Logger
 	mu      sync.RWMutex
+	qrFlows map[string]*qrFlow
 	clients map[string]*core.Client
 }
 
 func NewServer(s *store.Store, logger *log.Logger) *Server {
-	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client)}
+	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client), qrFlows: make(map[string]*qrFlow)}
 	globalServer = svr
 	return svr
 }
@@ -282,8 +283,6 @@ type qrFlow struct {
 	err      error
 }
 
-var qrFlows = make(map[string]*qrFlow)
-var qrMu sync.RWMutex
 
 func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -296,17 +295,17 @@ func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 	code := qrSession.Code
 	flow := &qrFlow{qr: qrSession, done: make(chan struct{})}
 
-	qrMu.Lock()
-	qrFlows[code] = flow
-	qrMu.Unlock()
+	s.mu.Lock()
+	s.qrFlows[code] = flow
+	s.mu.Unlock()
 
 	go func() {
 		time.Sleep(5 * time.Minute)
-		qrMu.Lock()
-		if current, ok := qrFlows[code]; ok && current == flow {
-			delete(qrFlows, code)
+		s.mu.Lock()
+		if current, ok := s.qrFlows[code]; ok && current == flow {
+			delete(s.qrFlows, code)
 		}
-		qrMu.Unlock()
+		s.mu.Unlock()
 	}()
 
 	ok(w, map[string]interface{}{
@@ -330,9 +329,9 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	qrMu.RLock()
-	flow := qrFlows[token]
-	qrMu.RUnlock()
+	s.mu.RLock()
+	flow := s.qrFlows[token]
+	s.mu.RUnlock()
 	if flow == nil {
 		fail(w, 404, "QR session expired")
 		return
@@ -364,9 +363,9 @@ func (s *Server) HandlePollQR(w http.ResponseWriter, r *http.Request) {
 		flow.consumed = true
 		flow.mu.Unlock()
 
-		qrMu.Lock()
-		delete(qrFlows, token)
-		qrMu.Unlock()
+		s.mu.Lock()
+		delete(s.qrFlows, token)
+		s.mu.Unlock()
 
 		if consumed {
 			fail(w, 404, "QR session expired")
