@@ -100,10 +100,10 @@ func TestBaseAttachmentID(t *testing.T) {
 		{"8235996590219-0", "8235996590219"},
 		{"8235996590219-12", "8235996590219"},
 		{"abc-def-2", "abc-def"},
-		{"raw-id", "raw-id"},          // "id" không phải số
-		{"a1-hdUrl", "a1-hdUrl"},     // "hdUrl" không phải số
+		{"raw-id", "raw-id"},     // "id" không phải số
+		{"a1-hdUrl", "a1-hdUrl"}, // "hdUrl" không phải số
 		{"", ""},
-		{"-5", "-5"},                 // prefix "-" nhưng phần trước rỗng → giữ nguyên
+		{"-5", "-5"}, // prefix "-" nhưng phần trước rỗng → giữ nguyên
 	}
 	for _, c := range cases {
 		if got := baseAttachmentID(c.in); got != c.want {
@@ -131,7 +131,7 @@ func TestDownloadOneMedia_Success(t *testing.T) {
 			{ID: "file-1", URL: srv.URL + "/img.jpg", FileName: "img.jpg"},
 		},
 	}
-	downloadOneMedia(context.Background(), st, "acc-1", msg,
+	downloadOneMedia(context.Background(), st, nil, "acc-1", msg,
 		mediaDownloadInfo{URL: srv.URL + "/img.jpg", FileExt: "jpg", MsgID: "file-1"},
 		testLogger())
 
@@ -163,7 +163,7 @@ func TestDownloadOneMedia_SkipExisting(t *testing.T) {
 		ID: "m1", ConvID: "c1", Type: core.MsgTypeImage,
 		Attachments: []core.Attachment{{ID: "file-1", URL: srv.URL + "/x.jpg", FileName: "x.jpg"}},
 	}
-	downloadOneMedia(context.Background(), st, "acc-1", msg,
+	downloadOneMedia(context.Background(), st, nil, "acc-1", msg,
 		mediaDownloadInfo{URL: srv.URL + "/x.jpg", FileExt: "jpg", MsgID: "file-1"},
 		testLogger())
 	if hits != 0 {
@@ -191,7 +191,7 @@ func TestDownloadOneMedia_RetryOnError(t *testing.T) {
 		ID: "m1", ConvID: "c1", Type: core.MsgTypeImage,
 		Attachments: []core.Attachment{{ID: "f", URL: srv.URL, FileName: "f.bin"}},
 	}
-	downloadOneMedia(context.Background(), st, "acc-1", msg,
+	downloadOneMedia(context.Background(), st, nil, "acc-1", msg,
 		mediaDownloadInfo{URL: srv.URL, FileExt: "bin", MsgID: "f"},
 		testLogger())
 	if hits < 3 {
@@ -202,7 +202,7 @@ func TestDownloadOneMedia_RetryOnError(t *testing.T) {
 func TestMsgTypeIsMedia(t *testing.T) {
 	cases := []struct {
 		typ  core.MsgType
-	want bool
+		want bool
 	}{
 		{core.MsgTypeText, false},
 		{core.MsgTypeImage, true},

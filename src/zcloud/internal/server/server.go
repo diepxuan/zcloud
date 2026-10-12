@@ -96,7 +96,7 @@ func Run() error {
 	} else {
 		logger.Printf("zalo-ws: boot — starting listeners for %d account(s)", len(activeIDs))
 		for _, accID := range activeIDs {
-			api.StartZaloListener(db, accID, logger)
+			api.StartZaloListener(db, s.WSManager, accID, logger)
 		}
 	}
 
@@ -110,7 +110,7 @@ func Run() error {
 				continue
 			}
 			for _, accID := range ids {
-				api.StartZaloListener(db, accID, logger)
+				api.StartZaloListener(db, s.WSManager, accID, logger)
 			}
 		}
 	}()
@@ -131,14 +131,14 @@ func Run() error {
 			syncInterval = d
 		}
 	}
-	scheduler := api.NewSyncScheduler(db, logger, syncInterval)
+	scheduler := api.NewSyncScheduler(db, logger, s.WSManager, syncInterval)
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	scheduler.Start(schedulerCtx)
 	defer scheduler.Stop()
 	logger.Printf("auto-sync: scheduler started (interval=%s)", syncInterval)
 
 	// Media worker.
-	mediaWorker := api.NewMediaWorker(db, logger, 5*time.Second, 20)
+	mediaWorker := api.NewMediaWorker(db, logger, s.WSManager, 5*time.Second, 20)
 	mediaCtx, mediaCancel := context.WithCancel(context.Background())
 	mediaWorker.Start(mediaCtx)
 	defer mediaWorker.Stop()

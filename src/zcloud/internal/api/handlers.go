@@ -12,21 +12,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/diepxuan/zcloud/internal/core"
 	"github.com/diepxuan/zcloud/internal"
+	"github.com/diepxuan/zcloud/internal/core"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
 type Server struct {
-	Store   *store.Store
-	Logger  *log.Logger
-	mu      sync.RWMutex
-	qrFlows map[string]*qrFlow
-	clients map[string]*core.Client
+	Store     *store.Store
+	Logger    *log.Logger
+	mu        sync.RWMutex
+	qrFlows   map[string]*qrFlow
+	WSManager *WSManager
+	clients   map[string]*core.Client
 }
 
 func NewServer(s *store.Store, logger *log.Logger) *Server {
-	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client), qrFlows: make(map[string]*qrFlow)}
+	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client), qrFlows: make(map[string]*qrFlow), WSManager: &WSManager{rooms: make(map[string]map[*wsConn]bool)}}
 	globalServer = svr
 	return svr
 }
@@ -235,7 +236,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → pc, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc", "zaloAccountId": zaID})
 }
 
@@ -266,9 +267,10 @@ func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no session + refresh failed, please re-login")
 		return
 	}
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 	ok(w, map[string]interface{}{"restarted": true, "accountId": accountID})
 }
+
 // ========== QR LOGIN ==========
 
 // qrFlow là một lần tạo QR trên server. Poll chỉ khởi động một goroutine
@@ -282,7 +284,6 @@ type qrFlow struct {
 	result   *core.LoginResult
 	err      error
 }
-
 
 func (s *Server) HandleCreateQR(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -454,7 +455,7 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wsURLsJSON), ServiceMap: string(serviceMapJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 
 	// Auto-detect transport dựa trên session.CipherKey:
 	//   - CipherKey != "" → PC (AES-GCM, Zalo PC client + PC QR scan tương lai)
@@ -505,12 +506,12 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Start Zalo WS listener nền (Go server tự làm Zalo client)
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
 	// Start listener lại với session mới sau autoRefresh.
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 
 	var cookies map[string]string
 	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
@@ -754,7 +755,7 @@ func (s *Server) HandleSendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 	// Broadcast tới browser WS (cùng shape với handleZaloEvent) để tab chat
 	// đang mở thấy tin ngay, không cần reload/refetch.
-	globalWS.Broadcast(req.AccountID, BrowserMessage{
+	s.WSManager.Broadcast(req.AccountID, BrowserMessage{
 		Type: "new_message",
 		Data: map[string]interface{}{
 			"id":          msg.ID,
@@ -846,8 +847,9 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 // vào DB để tránh rate-limit (429).
 //
 // Query params:
-//   accountId (optional) — nếu có, lọc 1 account. Nếu không, merge từ TẤT
-//   CẢ enabled accounts (mặc định — UI dùng cái này).
+//
+//	accountId (optional) — nếu có, lọc 1 account. Nếu không, merge từ TẤT
+//	CẢ enabled accounts (mặc định — UI dùng cái này).
 func (s *Server) HandleFriends(w http.ResponseWriter, r *http.Request) {
 	accountID := r.URL.Query().Get("accountId")
 
@@ -911,7 +913,8 @@ func (s *Server) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeleteAccount xoá sạch toàn bộ footprint của account Zalo khỏi zcloud
 // (T24.3 — UI nút "Xoá"). Cascade:
-//   zalo_accounts → accounts → sessions, messages, conversations, media, contacts
+//
+//	zalo_accounts → accounts → sessions, messages, conversations, media, contacts
 //
 // Sau khi xoá, account không hiển thị trong UI nữa (cả panel Quản lý + convs).
 // Khác HandleLogout: HandleLogout giữ identity + data, HandleDeleteAccount
@@ -1048,7 +1051,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → web, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "web", "zaloAccountId": zaID})
 }
 
@@ -1198,7 +1201,7 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	saveErr := s.Store.SaveSession(newSession)
 	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s", saveErr, newSession.ID)
 	// SaveSession tự vô hiệu hoá session active cũ của account.
-	go StartZaloListener(s.Store, accountID, s.Logger)
+	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }

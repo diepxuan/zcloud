@@ -49,14 +49,6 @@ type BrowserMessage struct {
 	Error string      `json:"error,omitempty"`
 }
 
-var globalWS *WSManager
-
-func init() {
-	globalWS = &WSManager{
-		rooms: make(map[string]map[*wsConn]bool),
-	}
-}
-
 // AddConn thêm browser connection vào room
 func (m *WSManager) AddConn(accountID string, conn *wsConn) {
 	m.mu.Lock()
@@ -113,13 +105,13 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	wc := &wsConn{conn: conn, ctx: ctx, cancel: cancel}
 
-	globalWS.AddConn(accountID, wc)
+	s.WSManager.AddConn(accountID, wc)
 	s.Logger.Printf("ws: browser connected — account=%s", accountID)
 
 	// Lắng nghe message từ browser (ping)
 	go func() {
 		defer func() {
-			globalWS.RemoveConn(accountID, wc)
+			s.WSManager.RemoveConn(accountID, wc)
 			cancel()
 			conn.Close(websocket.StatusNormalClosure, "bye")
 			s.Logger.Printf("ws: browser disconnected — account=%s", accountID)
@@ -134,7 +126,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Start Zalo listener nếu chưa có
-	StartZaloListener(s.Store, accountID, s.Logger)
+	StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
 
 	<-ctx.Done()
 }
@@ -193,7 +185,7 @@ func RequestOldMessagesViaListener(accountID, convID string, convType int, lastI
 	return true
 }
 
-func StartZaloListener(st *store.Store, accountID string, logger *log.Logger) {
+func StartZaloListener(st *store.Store, wsManager *WSManager, accountID string, logger *log.Logger) {
 	zaloListenerMu.Lock()
 	defer zaloListenerMu.Unlock()
 
@@ -216,7 +208,7 @@ func StartZaloListener(st *store.Store, accountID string, logger *log.Logger) {
 	entry := &zaloListenerEntry{cancel: cancel, sessionID: sessRec.ID}
 	zaloListeners[accountID] = entry
 
-	go runZaloListener(ctx, entry, st, accountID, logger)
+	go runZaloListener(ctx, entry, st, wsManager, accountID, logger)
 
 	logger.Printf("zalo-ws: started listener for %s", accountID)
 }
@@ -275,7 +267,7 @@ func StopZaloListener(accountID string) {
 	}
 }
 
-func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.Store, accountID string, logger *log.Logger) {
+func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.Store, wsManager *WSManager, accountID string, logger *log.Logger) {
 	defer func() {
 		if current != nil && current.client != nil && current.client.WS != nil {
 			_ = current.client.WS.Close()
@@ -357,7 +349,7 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 		attempt = 0
 
 		// Nhận events từ Zalo WebSocket
-		reason := listenLoop(ctx, st, client, accountID, logger)
+		reason := listenLoop(ctx, st, wsManager, client, accountID, logger)
 
 		// Mất kết nối → reconnect sau backoff
 		if reason.Code == 3000 || reason.Code == 3003 {
@@ -404,7 +396,7 @@ func clientFromSession(sessRec *store.Session) (*core.Client, error) {
 	return core.NewClient(session), nil
 }
 
-func listenLoop(ctx context.Context, st *store.Store, client *core.Client, accountID string, logger *log.Logger) core.CloseEvent {
+func listenLoop(ctx context.Context, st *store.Store, wsManager *WSManager, client *core.Client, accountID string, logger *log.Logger) core.CloseEvent {
 	for {
 		select {
 		case <-ctx.Done():
@@ -413,7 +405,7 @@ func listenLoop(ctx context.Context, st *store.Store, client *core.Client, accou
 			if !ok {
 				return core.CloseEvent{Code: -1}
 			}
-			handleZaloEvent(ctx, st, event, accountID, logger)
+			handleZaloEvent(ctx, st, wsManager, event, accountID, logger)
 
 		case err, ok := <-client.WS.Errors():
 			if !ok {
@@ -431,7 +423,7 @@ func listenLoop(ctx context.Context, st *store.Store, client *core.Client, accou
 	}
 }
 
-func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, accountID string, logger *log.Logger) {
+func handleZaloEvent(ctx context.Context, st *store.Store, wsManager *WSManager, event core.Event, accountID string, logger *log.Logger) {
 	switch event.Type {
 	case core.EventNewMessage:
 		if event.Message == nil {
@@ -441,7 +433,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 
 		// Lưu vào database
 		attJSON, _ := json.Marshal(msg.Attachments)
-		go enqueueMessageMediaJobs(st, accountID, msg, logger)
+		go enqueueMessageMediaJobs(st, wsManager, accountID, msg, logger)
 		st.SaveMessage(&store.Message{
 			ID:          msg.ID,
 			AccountID:   accountID,
@@ -455,7 +447,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		})
 
 		// Broadcast đến browser
-		globalWS.Broadcast(accountID, BrowserMessage{
+		wsManager.Broadcast(accountID, BrowserMessage{
 			Type: "new_message",
 			Data: map[string]interface{}{
 				"id":          msg.ID,
@@ -477,7 +469,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		if event.Message == nil {
 			return
 		}
-		globalWS.Broadcast(accountID, BrowserMessage{
+		wsManager.Broadcast(accountID, BrowserMessage{
 			Type: "typing",
 			Data: map[string]interface{}{
 				"convId": event.Message.ConvID,
@@ -486,16 +478,16 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		})
 
 	case core.EventReaction:
-		globalWS.Broadcast(accountID, BrowserMessage{Type: "reaction"})
+		wsManager.Broadcast(accountID, BrowserMessage{Type: "reaction"})
 
 	case core.EventSeen:
-		globalWS.Broadcast(accountID, BrowserMessage{Type: "seen"})
+		wsManager.Broadcast(accountID, BrowserMessage{Type: "seen"})
 
 	case core.EventDelivered:
-		globalWS.Broadcast(accountID, BrowserMessage{Type: "delivered"})
+		wsManager.Broadcast(accountID, BrowserMessage{Type: "delivered"})
 
 	case core.EventUploadAttachment:
-		globalWS.Broadcast(accountID, BrowserMessage{
+		wsManager.Broadcast(accountID, BrowserMessage{
 			Type: "upload_attachment",
 			Data: map[string]interface{}{
 				"fileId": event.FileID,
@@ -511,14 +503,14 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		om := event.Message
 		logger.Printf("zalo-ws: old msg from %s in %s", om.FromID, om.ConvID)
 		oaJSON, _ := json.Marshal(om.Attachments)
-		go enqueueMessageMediaJobs(st, accountID, om, logger)
+		go enqueueMessageMediaJobs(st, wsManager, accountID, om, logger)
 		st.SaveMessage(&store.Message{
 			ID: om.ID, AccountID: accountID, ConvID: om.ConvID,
 			FromID: om.FromID, FromName: om.FromName,
 			Content: om.Content, MsgType: int(om.Type),
 			Timestamp: om.Timestamp, Attachments: string(oaJSON),
 		})
-		globalWS.Broadcast(accountID, BrowserMessage{
+		wsManager.Broadcast(accountID, BrowserMessage{
 			Type: "old_message",
 			Data: map[string]interface{}{
 				"id": om.ID, "convId": om.ConvID, "fromId": om.FromID,
@@ -539,7 +531,7 @@ func handleZaloEvent(ctx context.Context, st *store.Store, event core.Event, acc
 		if event.DesktopSync != nil {
 			ds := event.DesktopSync
 			logger.Printf("zalo-ws: desktop-sync cmd=%d sub=%d", ds.Cmd, ds.SubCmd)
-			globalWS.Broadcast(accountID, BrowserMessage{
+			wsManager.Broadcast(accountID, BrowserMessage{
 				Type: "desktop_sync",
 				Data: map[string]interface{}{
 					"cmd":     ds.Cmd,
@@ -577,7 +569,7 @@ const storeMediaDefaultAttempts = 3
 // extractAllMedia. Với MsgTypeLink, chỉ enqueue nếu attachment có URL
 // ảnh (jpg/png/webp/gif) — Zalo link message có field 'thumb' cho OG
 // preview image; nếu không có thì link thuần không cần tải.
-func enqueueMessageMediaJobs(st *store.Store, accountID string, msg *core.Message, logger *log.Logger) {
+func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, logger *log.Logger) {
 	if st == nil || msg == nil || len(msg.Attachments) == 0 {
 		return
 	}
@@ -710,7 +702,7 @@ const mediaDownloadRetries = 3
 
 // downloadOneMedia tải 1 file với retry. Skip nếu file đã tồn tại trên disk.
 // Còn được dùng bởi test (TestDownloadOneMedia_Success và test khác trong media_test.go).
-func downloadOneMedia(ctx context.Context, st *store.Store, accountID string, msg *core.Message, info mediaDownloadInfo, logger *log.Logger) {
+func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, info mediaDownloadInfo, logger *log.Logger) {
 	mediaDir := st.MediaDir(accountID, msg.ConvID)
 	fileID := info.MsgID
 	if fileID == "" {
@@ -788,13 +780,15 @@ func downloadOneMedia(ctx context.Context, st *store.Store, accountID string, ms
 		logger.Printf("zalo-ws: media save meta err=%v", err)
 	}
 	_ = savedPath
-	globalWS.Broadcast(accountID, BrowserMessage{
-		Type: "media_downloaded",
-		Data: map[string]interface{}{
-			"msgId": msg.ID, "convId": msg.ConvID,
-			"url": "/media/" + accountID + "/" + msg.ConvID + "/" + fileID + "." + info.FileExt,
-		},
-	})
+	if wsManager != nil {
+		wsManager.Broadcast(accountID, BrowserMessage{
+			Type: "media_downloaded",
+			Data: map[string]interface{}{
+				"msgId": msg.ID, "convId": msg.ConvID,
+				"url": "/media/" + accountID + "/" + msg.ConvID + "/" + fileID + "." + info.FileExt,
+			},
+		})
+	}
 }
 
 func uploadAttachmentURL(event core.Event) string {

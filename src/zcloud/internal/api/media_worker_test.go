@@ -28,12 +28,12 @@ func TestEnqueueMessageMediaJobsWritesJobsAndIsIdempotent(t *testing.T) {
 			{ID: "f-2", URL: "https://example.com/2.jpg", FileName: "2.jpg"},
 		},
 	}
-	enqueueMessageMediaJobs(st, "acc-1", msg, testLogger())
+	enqueueMessageMediaJobs(st, nil, "acc-1", msg, testLogger())
 	jobs, _ := st.ListPendingMediaJobs("acc-1", 10)
 	if len(jobs) != 2 {
 		t.Fatalf("expected 2 jobs, got %d", len(jobs))
 	}
-	enqueueMessageMediaJobs(st, "acc-1", msg, testLogger())
+	enqueueMessageMediaJobs(st, nil, "acc-1", msg, testLogger())
 	jobs, _ = st.ListPendingMediaJobs("acc-1", 10)
 	if len(jobs) != 2 {
 		t.Fatalf("expected 2 jobs after re-enqueue, got %d", len(jobs))
@@ -46,7 +46,7 @@ func TestEnqueueMessageMediaJobsSkipsNonMedia(t *testing.T) {
 	_ = st.CreateAccount("acc-1", "T", 1)
 	msg := &core.Message{ID: "m-1", ConvID: "c-1", Type: core.MsgTypeText,
 		Attachments: []core.Attachment{{ID: "f", URL: "https://example.com/1.jpg", FileName: "1.jpg"}}}
-	enqueueMessageMediaJobs(st, "acc-1", msg, testLogger())
+	enqueueMessageMediaJobs(st, nil, "acc-1", msg, testLogger())
 	jobs, _ := st.ListPendingMediaJobs("acc-1", 10)
 	if len(jobs) != 0 {
 		t.Fatalf("text message must not enqueue media, got %d", len(jobs))
@@ -68,7 +68,7 @@ func TestEnqueueMessageMediaJobsResetsWhenFileMissing(t *testing.T) {
 		ID: "m-1", ConvID: "c-1", Type: core.MsgTypeImage,
 		Attachments: []core.Attachment{{ID: "f-1", URL: "https://example.com/1.jpg", FileName: "1.jpg"}},
 	}
-	enqueueMessageMediaJobs(st, "acc-1", msg, testLogger())
+	enqueueMessageMediaJobs(st, nil, "acc-1", msg, testLogger())
 	got, _ := st.GetMediaJob("f-1", "acc-1")
 	if got == nil || got.Status != store.MediaJobPending {
 		t.Fatalf("expected reset to pending when file missing, got %+v", got)
@@ -114,7 +114,7 @@ func TestMediaWorkerProcessJob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := NewMediaWorker(st, testLogger(), time.Millisecond, 10)
+	w := NewMediaWorker(st, testLogger(), nil, time.Millisecond, 10)
 	w.processJob(context.Background(), *job)
 
 	if hits < 3 {
@@ -150,7 +150,7 @@ func TestMediaWorkerSkipsExistingFile(t *testing.T) {
 	}
 	_ = st.SaveMediaJob(job)
 
-	w := NewMediaWorker(st, testLogger(), time.Millisecond, 10)
+	w := NewMediaWorker(st, testLogger(), nil, time.Millisecond, 10)
 	w.processJob(context.Background(), *job)
 
 	if hits != 0 {
@@ -165,7 +165,7 @@ func TestMediaWorkerSkipsExistingFile(t *testing.T) {
 func TestMediaWorkerStartStop(t *testing.T) {
 	st := newTestStore(t)
 	defer st.Close()
-	w := NewMediaWorker(st, testLogger(), time.Hour, 10)
+	w := NewMediaWorker(st, testLogger(), nil, time.Hour, 10)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.Start(ctx)
 	cancel()

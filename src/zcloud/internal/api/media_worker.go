@@ -16,10 +16,11 @@ import (
 
 // MediaWorker processes persisted media download jobs in the background.
 type MediaWorker struct {
-	store    *store.Store
-	logger   *log.Logger
-	interval time.Duration
-	batch    int
+	store     *store.Store
+	logger    *log.Logger
+	interval  time.Duration
+	batch     int
+	WSManager *WSManager
 
 	stop chan struct{}
 	done chan struct{}
@@ -30,7 +31,7 @@ const (
 	defaultMediaWorkerBatch    = 20
 )
 
-func NewMediaWorker(st *store.Store, logger *log.Logger, interval time.Duration, batch int) *MediaWorker {
+func NewMediaWorker(st *store.Store, logger *log.Logger, WSManager *WSManager, interval time.Duration, batch int) *MediaWorker {
 	if interval <= 0 {
 		interval = defaultMediaWorkerInterval
 	}
@@ -38,12 +39,13 @@ func NewMediaWorker(st *store.Store, logger *log.Logger, interval time.Duration,
 		batch = defaultMediaWorkerBatch
 	}
 	return &MediaWorker{
-		store:    st,
-		logger:   logger,
-		interval: interval,
-		batch:    batch,
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		store:     st,
+		WSManager: WSManager,
+		logger:    logger,
+		interval:  interval,
+		batch:     batch,
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -211,14 +213,17 @@ func (w *MediaWorker) download(ctx context.Context, url string, attempts int) ([
 }
 
 func (w *MediaWorker) broadcastDone(job store.MediaJob, filePath string) {
+	if w.WSManager == nil {
+		return
+	}
 	urlPath := "/media/" + job.AccountID + "/" + job.ConvID + "/" + job.ID + "." + job.FileExt
-	globalWS.Broadcast(job.AccountID, BrowserMessage{
+	w.WSManager.Broadcast(job.AccountID, BrowserMessage{
 		Type: "media_downloaded",
 		Data: map[string]interface{}{
-			"msgId": job.MsgID,
+			"msgId":  job.MsgID,
 			"convId": job.ConvID,
-			"url": urlPath,
-			"path": filePath,
+			"url":    urlPath,
+			"path":   filePath,
 		},
 	})
 }

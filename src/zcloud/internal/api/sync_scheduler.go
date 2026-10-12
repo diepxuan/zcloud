@@ -15,9 +15,10 @@ import (
 // đang có session active. Chạy nền trong goroutine; idempotent — chỉ chạy
 // khi tới interval và skip nếu lần trước chưa xong.
 type SyncScheduler struct {
-	store    *store.Store
-	logger   *log.Logger
-	interval time.Duration
+	store     *store.Store
+	logger    *log.Logger
+	wsManager *WSManager
+	interval  time.Duration
 
 	mu       sync.Mutex
 	running  bool
@@ -31,21 +32,22 @@ const (
 	defaultAutoSyncInterval = 10 * time.Minute
 	autoSyncMinInterval     = 30 * time.Second
 	autoSyncConvDelay       = 500 * time.Millisecond // throttle giữa các conv
-	sessionCleanupMaxAge    = 30 * 24 * time.Hour     // xoá sessions is_active=0 cũ hơn 30 ngày (T24.8)
+	sessionCleanupMaxAge    = 30 * 24 * time.Hour    // xoá sessions is_active=0 cũ hơn 30 ngày (T24.8)
 )
 
 // NewSyncScheduler tạo scheduler. interval <= 0 → dùng mặc định 10 phút.
-func NewSyncScheduler(st *store.Store, logger *log.Logger, interval time.Duration) *SyncScheduler {
+func NewSyncScheduler(st *store.Store, logger *log.Logger, wsManager *WSManager, interval time.Duration) *SyncScheduler {
 	if interval < autoSyncMinInterval {
 		interval = defaultAutoSyncInterval
 	}
 	return &SyncScheduler{
-		store:    st,
-		logger:   logger,
-		interval: interval,
-		lastTick: make(map[string]time.Time),
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		store:     st,
+		logger:    logger,
+		wsManager: wsManager,
+		interval:  interval,
+		lastTick:  make(map[string]time.Time),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -130,7 +132,7 @@ func (s *SyncScheduler) tick(ctx context.Context) {
 // syncAccount đồng bộ tất cả conversation của 1 account.
 func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 	// Listener phải chạy thì WS sync mới có hiệu lực.
-	StartZaloListener(s.store, accountID, s.logger)
+	StartZaloListener(s.store, s.wsManager, accountID, s.logger)
 
 	convs, err := s.store.GetConversations(accountID)
 	if err != nil {
@@ -188,7 +190,6 @@ func syncConvViaListener(accountID, convID string, convType int, lastID string) 
 	return entry.client.WS.RequestOldMessages(context.Background(), tt, lastID) == nil
 }
 
-
 // resumeSyncV2 kiểm tra accounts.syncv2_state của account; nếu phase=pulling
 // thì đảm bảo SyncV2Client đang chạy background PullBatch loop. Resume
 // giúp restart không phải bắt đầu lại từ đầu.
@@ -227,6 +228,7 @@ func resumeSyncV2(st *store.Store, accountID string, logger *log.Logger) {
 	}
 	go runSyncV2PullLoop(entry, st, accountID, logger)
 }
+
 // LastTick trả về thời điểm tick gần nhất của account (zero time nếu chưa chạy).
 func (s *SyncScheduler) LastTick(accountID string) time.Time {
 	s.mu.Lock()

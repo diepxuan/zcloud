@@ -3,9 +3,9 @@
 package api
 
 import (
+	"context"
 	"io"
 	"log"
-	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +19,7 @@ func TestSyncSchedulerSkipWhenRunning(t *testing.T) {
 	defer st.Close()
 
 	// Chưa có account active → tick phải chạy nhanh và return.
-	sched := NewSyncScheduler(st, testLogger(), 30*time.Second)
+	sched := NewSyncScheduler(st, testLogger(), nil, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sched.Start(ctx)
@@ -44,11 +44,11 @@ func TestSyncSchedulerNewDefaults(t *testing.T) {
 	st := newTestStore(t)
 	defer st.Close()
 
-	sched := NewSyncScheduler(st, testLogger(), 5*time.Second) // < min
+	sched := NewSyncScheduler(st, testLogger(), nil, 5*time.Second) // < min
 	if sched.interval != defaultAutoSyncInterval {
 		t.Fatalf("expected default interval, got %s", sched.interval)
 	}
-	sched = NewSyncScheduler(st, testLogger(), 2*time.Minute)
+	sched = NewSyncScheduler(st, testLogger(), nil, 2*time.Minute)
 	if sched.interval != 2*time.Minute {
 		t.Fatalf("expected 2m, got %s", sched.interval)
 	}
@@ -68,7 +68,7 @@ func TestSyncSchedulerLastTick(t *testing.T) {
 	if err := st.SaveConversation(conv); err != nil {
 		t.Fatalf("save conv: %v", err)
 	}
-	sched := NewSyncScheduler(st, testLogger(), 30*time.Second)
+	sched := NewSyncScheduler(st, testLogger(), nil, 30*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sched.Start(ctx)
@@ -88,7 +88,7 @@ func TestSyncSchedulerStop(t *testing.T) {
 	st := newTestStore(t)
 	defer st.Close()
 
-	sched := NewSyncScheduler(st, testLogger(), 30*time.Second)
+	sched := NewSyncScheduler(st, testLogger(), nil, 30*time.Second)
 	stopped := int32(0)
 	go func() {
 		sched.Start(context.Background())
