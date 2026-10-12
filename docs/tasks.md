@@ -500,14 +500,25 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 - `core/websocket.go` hiện 778 dòng — không đạt mục tiêu ~400 dòng (em đề xuất ban đầu) do `wsMessage` parser + 5 method chiếm 191 dòng (24%).
 - Coverage `internal/core` vẫn 30.7%.
 
-### H7.4 (đề xuất) — Tách `websocket_message.go` 🟡 Pending Sếp duyệt
+### H7.4 — Tách `websocket_message.go` ✅ done (commit 727b632)
 
 - `wsMessage` struct + 5 method parser (toMessage, attachments, contentObject, contentText, ts, msgType) chiếm 191 dòng, 24% `websocket.go`.
 - Tách sang `websocket_message.go` (parser helper, không phải WS protocol).
 - Sau tách: `websocket.go` còn ~587 dòng, file mới ~200 dòng.
 - Estimate: ~30 phút. Không có behavior change, chỉ split file.
 
-### H3, H6, H5, H1 — Còn lại trong plan
+### H3 — Bỏ global state ✅ done
+
+- H3.1 `60d2df2`: gom `qrFlows` + mutex vào `api.Server`.
+- H3.2 `c665831`: thay `globalWS` bằng `Server.WSManager`.
+- H3.3 `5334ee0`: listener entry giữ owner `*Server`, bỏ `globalServer`.
+- H3.4 `ed67079`: chuyển registry listener + SyncV2 vào `Server`;
+  scheduler/startup dùng chung runtime state với HTTP server.
+- Verify: build + test pass; service restart; `/api/account/list`,
+  `/api/sync/v2/status`, `/chat` hoạt động; không còn global state trong
+  `internal/api`.
+
+### H6, H5, H1 — Còn lại trong plan
 
 Xem plan chi tiết ở `memory/2026-10-11.md` và báo cáo gốc trước đó.
 
