@@ -4,12 +4,11 @@ package api
 
 import (
 	"context"
-	"io"
-	"log"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -102,6 +101,6 @@ func TestSyncSchedulerStop(t *testing.T) {
 	}
 }
 
-func testLogger() *log.Logger {
-	return log.New(io.Discard, "", 0)
+func testLogger() *logging.Logger {
+	return logging.Discard()
 }

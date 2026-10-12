@@ -12,11 +12,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -144,7 +144,7 @@ func (s *Server) handleSyncV2Event(ctx context.Context, accountID string, rawDat
 
 // runSyncV2PullLoop kéo batch messages cho đến khi done hoặc lỗi.
 // Persist last_seq_id sau mỗi batch để restart resume đúng vị trí.
-func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, logger *log.Logger) {
+func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, logger *logging.Logger) {
 	defer finishSyncV2PullLoop(entry)
 	client := entry.client
 	for {

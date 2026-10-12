@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,12 +13,13 @@ import (
 
 	"github.com/diepxuan/zcloud/internal"
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
 type Server struct {
 	Store     *store.Store
-	Logger    *log.Logger
+	Logger    *logging.Logger
 	mu        sync.RWMutex
 	qrFlows   map[string]*qrFlow
 	WSManager *WSManager
@@ -31,7 +31,10 @@ type Server struct {
 	syncV2Registry map[string]*syncV2Entry
 }
 
-func NewServer(s *store.Store, logger *log.Logger) *Server {
+func NewServer(s *store.Store, logger *logging.Logger) *Server {
+	if logger == nil {
+		logger = logging.New(0)
+	}
 	svr := &Server{
 		Store:          s,
 		Logger:         logger,

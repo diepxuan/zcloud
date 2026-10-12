@@ -8,7 +8,6 @@ package server
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/diepxuan/zcloud/internal/api"
 	"github.com/diepxuan/zcloud/internal/config"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -24,7 +24,7 @@ import (
 // Trả về khi server đã shutdown hoàn toàn.
 func Run() error {
 	cfg := config.Parse()
-	logger := log.New(os.Stdout, "[zcloud] ", log.LstdFlags|log.Lshortfile)
+	logger := logging.New(cfg.Log.Level)
 	logger.Printf("Khởi động zcloud daemon — %s", cfg.HTTPEndpoint())
 	logger.Printf("Media dir: %s", cfg.MediaDirPath())
 
@@ -184,7 +184,7 @@ func Run() error {
 // repairSelfThreads chuyển tin đến bị lưu nhầm vào thread mang uid của chính
 // account về đúng thread người gửi. Chỉ chạy cho account có user_id (uid thuần
 // lấy từ session), và im lặng khi không còn gì để dọn.
-func repairSelfThreads(db *store.Store, logger *log.Logger) {
+func repairSelfThreads(db *store.Store, logger *logging.Logger) {
 	accounts, err := db.ListAccounts(0, false)
 	if err != nil {
 		logger.Printf("repair-thread: list accounts err=%v", err)
@@ -215,7 +215,7 @@ func repairSelfThreads(db *store.Store, logger *log.Logger) {
 	}
 }
 
-func loggingMiddleware(next http.Handler, logger *log.Logger) http.Handler {
+func loggingMiddleware(next http.Handler, logger *logging.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)

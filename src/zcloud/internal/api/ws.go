@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -570,7 +570,7 @@ const storeMediaDefaultAttempts = 3
 // extractAllMedia. Với MsgTypeLink, chỉ enqueue nếu attachment có URL
 // ảnh (jpg/png/webp/gif) — Zalo link message có field 'thumb' cho OG
 // preview image; nếu không có thì link thuần không cần tải.
-func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, logger *log.Logger) {
+func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, logger *logging.Logger) {
 	if st == nil || msg == nil || len(msg.Attachments) == 0 {
 		return
 	}
@@ -703,7 +703,7 @@ const mediaDownloadRetries = 3
 
 // downloadOneMedia tải 1 file với retry. Skip nếu file đã tồn tại trên disk.
 // Còn được dùng bởi test (TestDownloadOneMedia_Success và test khác trong media_test.go).
-func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, info mediaDownloadInfo, logger *log.Logger) {
+func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager, accountID string, msg *core.Message, info mediaDownloadInfo, logger *logging.Logger) {
 	mediaDir := st.MediaDir(accountID, msg.ConvID)
 	fileID := info.MsgID
 	if fileID == "" {

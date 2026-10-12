@@ -6,15 +6,15 @@
 // với binary mới. Không spawn child, không race port.
 //
 // Flow mỗi lần source đổi:
-//   1. fsnotify phát hiện file thay đổi (filter: *.go/*.html/*.css/*.js/*.sh,
-//      bỏ qua .sum, _test.go, .db, op Chmod/Access).
-//   2. debounce 300ms (gom nhiều event thành 1 cycle).
-//   3. cycleMu.TryLock() — bỏ qua nếu đang có cycle khác.
-//   4. buildBinary → ghi ra /data/zcloud/zcloudd.new (không ghi đè binary đang chạy).
-//   5. runSmokeTest(binary.new) → chạy binary mới với ZCLOUD_PORT=random, poll /api/health.
-//      - PASS (200 trong 10s) → kill smoke binary, atomic rename .new → binary gốc.
-//      - FAIL → kill smoke binary, xoá .new, log lỗi, KHÔNG restart.
-//   6. PASS → logger.Println("restart OK") + os.Exit(0) → systemd restart.
+//  1. fsnotify phát hiện file thay đổi (filter: *.go/*.html/*.css/*.js/*.sh,
+//     bỏ qua .sum, _test.go, .db, op Chmod/Access).
+//  2. debounce 300ms (gom nhiều event thành 1 cycle).
+//  3. cycleMu.TryLock() — bỏ qua nếu đang có cycle khác.
+//  4. buildBinary → ghi ra /data/zcloud/zcloudd.new (không ghi đè binary đang chạy).
+//  5. runSmokeTest(binary.new) → chạy binary mới với ZCLOUD_PORT=random, poll /api/health.
+//     - PASS (200 trong 10s) → kill smoke binary, atomic rename .new → binary gốc.
+//     - FAIL → kill smoke binary, xoá .new, log lỗi, KHÔNG restart.
+//  6. PASS → logger.Println("restart OK") + os.Exit(0) → systemd restart.
 package servcmd
 
 import (
@@ -23,7 +23,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -34,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/server"
 	"github.com/fsnotify/fsnotify"
 )
@@ -79,8 +79,6 @@ func readVersionFile(sourceDir string) string {
 	return v
 }
 
-
-
 // gitShortHash trả về git short hash của HEAD trong sourceDir. Trả về ""
 // nếu git fail (không phải git repo, hoặc git binary không có).
 func gitShortHash(sourceDir string) string {
@@ -92,10 +90,11 @@ func gitShortHash(sourceDir string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
 // runSmokeTest chạy binary trên port random, poll /api/health đến khi 200 OK
 // hoặc timeout 10s. Trả về nil nếu pass. Sau khi xong (pass hay fail) đều kill
 // smoke binary sạch + reap child — tránh leak process, port, zombie.
-func runSmokeTest(binary string, logger *log.Logger) error {
+func runSmokeTest(binary string, logger *logging.Logger) error {
 	port, err := pickFreePort()
 	if err != nil {
 		return fmt.Errorf("pick free port: %w", err)
@@ -174,7 +173,7 @@ func pickFreePort() (int, error) {
 
 // prefixWriter pipe output của subprocess ra logger với prefix.
 type prefixWriter struct {
-	logger *log.Logger
+	logger *logging.Logger
 	prefix string
 }
 
@@ -197,7 +196,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 	if !filepath.IsAbs(binary) {
 		binary = filepath.Join(ProjectRoot(), "zcloudd")
 	}
-	logger := log.New(os.Stdout, "[zcloud] ", log.LstdFlags)
+	logger := logging.New(0)
 
 	// 1. Initial build (đảm bảo binary đang chạy là mới nhất).
 	logger.Println("Build binary lần đầu...")

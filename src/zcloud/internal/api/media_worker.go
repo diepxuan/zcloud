@@ -4,20 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
 // MediaWorker processes persisted media download jobs in the background.
 type MediaWorker struct {
 	store     *store.Store
-	logger    *log.Logger
+	logger    *logging.Logger
 	interval  time.Duration
 	batch     int
 	WSManager *WSManager
@@ -31,7 +31,7 @@ const (
 	defaultMediaWorkerBatch    = 20
 )
 
-func NewMediaWorker(st *store.Store, logger *log.Logger, WSManager *WSManager, interval time.Duration, batch int) *MediaWorker {
+func NewMediaWorker(st *store.Store, logger *logging.Logger, WSManager *WSManager, interval time.Duration, batch int) *MediaWorker {
 	if interval <= 0 {
 		interval = defaultMediaWorkerInterval
 	}

@@ -4,8 +4,6 @@ package api
 
 import (
 	"database/sql"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +11,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -52,8 +51,8 @@ func newTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// newDiscardLogger trả *log.Logger ghi vào io.Discard — dùng cho test
+// newDiscardLogger trả logger ghi vào discard — dùng cho test
 // không muốn log nhiễu console.
-func newDiscardLogger() *log.Logger {
-	return log.New(io.Discard, "", 0)
+func newDiscardLogger() *logging.Logger {
+	return logging.Discard()
 }

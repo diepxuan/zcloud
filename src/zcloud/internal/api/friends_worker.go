@@ -3,10 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -15,15 +15,16 @@ import (
 // rate-limit (429) hoặc bug upstream trả thiếu.
 //
 // Schedule (theo yêu cầu của Sếp Duc Tran):
-//   T=0          acc1 sync
-//   T=3s         acc2 sync
-//   T=6s         acc3 sync
-//   ...
-//   T=N*3s       accN sync
-//   T=interval   lặp lại acc1 (interval mặc định 1 phút)
+//
+//	T=0          acc1 sync
+//	T=3s         acc2 sync
+//	T=6s         acc3 sync
+//	...
+//	T=N*3s       accN sync
+//	T=interval   lặp lại acc1 (interval mặc định 1 phút)
 type FriendsWorker struct {
 	store           *store.Store
-	logger          *log.Logger
+	logger          *logging.Logger
 	interval        time.Duration // cycle giữa 2 lần sync cùng account (mặc định 1 phút)
 	staggerInterval time.Duration // delay giữa các account trong cùng cycle (mặc định 3s)
 
@@ -36,7 +37,7 @@ const (
 	defaultFriendsStaggerInterval = 3 * time.Second
 )
 
-func NewFriendsWorker(st *store.Store, logger *log.Logger, interval, stagger time.Duration) *FriendsWorker {
+func NewFriendsWorker(st *store.Store, logger *logging.Logger, interval, stagger time.Duration) *FriendsWorker {
 	if interval <= 0 {
 		interval = defaultFriendsInterval
 	}

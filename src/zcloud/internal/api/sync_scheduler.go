@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"sync"
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -17,7 +17,7 @@ import (
 type SyncScheduler struct {
 	server   *Server
 	store    *store.Store
-	logger   *log.Logger
+	logger   *logging.Logger
 	interval time.Duration
 
 	mu       sync.Mutex
@@ -36,7 +36,7 @@ const (
 )
 
 // NewSyncScheduler tạo scheduler. interval <= 0 → dùng mặc định 10 phút.
-func NewSyncScheduler(st *store.Store, logger *log.Logger, wsManager *WSManager, interval time.Duration) *SyncScheduler {
+func NewSyncScheduler(st *store.Store, logger *logging.Logger, wsManager *WSManager, interval time.Duration) *SyncScheduler {
 	server := NewServer(st, logger)
 	if wsManager != nil {
 		server.WSManager = wsManager
