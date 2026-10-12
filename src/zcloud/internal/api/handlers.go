@@ -28,7 +28,6 @@ type Server struct {
 
 func NewServer(s *store.Store, logger *log.Logger) *Server {
 	svr := &Server{Store: s, Logger: logger, clients: make(map[string]*core.Client), qrFlows: make(map[string]*qrFlow), WSManager: &WSManager{rooms: make(map[string]map[*wsConn]bool)}}
-	globalServer = svr
 	return svr
 }
 
@@ -236,7 +235,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → pc, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "pc", "zaloAccountId": zaID})
 }
 
@@ -267,7 +266,7 @@ func (s *Server) HandleAccountRestart(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no session + refresh failed, please re-login")
 		return
 	}
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 	ok(w, map[string]interface{}{"restarted": true, "accountId": accountID})
 }
 
@@ -455,7 +454,7 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 		IMEI: session.IMEI, UserAgent: session.UserAgent, Language: "vi",
 		WSURLs: string(wsURLsJSON), ServiceMap: string(serviceMapJSON), APIType: session.APIType, APIVersion: session.APIVersion, IsActive: 1, ExpiresAt: session.ExpiresAt,
 	})
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 
 	// Auto-detect transport dựa trên session.CipherKey:
 	//   - CipherKey != "" → PC (AES-GCM, Zalo PC client + PC QR scan tương lai)
@@ -506,12 +505,12 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Start Zalo WS listener nền (Go server tự làm Zalo client)
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 
 	// Tự động refresh session nếu sắp hết hạn hoặc Zalo báo lỗi
 	sessRec = s.autoRefresh(sessRec)
 	// Start listener lại với session mới sau autoRefresh.
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 
 	var cookies map[string]string
 	json.Unmarshal([]byte(sessRec.Cookies), &cookies)
@@ -1051,7 +1050,7 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		s.Logger.Printf("login: transport changed %s → web, resetting syncv2_state", prevTransport)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 	ok(w, map[string]interface{}{"accountId": accountID, "userId": session.UserID, "transport": "web", "zaloAccountId": zaID})
 }
 
@@ -1201,7 +1200,7 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	saveErr := s.Store.SaveSession(newSession)
 	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s", saveErr, newSession.ID)
 	// SaveSession tự vô hiệu hoá session active cũ của account.
-	go StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	go s.startZaloListener(accountID)
 	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }

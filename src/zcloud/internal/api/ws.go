@@ -21,11 +21,6 @@ import (
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
-// globalServer trỏ tới *Server hiện tại — set trong NewServer.
-// Dùng để các function StartZaloListener / autoRefresh lấy *Server mà không
-// cần đổi signature (giữ backward-compat cho callers hiện có).
-var globalServer *Server
-
 // ====================================
 // WebSocket Manager — quản lý các kết nối
 // ====================================
@@ -126,7 +121,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Start Zalo listener nếu chưa có
-	StartZaloListener(s.Store, s.WSManager, accountID, s.Logger)
+	s.startZaloListener(accountID)
 
 	<-ctx.Done()
 }
@@ -136,6 +131,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 // ====================================
 
 type zaloListenerEntry struct {
+	server    *Server
 	cancel    context.CancelFunc
 	client    *core.Client
 	sessionID string
@@ -185,13 +181,20 @@ func RequestOldMessagesViaListener(accountID, convID string, convType int, lastI
 	return true
 }
 
+// StartZaloListener khởi động listener từ các caller chưa sở hữu *Server.
+// Wrapper này chỉ tạo Server tương thích và delegate vào method để giữ
+// lifecycle của session listener cùng một implementation.
 func StartZaloListener(st *store.Store, wsManager *WSManager, accountID string, logger *log.Logger) {
+	(&Server{Store: st, Logger: logger, WSManager: wsManager}).startZaloListener(accountID)
+}
+
+func (s *Server) startZaloListener(accountID string) {
 	zaloListenerMu.Lock()
 	defer zaloListenerMu.Unlock()
 
-	sessRec, err := st.GetActiveSession(accountID)
+	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
-		logger.Printf("zalo-ws: no active session for %s", accountID)
+		s.Logger.Printf("zalo-ws: no active session for %s", accountID)
 		return
 	}
 
@@ -205,12 +208,12 @@ func StartZaloListener(st *store.Store, wsManager *WSManager, accountID string, 
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	entry := &zaloListenerEntry{cancel: cancel, sessionID: sessRec.ID}
+	entry := &zaloListenerEntry{server: s, cancel: cancel, sessionID: sessRec.ID}
 	zaloListeners[accountID] = entry
 
-	go runZaloListener(ctx, entry, st, wsManager, accountID, logger)
+	go runZaloListener(ctx, entry, s.Store, s.WSManager, accountID, s.Logger)
 
-	logger.Printf("zalo-ws: started listener for %s", accountID)
+	s.Logger.Printf("zalo-ws: started listener for %s", accountID)
 }
 
 // isAuthExpiredErr kiểm tra lỗi WS auth có phải do zpw_sek/session hết hạn không.
@@ -228,32 +231,28 @@ func isAuthExpiredErr(err error) bool {
 //   - Refresh OK → SaveSession mới + StartZaloListener tự động restart.
 //   - Refresh fail (cookie cũng invalid) → disable account (SetAccountEnabled=false)
 //   - DeleteSession. UI sẽ thấy account bị ẩn, không reconnect nữa.
-func handleExpiredSession(st *store.Store, accountID string, logger *log.Logger) {
-	if globalServer == nil {
-		logger.Printf("zalo-ws: handleExpiredSession: globalServer nil, skip")
-		return
-	}
-	sessRec, err := st.GetActiveSession(accountID)
+func (s *Server) handleExpiredSession(accountID string) {
+	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
-		logger.Printf("zalo-ws: handleExpiredSession: no session for %s", accountID)
+		s.Logger.Printf("zalo-ws: handleExpiredSession: no session for %s", accountID)
 		return
 	}
-	newSessRec := globalServer.autoRefresh(sessRec)
+	newSessRec := s.autoRefresh(sessRec)
 	if newSessRec == nil || newSessRec.ID == sessRec.ID {
 		// Refresh fail — disable account để ngừng reconnect vô hạn.
-		logger.Printf("zalo-ws: handleExpiredSession: refresh FAILED for %s, disabling", accountID)
-		if err := st.SetAccountEnabled(accountID, false); err != nil {
-			logger.Printf("zalo-ws: disable %s err: %v", accountID, err)
+		s.Logger.Printf("zalo-ws: handleExpiredSession: refresh FAILED for %s, disabling", accountID)
+		if err := s.Store.SetAccountEnabled(accountID, false); err != nil {
+			s.Logger.Printf("zalo-ws: disable %s err: %v", accountID, err)
 		}
-		if err := st.SetAccountDisabledReason(accountID, "auth_expired"); err != nil {
-			logger.Printf("zalo-ws: set disabled_reason %s err: %v", accountID, err)
+		if err := s.Store.SetAccountDisabledReason(accountID, "auth_expired"); err != nil {
+			s.Logger.Printf("zalo-ws: set disabled_reason %s err: %v", accountID, err)
 		}
-		if err := st.DeleteSession(sessRec.ID); err != nil {
-			logger.Printf("zalo-ws: delete session %s err: %v", sessRec.ID, err)
+		if err := s.Store.DeleteSession(sessRec.ID); err != nil {
+			s.Logger.Printf("zalo-ws: delete session %s err: %v", sessRec.ID, err)
 		}
 		return
 	}
-	logger.Printf("zalo-ws: handleExpiredSession: refresh OK for %s", accountID)
+	s.Logger.Printf("zalo-ws: handleExpiredSession: refresh OK for %s", accountID)
 	// autoRefresh đã StopZaloListener + SaveSession + go StartZaloListener.
 }
 
@@ -331,7 +330,7 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, st *store.
 			}
 			// Auth error (zpw_sek invalid/hết hạn) → refresh session hoặc disable account.
 			if isAuthExpiredErr(err) {
-				handleExpiredSession(st, accountID, logger)
+				current.server.handleExpiredSession(accountID)
 				return
 			}
 			select {
