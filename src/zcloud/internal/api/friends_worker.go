@@ -92,14 +92,14 @@ func (w *FriendsWorker) loop(ctx context.Context) {
 func (w *FriendsWorker) tick(ctx context.Context) {
 	accounts, err := w.store.ListAccounts(0, true) // enabledOnly=true
 	if err != nil {
-		w.logger.Printf("friends-worker: list accounts: %v", err)
+		w.logger.Error("friends_account_list_failed", "error", err)
 		return
 	}
 	if len(accounts) == 0 {
 		return
 	}
 
-	w.logger.Printf("friends-worker: cycle start — %d enabled account(s)", len(accounts))
+	w.logger.Info("friends_cycle_started", "account_count", len(accounts))
 
 	for i, acc := range accounts {
 		if i > 0 {
@@ -119,7 +119,7 @@ func (w *FriendsWorker) tick(ctx context.Context) {
 func (w *FriendsWorker) syncOne(ctx context.Context, accountID, label string) {
 	sessRec, err := w.store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
-		w.logger.Printf("friends-worker: %s (%s): no active session, skip", label, accountID)
+		w.logger.Warn("friends_account_skipped", "account_id", accountID, "display_name", label, "reason", "no_active_session")
 		return
 	}
 	var cookies map[string]string
@@ -138,17 +138,17 @@ func (w *FriendsWorker) syncOne(ctx context.Context, accountID, label string) {
 	users, err := client.GetFriends(callCtx)
 	if err != nil {
 		// KHÔNG xoá DB khi upstream lỗi — giữ contact cũ.
-		w.logger.Printf("friends-worker: %s (%s): zalo error: %v (giữ DB cũ)", label, accountID, err)
+		w.logger.Error("friends_zalo_request_failed", "account_id", accountID, "display_name", label, "error", err)
 		return
 	}
 
 	upserted := 0
 	for _, u := range users {
 		if err := w.store.UpsertContact(accountID, u.ID, u.Name, u.Avatar); err != nil {
-			w.logger.Printf("friends-worker: %s: upsert %s err: %v", label, u.ID, err)
+			w.logger.Error("friends_contact_upsert_failed", "account_id", accountID, "user_id", u.ID, "error", err)
 			continue
 		}
 		upserted++
 	}
-	w.logger.Printf("friends-worker: %s (%s): upserted %d contact(s)", label, accountID, upserted)
+	w.logger.Info("friends_cycle_account_completed", "account_id", accountID, "display_name", label, "upserted", upserted)
 }

@@ -116,14 +116,14 @@ func (s *SyncScheduler) tick(ctx context.Context) {
 	// mỗi tick (interval = 10 phút mặc định). Best-effort, không block scheduler
 	// nếu fail.
 	if n, err := s.store.DeleteExpiredSessions(sessionCleanupMaxAge); err != nil {
-		s.logger.Printf("session-cleanup: %v", err)
+		s.logger.Error("session_cleanup_failed", "error", err)
 	} else if n > 0 {
-		s.logger.Printf("session-cleanup: removed %d expired sessions (older than %s)", n, sessionCleanupMaxAge)
+		s.logger.Info("session_cleanup_completed", "removed", n, "max_age", sessionCleanupMaxAge.String())
 	}
 
 	accounts, err := s.store.ListActiveAccountIDs()
 	if err != nil {
-		s.logger.Printf("auto-sync: list accounts: %v", err)
+		s.logger.Error("auto_sync_account_list_failed", "error", err)
 		return
 	}
 	for _, accID := range accounts {
@@ -145,13 +145,13 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 
 	convs, err := s.store.GetConversations(accountID)
 	if err != nil {
-		s.logger.Printf("auto-sync %s: list conv: %v", accountID, err)
+		s.logger.Error("auto_sync_conversation_list_failed", "account_id", accountID, "error", err)
 		return
 	}
 	if len(convs) == 0 {
 		return
 	}
-	s.logger.Printf("auto-sync %s: %d conversations", accountID, len(convs))
+	s.logger.Info("auto_sync_account_started", "account_id", accountID, "conversation_count", len(convs))
 
 	for _, c := range convs {
 		select {
@@ -163,8 +163,12 @@ func (s *SyncScheduler) syncAccount(ctx context.Context, accountID string) {
 		}
 		ok := s.server.syncConvViaListener(accountID, c.ID, c.ConvType, c.LastMsgID)
 		if ok {
-			s.logger.Printf("auto-sync %s: requested conv=%s type=%d lastId=%s",
-				accountID, c.ID, c.ConvType, c.LastMsgID)
+			s.logger.Info("auto_sync_requested",
+				"account_id", accountID,
+				"conversation_id", c.ID,
+				"conversation_type", c.ConvType,
+				"last_message_id", c.LastMsgID,
+			)
 		}
 		// Throttle giữa các conv tránh spam Zalo.
 		select {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/diepxuan/zcloud/internal/core"
+	"github.com/diepxuan/zcloud/internal/logging"
 	"github.com/diepxuan/zcloud/internal/store"
 )
 
@@ -172,7 +173,9 @@ func (s *Server) HandleMediaDownload(w http.ResponseWriter, r *http.Request) {
 		FileName: req.FileName, FileExt: req.FileExt, FileSize: fileInfo.Size(),
 		SourceURL: req.URL, IsDownloaded: 1,
 	})
-	if err != nil { s.Logger.Printf("media save meta: %v", err) }
+	if err != nil {
+		s.Logger.Error("media_metadata_save_failed", "file_id", fileID, "account_id", req.AccountID, "error", err)
+	}
 
 	ok(w, map[string]interface{}{
 		"path": savedPath, "fileId": fileID,
@@ -209,12 +212,11 @@ func StartServer(port int, db *store.Store) error {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		mux.ServeHTTP(w, r)
-		// Simple request log
-		fmt.Printf("[zcloud] %s %s — %v\n", r.Method, r.URL.Path, time.Since(start))
+		s.Logger.Info("http_request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start).String())
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("[zcloud] Server listening on %s\n", addr)
+	logging.New(0).Info("http_listening", "addr", addr)
 	return http.ListenAndServe(addr, handler)
 }
 

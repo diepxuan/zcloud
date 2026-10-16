@@ -8,6 +8,8 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,30 +27,37 @@ import (
 func Run() error {
 	cfg := config.Parse()
 	logger := logging.New(cfg.Log.Level)
-	logger.Printf("Khởi động zcloud daemon — %s", cfg.HTTPEndpoint())
-	logger.Printf("Media dir: %s", cfg.MediaDirPath())
+	slog.SetDefault(logger.Logger)
+	logger.Info("daemon_starting", "endpoint", cfg.HTTPEndpoint(), "media_dir", cfg.MediaDirPath())
 
 	// ====================================
 	// Initialize database (Postgres-only)
 	// ====================================
 	dsn := cfg.PostgresDSN()
 	if dsn == "" {
-		logger.Fatalf("Postgres DSN rỗng — kiểm tra host/user/dbname trong config")
+		err := fmt.Errorf("postgres DSN is empty; check host, user, and dbname")
+		logger.Error("database_config_invalid", "error", err)
+		return err
 	}
-	logger.Printf("Postgres: %s@%s:%d/%s",
-		cfg.Database.Postgres.User, cfg.Database.Postgres.Host,
-		cfg.Database.Postgres.Port, cfg.Database.Postgres.DBName)
+	logger.Info("database_connecting",
+		"user", cfg.Database.Postgres.User,
+		"host", cfg.Database.Postgres.Host,
+		"port", cfg.Database.Postgres.Port,
+		"database", cfg.Database.Postgres.DBName,
+	)
 	db, err := store.NewPostgres(dsn, cfg.MediaDirPath(),
 		cfg.Database.Postgres.MaxOpenConns, cfg.Database.Postgres.MaxIdleConns)
 	if err != nil {
-		logger.Fatalf("Database init error: %v", err)
+		logger.Error("database_init_failed", "error", err)
+		return err
 	}
 	defer db.Close()
 
 	if err := os.MkdirAll(cfg.MediaDirPath(), 0755); err != nil {
-		logger.Fatalf("Media dir error: %v", err)
+		logger.Error("media_dir_create_failed", "error", err)
+		return err
 	}
-	logger.Printf("Database sẵn sàng — %s", db.Path())
+	logger.Info("database_ready", "backend", db.Path())
 
 	// ====================================
 	// Setup HTTP server
@@ -78,9 +87,10 @@ func Run() error {
 	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		logger.Printf("Listen on %s", cfg.Addr())
+		logger.Info("http_listening", "addr", cfg.Addr())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("Server error: %v", err)
+			logger.Error("http_server_failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -90,11 +100,11 @@ func Run() error {
 	// Boot Zalo listener cho mọi account đang active.
 	activeIDs, err := db.ListActiveAccountIDs()
 	if err != nil {
-		logger.Printf("zalo-ws: boot list err=%v", err)
+		logger.Error("zalo_listener_boot_list_failed", "error", err)
 	} else if len(activeIDs) == 0 {
-		logger.Printf("zalo-ws: boot — no active account")
+		logger.Info("zalo_listener_boot_empty")
 	} else {
-		logger.Printf("zalo-ws: boot — starting listeners for %d account(s)", len(activeIDs))
+		logger.Info("zalo_listener_boot", "account_count", len(activeIDs))
 		for _, accID := range activeIDs {
 			s.StartZaloListener(accID)
 		}
@@ -119,7 +129,7 @@ func Run() error {
 	go func() {
 		for {
 			time.Sleep(30 * time.Minute)
-			logger.Println("autoRefresh: background refresh start")
+			logger.Info("session_refresh_started")
 			s.RefreshAllSessions()
 		}
 	}()
@@ -135,14 +145,16 @@ func Run() error {
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	scheduler.Start(schedulerCtx)
 	defer scheduler.Stop()
-	logger.Printf("auto-sync: scheduler started (interval=%s)", syncInterval)
+	defer schedulerCancel()
+	logger.Info("auto_sync_started", "interval", syncInterval.String())
 
 	// Media worker.
 	mediaWorker := api.NewMediaWorker(db, logger, s.WSManager, 5*time.Second, 20)
 	mediaCtx, mediaCancel := context.WithCancel(context.Background())
 	mediaWorker.Start(mediaCtx)
 	defer mediaWorker.Stop()
-	logger.Printf("media-worker: started (interval=5s)")
+	defer mediaCancel()
+	logger.Info("media_worker_started", "interval", "5s")
 
 	// Friends worker — cache GetFriends vào DB contacts theo lịch
 	// acc1 → 3s → acc2 → 3s → ... → accN → interval (mặc định 1 phút).
@@ -162,22 +174,21 @@ func Run() error {
 	friendsCtx, friendsCancel := context.WithCancel(context.Background())
 	friendsWorker.Start(friendsCtx)
 	defer friendsWorker.Stop()
-	logger.Printf("friends-worker: started (interval=%s, stagger=%s)", friendsInterval, friendsStagger)
+	defer friendsCancel()
+	logger.Info("friends_worker_started", "interval", friendsInterval.String(), "stagger", friendsStagger.String())
 
 	<-done
-	logger.Println("Đang tắt server...")
+	logger.Info("daemon_stopping")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		logger.Fatalf("Shutdown error: %v", err)
+		logger.Error("http_shutdown_failed", "error", err)
+		return err
 	}
-	schedulerCancel()
-	mediaCancel()
-	friendsCancel()
 
-	logger.Println("Server đã tắt.")
+	logger.Info("daemon_stopped")
 	return nil
 }
 
@@ -187,7 +198,7 @@ func Run() error {
 func repairSelfThreads(db *store.Store, logger *logging.Logger) {
 	accounts, err := db.ListAccounts(0, false)
 	if err != nil {
-		logger.Printf("repair-thread: list accounts err=%v", err)
+		logger.Error("self_thread_account_list_failed", "error", err)
 		return
 	}
 	for _, a := range accounts {
@@ -196,7 +207,7 @@ func repairSelfThreads(db *store.Store, logger *logging.Logger) {
 		}
 		n, err := db.CountSelfThreadMessages(a.ID, a.UserID)
 		if err != nil {
-			logger.Printf("repair-thread: count %s err=%v", a.ID, err)
+			logger.Error("self_thread_count_failed", "account_id", a.ID, "error", err)
 			continue
 		}
 		if n == 0 {
@@ -204,13 +215,18 @@ func repairSelfThreads(db *store.Store, logger *logging.Logger) {
 		}
 		rep, err := db.RepairSelfThreadMessages(a.ID, a.UserID)
 		if err != nil {
-			logger.Printf("repair-thread: %s err=%v", a.ID, err)
+			logger.Error("self_thread_repair_failed", "account_id", a.ID, "error", err)
 			continue
 		}
-		logger.Printf("repair-thread: %s — messages=%d media=%d jobs=%d files=%d",
-			a.ID, rep.Messages, rep.Media, rep.MediaJobs, rep.MovedFiles)
+		logger.Info("self_thread_repaired",
+			"account_id", a.ID,
+			"messages", rep.Messages,
+			"media", rep.Media,
+			"jobs", rep.MediaJobs,
+			"files", rep.MovedFiles,
+		)
 		for _, e := range rep.FileErrors {
-			logger.Printf("repair-thread: %s file err=%s", a.ID, e)
+			logger.Error("self_thread_file_repair_failed", "account_id", a.ID, "error", e)
 		}
 	}
 }
@@ -219,7 +235,7 @@ func loggingMiddleware(next http.Handler, logger *logging.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Printf("%s %s — %v", r.Method, r.URL.Path, time.Since(start))
+		logger.Info("http_request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(start).String())
 	})
 }
 

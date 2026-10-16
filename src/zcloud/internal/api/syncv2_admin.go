@@ -55,9 +55,9 @@ func (s *Server) HandleSyncV2Start(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := entry.client.RequestSync(ctx); err != nil {
-			s.Logger.Printf("syncv2: manual start for %s fail: %v", accountID, err)
+			s.Logger.Error("syncv2_manual_start_failed", "account_id", accountID, "error", err)
 		} else {
-			s.Logger.Printf("syncv2: manual start for %s sent", accountID)
+			s.Logger.Info("syncv2_manual_start_sent", "account_id", accountID)
 		}
 		_ = persistSyncV2State(s.Store, accountID, entry.client)
 	}()

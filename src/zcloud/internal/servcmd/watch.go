@@ -99,15 +99,15 @@ func runSmokeTest(binary string, logger *logging.Logger) error {
 	if err != nil {
 		return fmt.Errorf("pick free port: %w", err)
 	}
-	logger.Printf("smoke test: starting binary on port %d", port)
+	logger.Info("smoke_test_starting", "port", port)
 
 	cmd := exec.Command(binary, "serv")
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("ZCLOUD_PORT=%d", port),
 		"PATH="+os.Getenv("PATH")+":/usr/local/go/bin")
 	cmd.Dir = ProjectRoot()
-	stdout := &prefixWriter{logger: logger, prefix: "[smoke] "}
-	stderr := &prefixWriter{logger: logger, prefix: "[smoke] "}
+	stdout := &prefixWriter{logger: logger, stream: "stdout"}
+	stderr := &prefixWriter{logger: logger, stream: "stderr"}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -140,7 +140,7 @@ func runSmokeTest(binary string, logger *logging.Logger) error {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				logger.Printf("smoke test PASS (%s, %d bytes)", url, len(body))
+				logger.Info("smoke_test_passed", "url", url, "response_bytes", len(body))
 				return nil
 			}
 			lastErr = fmt.Errorf("status %d", resp.StatusCode)
@@ -174,7 +174,7 @@ func pickFreePort() (int, error) {
 // prefixWriter pipe output của subprocess ra logger với prefix.
 type prefixWriter struct {
 	logger *logging.Logger
-	prefix string
+	stream string
 }
 
 func (w *prefixWriter) Write(p []byte) (int, error) {
@@ -182,7 +182,7 @@ func (w *prefixWriter) Write(p []byte) (int, error) {
 		if line == "" {
 			continue
 		}
-		w.logger.Print(w.prefix + line)
+		w.logger.Info("subprocess_output", "stream", w.stream, "line", line)
 	}
 	return len(p), nil
 }
@@ -199,7 +199,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 	logger := logging.New(0)
 
 	// 1. Initial build (đảm bảo binary đang chạy là mới nhất).
-	logger.Println("Build binary lần đầu...")
+	logger.Info("watch_initial_build_starting")
 	if err := buildBinary(binary, sourceDir); err != nil {
 		return fmt.Errorf("initial build: %w", err)
 	}
@@ -228,7 +228,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 		_ = w.Add(path)
 		return nil
 	})
-	logger.Printf("Watch source code: %s (initial build OK, chmod 0755)", sourceDir)
+	logger.Info("watch_started", "source_dir", sourceDir)
 
 	// 3. Channel signal: fsnotify → debounce → cycle.
 	var cycleMu sync.Mutex
@@ -245,29 +245,29 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 			defer cycleMu.Unlock()
 
 			newBin := binary + ".new"
-			logger.Printf("Code thay đổi (%s) → build → smoke → atomic rename → restart", path)
+			logger.Info("watch_change_detected", "path", path)
 			if err := buildBinary(newBin, sourceDir); err != nil {
-				logger.Printf("Build FAIL — giữ binary cũ: %v", err)
+				logger.Error("watch_build_failed", "error", err)
 				_ = os.Remove(newBin)
 				return
 			}
 			if err := runSmokeTest(newBin, logger); err != nil {
-				logger.Printf("Smoke test FAIL — giữ binary cũ, KHÔNG restart: %v", err)
+				logger.Error("watch_smoke_test_failed", "error", err)
 				_ = os.Remove(newBin)
 				return
 			}
 			// Atomic rename: chỉ thay đổi inode khi smoke đã pass.
 			if err := os.Chmod(newBin, 0755); err != nil {
-				logger.Printf("chmod .new FAIL: %v", err)
+				logger.Error("watch_chmod_failed", "error", err)
 				_ = os.Remove(newBin)
 				return
 			}
 			if err := os.Rename(newBin, binary); err != nil {
-				logger.Printf("rename .new → binary FAIL: %v", err)
+				logger.Error("watch_binary_replace_failed", "error", err)
 				_ = os.Remove(newBin)
 				return
 			}
-			logger.Printf("atomic rename OK — os.Exit(0) để systemd restart với binary mới")
+			logger.Info("watch_restart_scheduled")
 			// Exit ngay — systemd Restart=always sẽ boot lại process này.
 			os.Exit(0)
 		})
@@ -283,7 +283,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Println("Context done — graceful shutdown server.")
+			logger.Info("watch_context_done")
 			// Gửi SIGTERM đến chính mình để server.Run() shutdown sạch.
 			p, _ := os.FindProcess(os.Getpid())
 			if p != nil {
@@ -293,7 +293,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 			select {
 			case <-serverErr:
 			case <-time.After(12 * time.Second):
-				logger.Println("server shutdown timeout")
+				logger.Error("watch_server_shutdown_timeout")
 			}
 			return nil
 		case ev, ok := <-w.Events:
@@ -303,17 +303,17 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 			if !isBuildableEvent(ev) {
 				continue
 			}
-			logger.Printf("event: %s %s", ev.Op, ev.Name)
+			logger.Debug("watch_event", "op", ev.Op.String(), "path", ev.Name)
 			coalesce(ev.Name)
 		case err, ok := <-w.Errors:
 			if !ok {
 				return nil
 			}
-			logger.Printf("watcher error: %v", err)
+			logger.Error("watch_watcher_failed", "error", err)
 		case err := <-serverErr:
 			// server.Run return (ví dụ signal nhận) → thoát watch.
 			if err != nil {
-				logger.Printf("server.Run returned: %v", err)
+				logger.Error("watch_server_returned", "error", err)
 			}
 			return err
 		}

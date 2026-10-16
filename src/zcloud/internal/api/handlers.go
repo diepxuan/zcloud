@@ -86,7 +86,7 @@ func (s *Server) HandleAccount(w http.ResponseWriter, r *http.Request) {
 	a, err := s.Store.GetAccount(accountID)
 	if err != nil {
 		// Giữ UI hiển thị dữ liệu đã có trong DB nếu Zalo API lỗi.
-		s.Logger.Printf("conversations/sync: zalo error=%v", err)
+		s.Logger.Warn("account_fetch_failed", "account_id", accountID, "error", err)
 		dbConvs, _ := s.Store.GetConversations(accountID)
 		if dbConvs == nil {
 			dbConvs = []store.Conversation{}
@@ -216,7 +216,7 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "find/create account: "+err.Error())
 		return
 	}
-	s.Logger.Printf("login: zalo_account=%s account=%s transport=pc", zaID, accountID)
+	s.Logger.Info("pc_login_committed", "zalo_account_id", zaID, "account_id", accountID, "transport", "pc")
 
 	// === Step 4: SaveSession + StartZaloListener ===
 	cj, _ := json.Marshal(session.Cookies)
@@ -244,11 +244,11 @@ func (s *Server) HandlePCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Store.SetAccountTransport(accountID, "pc"); err != nil {
-		s.Logger.Printf("set transport %s: %v", accountID, err)
+		s.Logger.Error("account_transport_set_failed", "account_id", accountID, "error", err)
 	}
 	if prevTransport != "" && prevTransport != "pc" {
 		// Transport đã đổi (vd web → pc). Reset syncv2_state để request-sync lại.
-		s.Logger.Printf("login: transport changed %s → pc, resetting syncv2_state", prevTransport)
+		s.Logger.Info("account_transport_changed", "account_id", accountID, "from", prevTransport, "to", "pc", "syncv2_reset", true)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
 	go s.StartZaloListener(accountID)
@@ -441,13 +441,13 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 	}
 	// Re-activate: xoá cờ disabled + disabled_reason nếu có (re-login).
 	if err := s.Store.SetAccountDisabledReason(accountID, ""); err != nil {
-		s.Logger.Printf("clear disabled_reason %s: %v", accountID, err)
+		s.Logger.Error("account_disabled_reason_clear_failed", "account_id", accountID, "error", err)
 	}
 	if err := s.Store.SetAccountEnabled(accountID, true); err != nil {
-		s.Logger.Printf("enable %s: %v", accountID, err)
+		s.Logger.Error("account_enable_failed", "account_id", accountID, "error", err)
 	}
 	if err := s.Store.SetAccountUserID(accountID, session.UserID); err != nil {
-		s.Logger.Printf("set account user_id %s: %v", accountID, err)
+		s.Logger.Error("account_user_id_set_failed", "account_id", accountID, "error", err)
 	}
 
 	cookiesJSON, _ := json.Marshal(session.Cookies)
@@ -483,10 +483,10 @@ func (s *Server) commitLoginSession(w http.ResponseWriter, session *core.Session
 	}
 	prevTransport := s.getAccountTransport(accountID)
 	if err := s.Store.SetAccountTransport(accountID, transport); err != nil {
-		s.Logger.Printf("set transport %s: %v", accountID, err)
+		s.Logger.Error("account_transport_set_failed", "account_id", accountID, "error", err)
 	}
 	if prevTransport != "" && prevTransport != transport {
-		s.Logger.Printf("login: transport changed %s → %s, resetting syncv2_state", prevTransport, transport)
+		s.Logger.Info("account_transport_changed", "account_id", accountID, "from", prevTransport, "to", transport, "syncv2_reset", true)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
 
@@ -560,7 +560,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	}
 	if err != nil {
 		// Giữ UI hiển thị dữ liệu đã có trong DB nếu Zalo API lỗi.
-		s.Logger.Printf("conversations/sync: zalo error=%v", err)
+		s.Logger.Warn("conversation_sync_zalo_failed", "account_id", accountID, "error", err)
 		dbConvs, _ := s.Store.GetConversations(accountID)
 		if dbConvs == nil {
 			dbConvs = []store.Conversation{}
@@ -590,7 +590,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 			Content: m.Content, MsgType: int(m.Type),
 			Timestamp: m.Timestamp, Attachments: string(attJSON),
 		}); err != nil {
-			s.Logger.Printf("conversations/sync SaveMessage err: id=%s err=%v", m.ID, err)
+			s.Logger.Error("conversation_message_save_failed", "account_id", accountID, "message_id", m.ID, "error", err)
 		}
 	}
 
@@ -606,7 +606,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		if err := s.Store.SaveConversation(&conv); err != nil {
-			s.Logger.Printf("conversations/sync SaveConversation err: id=%s err=%v", conv.ID, err)
+			s.Logger.Error("conversation_save_failed", "account_id", accountID, "conversation_id", conv.ID, "error", err)
 		}
 	}
 
@@ -963,7 +963,7 @@ func (s *Server) HandleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "delete: "+err.Error())
 		return
 	}
-	s.Logger.Printf("delete-account: cascade xoá sạch zalo_account=%s account=%s", acc.ZaloAccountID, req.AccountID)
+	s.Logger.Info("account_deleted", "zalo_account_id", acc.ZaloAccountID, "account_id", req.AccountID)
 	ok(w, map[string]interface{}{"deleted": true, "accountId": req.AccountID, "zaloAccountId": acc.ZaloAccountID})
 }
 
@@ -1032,12 +1032,12 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "find/create account: "+err.Error())
 		return
 	}
-	s.Logger.Printf("login: zalo_account=%s account=%s transport=web", zaID, accountID)
+	s.Logger.Info("web_login_committed", "zalo_account_id", zaID, "account_id", accountID, "transport", "web")
 
 	// === Step 4: SaveSession + StartZaloListener ===
 	// Transport "web" (câu hỏi Sếp #2: fallback khi pc fail).
 	if req.AccountID != "" && req.AccountID != accountID {
-		s.Logger.Printf("login: requested accountId=%s != resolved=%s (using resolved)", req.AccountID, accountID)
+		s.Logger.Warn("login_account_mismatch", "requested_account_id", req.AccountID, "resolved_account_id", accountID)
 	}
 	cj, _ := json.Marshal(session.Cookies)
 	wj, _ := json.Marshal(session.WSURLs)
@@ -1059,11 +1059,11 @@ func (s *Server) HandleCookieLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// Set transport trên account row + reset syncv2_state nếu transport đổi.
 	if err := s.Store.SetAccountTransport(accountID, "web"); err != nil {
-		s.Logger.Printf("set transport %s: %v", accountID, err)
+		s.Logger.Error("account_transport_set_failed", "account_id", accountID, "error", err)
 	}
 	if prevTransport != "" && prevTransport != "web" {
 		// Transport đã đổi (vd pc → web). Reset syncv2_state để request-sync lại.
-		s.Logger.Printf("login: transport changed %s → web, resetting syncv2_state", prevTransport)
+		s.Logger.Info("account_transport_changed", "account_id", accountID, "from", prevTransport, "to", "web", "syncv2_reset", true)
 		_ = s.Store.SetAccountSyncV2State(accountID, "{}")
 	}
 	go s.StartZaloListener(accountID)
@@ -1190,7 +1190,7 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	defer cancel()
 	result, err := core.CookieLogin(ctx, cookies, sessRec.IMEI, sessRec.UserAgent)
 	if err != nil {
-		s.Logger.Printf("autoRefresh: cookie login failed: %v", err)
+		s.Logger.Error("session_refresh_cookie_login_failed", "account_id", sessRec.AccountID, "error", err)
 		return sessRec
 	}
 	// Lưu session mới
@@ -1214,10 +1214,12 @@ func (s *Server) autoRefresh(sessRec *store.Session) *store.Session {
 	// WebSocket cũ và có thể kick connection mới.
 	s.StopZaloListener(accountID)
 	saveErr := s.Store.SaveSession(newSession)
-	s.Logger.Printf("autoRefresh: SaveSession err=%v id=%s", saveErr, newSession.ID)
+	if saveErr != nil {
+		s.Logger.Error("session_save_failed", "account_id", accountID, "session_id", newSession.ID, "error", saveErr)
+	}
 	// SaveSession tự vô hiệu hoá session active cũ của account.
 	go s.StartZaloListener(accountID)
-	s.Logger.Printf("autoRefresh: session refreshed for %s — new expires %s", accountID, session.ExpiresAt.Format(time.RFC3339))
+	s.Logger.Info("session_refreshed", "account_id", accountID, "session_id", newSession.ID, "expires_at", session.ExpiresAt.Format(time.RFC3339))
 	return newSession
 }
 
@@ -1233,7 +1235,7 @@ func (s *Server) RefreshAllSessions() {
 			continue
 		}
 		if time.Now().After(sessRec.ExpiresAt.Add(-30 * time.Minute)) {
-			s.Logger.Printf("autoRefresh: background refreshing %s", a.ID)
+			s.Logger.Debug("session_refresh_background_account", "account_id", a.ID)
 			s.autoRefresh(sessRec)
 		}
 	}

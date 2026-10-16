@@ -46,7 +46,7 @@ func (s *Server) ensureSyncV2Client(accountID string, sess *core.Session) (*sync
 	var state core.SyncV2State
 	if raw != "" && raw != "{}" {
 		if err := json.Unmarshal([]byte(raw), &state); err != nil {
-			s.Logger.Printf("syncv2: parse state for %s fail %v — reset", accountID, err)
+			s.Logger.Warn("syncv2_state_parse_failed", "account_id", accountID, "error", err)
 			state = core.SyncV2State{Phase: "init"}
 		}
 	} else {
@@ -63,7 +63,7 @@ func (s *Server) ensureSyncV2Client(accountID string, sess *core.Session) (*sync
 	_, cancel := context.WithCancel(context.Background())
 	entry := &syncV2Entry{client: client, cancel: cancel}
 	s.syncV2Registry[accountID] = entry
-	s.Logger.Printf("syncv2: init for %s phase=%s", accountID, state.Phase)
+	s.Logger.Info("syncv2_client_initialized", "account_id", accountID, "phase", state.Phase)
 	return entry, nil
 }
 
@@ -101,17 +101,17 @@ func (s *Server) handleSyncV2Event(ctx context.Context, accountID string, rawDat
 	// Lazy-init: lấy session từ store, tạo client nếu cần.
 	sessRec, err := st.LoadSessionByAccountID(accountID)
 	if err != nil || sessRec == nil {
-		logger.Printf("syncv2: skip event, no session for %s: %v", accountID, err)
+		logger.Warn("syncv2_event_skipped", "account_id", accountID, "reason", "no_session", "error", err)
 		return
 	}
 	clientObj, err := clientFromSession(sessRec)
 	if err != nil {
-		logger.Printf("syncv2: build client for %s fail: %v", accountID, err)
+		logger.Error("syncv2_client_build_failed", "account_id", accountID, "error", err)
 		return
 	}
 	entry, err := s.ensureSyncV2Client(accountID, clientObj.Session)
 	if err != nil {
-		logger.Printf("syncv2: ensureSyncV2Client fail: %v", err)
+		logger.Error("syncv2_client_ensure_failed", "account_id", accountID, "error", err)
 		return
 	}
 	syncV2 := entry.client
@@ -122,9 +122,9 @@ func (s *Server) handleSyncV2Event(ctx context.Context, accountID string, rawDat
 			rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer rcancel()
 			if err := syncV2.RequestSync(rctx); err != nil {
-				logger.Printf("syncv2: RequestSync for %s fail: %v", accountID, err)
+				logger.Error("syncv2_request_failed", "account_id", accountID, "error", err)
 			} else {
-				logger.Printf("syncv2: RequestSync sent for %s", accountID)
+				logger.Info("syncv2_request_sent", "account_id", accountID)
 				_ = persistSyncV2State(st, accountID, syncV2)
 			}
 		}()
@@ -132,7 +132,7 @@ func (s *Server) handleSyncV2Event(ctx context.Context, accountID string, rawDat
 
 	// Feed event vào state machine.
 	if err := syncV2.HandleEvent(rawData); err != nil {
-		logger.Printf("syncv2: HandleEvent for %s err: %v", accountID, err)
+		logger.Error("syncv2_event_handle_failed", "account_id", accountID, "error", err)
 	}
 	_ = persistSyncV2State(st, accountID, syncV2)
 
@@ -161,14 +161,14 @@ func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, lo
 		batch, err := client.PullBatch(ctx)
 		cancel()
 		if err != nil {
-			logger.Printf("syncv2: PullBatch for %s err: %v", accountID, err)
+			logger.Error("syncv2_pull_failed", "account_id", accountID, "error", err)
 			_ = persistSyncV2State(st, accountID, client)
 			return
 		}
 		// Decrypt + SaveMessage.
 		msgs, err := client.DecryptMessages(batch)
 		if err != nil {
-			logger.Printf("syncv2: DecryptMessages for %s err: %v", accountID, err)
+			logger.Error("syncv2_decrypt_failed", "account_id", accountID, "error", err)
 		} else {
 			saved := 0
 			for i := range msgs {
@@ -186,7 +186,12 @@ func runSyncV2PullLoop(entry *syncV2Entry, st *store.Store, accountID string, lo
 					saved++
 				}
 			}
-			logger.Printf("syncv2: %s saved=%d nextSeq=%d done=%v", accountID, saved, client.State().LastSeqID, batch.Done)
+			logger.Info("syncv2_pull_batch_completed",
+				"account_id", accountID,
+				"saved", saved,
+				"next_sequence_id", client.State().LastSeqID,
+				"done", batch.Done,
+			)
 		}
 		_ = persistSyncV2State(st, accountID, client)
 		if batch.Done {

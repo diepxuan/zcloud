@@ -93,7 +93,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		s.Logger.Printf("ws accept: %v", err)
+		s.Logger.Error("browser_websocket_accept_failed", "error", err)
 		return
 	}
 
@@ -101,7 +101,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	wc := &wsConn{conn: conn, ctx: ctx, cancel: cancel}
 
 	s.WSManager.AddConn(accountID, wc)
-	s.Logger.Printf("ws: browser connected — account=%s", accountID)
+	s.Logger.Info("browser_websocket_connected", "account_id", accountID)
 
 	// Lắng nghe message từ browser (ping)
 	go func() {
@@ -109,7 +109,7 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.WSManager.RemoveConn(accountID, wc)
 			cancel()
 			conn.Close(websocket.StatusNormalClosure, "bye")
-			s.Logger.Printf("ws: browser disconnected — account=%s", accountID)
+			s.Logger.Info("browser_websocket_disconnected", "account_id", accountID)
 		}()
 
 		for {
@@ -158,8 +158,13 @@ func (s *Server) RequestOldMessagesViaListener(accountID, convID string, convTyp
 	if entry != nil {
 		client = entry.client
 	}
-	fmt.Printf("[zcloud] ws-sync: account=%s conv=%s type=%d client_ok=%v ws_nil=%v\n",
-		accountID, convID, convType, ok, !ok || client == nil || client.WS == nil)
+	s.Logger.Debug("zalo_old_message_request_lookup",
+		"account_id", accountID,
+		"conversation_id", convID,
+		"conversation_type", convType,
+		"client_ok", ok,
+		"websocket_nil", !ok || client == nil || client.WS == nil,
+	)
 	if !ok || client == nil || client.WS == nil {
 		return false
 	}
@@ -167,12 +172,12 @@ func (s *Server) RequestOldMessagesViaListener(accountID, convID string, convTyp
 	if convType == 1 {
 		tt = core.ThreadGroup
 	}
-	fmt.Printf("[zcloud] ws-sync: sending RequestOldMessages cmd=%d\n", 510+int(tt))
+	s.Logger.Info("zalo_old_message_request_sending", "account_id", accountID, "conversation_id", convID, "command", 510+int(tt))
 	if err := client.WS.RequestOldMessages(context.Background(), tt, lastID); err != nil {
-		fmt.Printf("[zcloud] ws-sync: request err=%v\n", err)
+		s.Logger.Error("zalo_old_message_request_failed", "account_id", accountID, "conversation_id", convID, "error", err)
 		return false
 	}
-	fmt.Printf("[zcloud] ws-sync: request sent OK\n")
+	s.Logger.Info("zalo_old_message_request_sent", "account_id", accountID, "conversation_id", convID)
 	return true
 }
 
@@ -186,7 +191,7 @@ func (s *Server) StartZaloListener(accountID string) {
 
 	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
-		s.Logger.Printf("zalo-ws: no active session for %s", accountID)
+		s.Logger.Warn("zalo_listener_skipped", "account_id", accountID, "reason", "no_active_session", "error", err)
 		return
 	}
 
@@ -205,7 +210,7 @@ func (s *Server) StartZaloListener(accountID string) {
 
 	go runZaloListener(ctx, entry, accountID)
 
-	s.Logger.Printf("zalo-ws: started listener for %s", accountID)
+	s.Logger.Info("zalo_listener_started", "account_id", accountID, "session_id", sessRec.ID)
 }
 
 // isAuthExpiredErr kiểm tra lỗi WS auth có phải do zpw_sek/session hết hạn không.
@@ -226,25 +231,25 @@ func isAuthExpiredErr(err error) bool {
 func (s *Server) handleExpiredSession(accountID string) {
 	sessRec, err := s.Store.GetActiveSession(accountID)
 	if err != nil || sessRec == nil {
-		s.Logger.Printf("zalo-ws: handleExpiredSession: no session for %s", accountID)
+		s.Logger.Warn("zalo_session_refresh_skipped", "account_id", accountID, "reason", "no_active_session", "error", err)
 		return
 	}
 	newSessRec := s.autoRefresh(sessRec)
 	if newSessRec == nil || newSessRec.ID == sessRec.ID {
 		// Refresh fail — disable account để ngừng reconnect vô hạn.
-		s.Logger.Printf("zalo-ws: handleExpiredSession: refresh FAILED for %s, disabling", accountID)
+		s.Logger.Error("zalo_session_refresh_failed", "account_id", accountID)
 		if err := s.Store.SetAccountEnabled(accountID, false); err != nil {
-			s.Logger.Printf("zalo-ws: disable %s err: %v", accountID, err)
+			s.Logger.Error("zalo_account_disable_failed", "account_id", accountID, "error", err)
 		}
 		if err := s.Store.SetAccountDisabledReason(accountID, "auth_expired"); err != nil {
-			s.Logger.Printf("zalo-ws: set disabled_reason %s err: %v", accountID, err)
+			s.Logger.Error("zalo_account_disabled_reason_set_failed", "account_id", accountID, "error", err)
 		}
 		if err := s.Store.DeleteSession(sessRec.ID); err != nil {
-			s.Logger.Printf("zalo-ws: delete session %s err: %v", sessRec.ID, err)
+			s.Logger.Error("zalo_session_delete_failed", "account_id", accountID, "session_id", sessRec.ID, "error", err)
 		}
 		return
 	}
-	s.Logger.Printf("zalo-ws: handleExpiredSession: refresh OK for %s", accountID)
+	s.Logger.Info("zalo_session_refreshed", "account_id", accountID, "session_id", newSessRec.ID)
 	// autoRefresh đã StopZaloListener + SaveSession + go StartZaloListener.
 }
 
@@ -279,7 +284,7 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, accountID 
 	// sẽ tự StartZaloListener lại cho account còn enabled + active session.
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Printf("zalo-ws: PANIC in listener %s: %v — watcher sẽ restart", accountID, r)
+			logger.Error("zalo_listener_panicked", "account_id", accountID, "panic", r)
 		}
 	}()
 
@@ -299,13 +304,13 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, accountID 
 
 		sessRec, err := st.GetActiveSession(accountID)
 		if err != nil || sessRec == nil {
-			logger.Printf("zalo-ws: no active session for %s", accountID)
+			logger.Warn("zalo_listener_stopped", "account_id", accountID, "reason", "no_active_session", "error", err)
 			return
 		}
 
 		client, err := clientFromSession(sessRec)
 		if err != nil {
-			logger.Printf("zalo-ws: build client error %s: %v", accountID, err)
+			logger.Error("zalo_client_build_failed", "account_id", accountID, "error", err)
 			return
 		}
 
@@ -317,10 +322,10 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, accountID 
 		current.client = client
 		server.zaloListenerMu.Unlock()
 
-		logger.Printf("zalo-ws: connecting %s (attempt %d)", accountID, attempt+1)
+		logger.Info("zalo_websocket_connecting", "account_id", accountID, "attempt", attempt+1)
 
 		if err := client.ConnectWS(ctx); err != nil {
-			logger.Printf("zalo-ws: connect error %s: %v", accountID, err)
+			logger.Warn("zalo_websocket_connect_failed", "account_id", accountID, "attempt", attempt+1, "error", err)
 			if current.client != nil && current.client.WS != nil {
 				_ = current.client.WS.Close()
 			}
@@ -348,7 +353,7 @@ func runZaloListener(ctx context.Context, current *zaloListenerEntry, accountID 
 
 		// Mất kết nối → reconnect sau backoff
 		if reason.Code == 3000 || reason.Code == 3003 {
-			logger.Printf("zalo-ws: %s stopped after kickout code=%d reason=%q", accountID, reason.Code, reason.Reason)
+			logger.Warn("zalo_websocket_kickout", "account_id", accountID, "code", reason.Code, "reason", reason.Reason)
 			return
 		}
 		if ctx.Err() != nil {
@@ -408,7 +413,7 @@ func listenLoop(ctx context.Context, server *Server, client *core.Client, accoun
 			if !ok {
 				return core.CloseEvent{Code: -1}
 			}
-			logger.Printf("zalo-ws: event error %s: %v", accountID, err)
+			logger.Error("zalo_websocket_event_failed", "account_id", accountID, "error", err)
 			return core.CloseEvent{Code: -1}
 
 		case ce, ok := <-client.WS.CloseEvents():
@@ -464,7 +469,7 @@ func handleZaloEvent(ctx context.Context, server *Server, event core.Event, acco
 			},
 		})
 
-		logger.Printf("zalo-ws: new msg from %s in %s", msg.FromID, msg.ConvID)
+		logger.Info("zalo_message_received", "account_id", accountID, "conversation_id", msg.ConvID, "sender_id", msg.FromID, "message_id", msg.ID)
 
 	case core.EventTyping:
 		if event.Message == nil {
@@ -498,11 +503,11 @@ func handleZaloEvent(ctx context.Context, server *Server, event core.Event, acco
 
 	case core.EventOldMessages:
 		if event.Message == nil {
-			logger.Printf("zalo-ws: old msg nil")
+			logger.Warn("zalo_old_message_empty", "account_id", accountID)
 			return
 		}
 		om := event.Message
-		logger.Printf("zalo-ws: old msg from %s in %s", om.FromID, om.ConvID)
+		logger.Info("zalo_old_message_received", "account_id", accountID, "conversation_id", om.ConvID, "sender_id", om.FromID, "message_id", om.ID)
 		oaJSON, _ := json.Marshal(om.Attachments)
 		go enqueueMessageMediaJobs(st, wsManager, accountID, om, logger)
 		st.SaveMessage(&store.Message{
@@ -524,14 +529,14 @@ func handleZaloEvent(ctx context.Context, server *Server, event core.Event, acco
 		})
 
 	case core.EventReconnect:
-		logger.Printf("zalo-ws: reconnected %s", accountID)
+		logger.Info("zalo_websocket_reconnected", "account_id", accountID)
 
 	default:
 		// Desktop sync events (cmd 590-592 / 630-634) và các event khác
 		// chưa được xử lý cụ thể: log + broadcast cho browser nếu có payload.
 		if event.DesktopSync != nil {
 			ds := event.DesktopSync
-			logger.Printf("zalo-ws: desktop-sync cmd=%d sub=%d", ds.Cmd, ds.SubCmd)
+			logger.Debug("zalo_desktop_sync_event", "account_id", accountID, "command", ds.Cmd, "subcommand", ds.SubCmd)
 			wsManager.Broadcast(accountID, BrowserMessage{
 				Type: "desktop_sync",
 				Data: map[string]interface{}{
@@ -575,7 +580,7 @@ func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID st
 		return
 	}
 	if accountID == "" || msg.ConvID == "" {
-		logger.Printf("zalo-ws: skip media enqueue, missing account/conv (msg=%s)", msg.ID)
+		logger.Warn("zalo_media_enqueue_skipped", "message_id", msg.ID, "reason", "missing_account_or_conversation")
 		return
 	}
 	if !msg.Type.IsMedia() && !(msg.Type.IsLink() && hasImageAttachment(msg.Attachments)) {
@@ -600,7 +605,7 @@ func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID st
 			MaxAttempts: storeMediaDefaultAttempts,
 		}
 		if err := st.SaveMediaJob(job); err != nil {
-			logger.Printf("zalo-ws: enqueue media job %s: %v", fileID, err)
+			logger.Error("zalo_media_enqueue_failed", "account_id", accountID, "message_id", msg.ID, "file_id", fileID, "error", err)
 			continue
 		}
 		existing, _ := st.GetMediaJob(fileID, accountID)
@@ -613,7 +618,7 @@ func enqueueMessageMediaJobs(st *store.Store, wsManager *WSManager, accountID st
 		}
 		if needReset {
 			if err := st.ResetMediaJobPending(fileID, accountID); err != nil {
-				logger.Printf("zalo-ws: reset media job %s: %v", fileID, err)
+				logger.Error("zalo_media_job_reset_failed", "account_id", accountID, "file_id", fileID, "error", err)
 			}
 		}
 	}
@@ -722,12 +727,12 @@ func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager
 	for attempt := 1; attempt <= mediaDownloadRetries; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "GET", info.URL, nil)
 		if err != nil {
-			logger.Printf("zalo-ws: media request err=%v", err)
+			logger.Error("zalo_media_request_build_failed", "account_id", accountID, "message_id", msg.ID, "error", err)
 			return
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			logger.Printf("zalo-ws: media download err=%v (attempt %d/%d)", err, attempt, mediaDownloadRetries)
+			logger.Warn("zalo_media_download_failed", "account_id", accountID, "message_id", msg.ID, "attempt", attempt, "error", err)
 			if attempt < mediaDownloadRetries {
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
@@ -736,7 +741,7 @@ func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager
 		}
 		if resp.StatusCode >= 400 {
 			_ = resp.Body.Close()
-			logger.Printf("zalo-ws: media http %d (attempt %d/%d)", resp.StatusCode, attempt, mediaDownloadRetries)
+			logger.Warn("zalo_media_http_failed", "account_id", accountID, "message_id", msg.ID, "attempt", attempt, "status", resp.StatusCode)
 			if attempt < mediaDownloadRetries {
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
@@ -746,7 +751,7 @@ func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager
 		buf, rerr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if rerr != nil {
-			logger.Printf("zalo-ws: media read err=%v (attempt %d/%d)", rerr, attempt, mediaDownloadRetries)
+			logger.Warn("zalo_media_read_failed", "account_id", accountID, "message_id", msg.ID, "attempt", attempt, "error", rerr)
 			if attempt < mediaDownloadRetries {
 				time.Sleep(time.Duration(attempt) * time.Second)
 				continue
@@ -763,11 +768,11 @@ func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager
 		return
 	}
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		logger.Printf("zalo-ws: media mkdir err=%v", err)
+		logger.Error("zalo_media_directory_create_failed", "account_id", accountID, "conversation_id", msg.ConvID, "error", err)
 		return
 	}
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		logger.Printf("zalo-ws: media save err=%v", err)
+		logger.Error("zalo_media_write_failed", "account_id", accountID, "message_id", msg.ID, "error", err)
 		return
 	}
 	rel, _ := filepath.Rel(st.MediaPath(), filePath)
@@ -778,7 +783,7 @@ func downloadOneMedia(ctx context.Context, st *store.Store, wsManager *WSManager
 		FileSize: fileInfo.Size(), SourceURL: info.URL, IsDownloaded: 1,
 	})
 	if err != nil {
-		logger.Printf("zalo-ws: media save meta err=%v", err)
+		logger.Error("zalo_media_metadata_save_failed", "account_id", accountID, "message_id", msg.ID, "error", err)
 	}
 	_ = savedPath
 	if wsManager != nil {

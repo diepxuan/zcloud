@@ -82,7 +82,7 @@ func (w *MediaWorker) loop(ctx context.Context) {
 func (w *MediaWorker) tick(ctx context.Context) {
 	accounts, err := w.store.ListActiveAccountIDs()
 	if err != nil {
-		w.logger.Printf("media-worker: list accounts: %v", err)
+		w.logger.Error("media_account_list_failed", "error", err)
 		return
 	}
 	for _, accountID := range accounts {
@@ -98,7 +98,7 @@ func (w *MediaWorker) tick(ctx context.Context) {
 func (w *MediaWorker) processAccount(ctx context.Context, accountID string) {
 	jobs, err := w.store.ListPendingMediaJobs(accountID, w.batch)
 	if err != nil {
-		w.logger.Printf("media-worker: list jobs %s: %v", accountID, err)
+		w.logger.Error("media_job_list_failed", "account_id", accountID, "error", err)
 		return
 	}
 	for _, job := range jobs {
@@ -134,10 +134,10 @@ func (w *MediaWorker) processJob(ctx context.Context, job store.MediaJob) {
 	if err != nil {
 		if attempt >= job.MaxAttempts {
 			_ = w.store.MarkMediaJobFailed(job.ID, job.AccountID, err.Error())
-			w.logger.Printf("media-worker: failed %s: %v", job.ID, err)
+			w.logger.Error("media_job_failed", "job_id", job.ID, "account_id", job.AccountID, "error", err)
 		} else {
 			_ = w.store.RetryMediaJob(job.ID, job.AccountID, attempt, err.Error())
-			w.logger.Printf("media-worker: retry later %s: %v", job.ID, err)
+			w.logger.Warn("media_job_retry_scheduled", "job_id", job.ID, "account_id", job.AccountID, "attempt", attempt, "error", err)
 		}
 		return
 	}
@@ -161,7 +161,7 @@ func (w *MediaWorker) processJob(ctx context.Context, job store.MediaJob) {
 		FileName: job.FileName, FileExt: job.FileExt, SourceURL: job.SourceURL,
 		IsDownloaded: 1,
 	}); err != nil {
-		w.logger.Printf("media-worker: save media meta %s: %v", job.ID, err)
+		w.logger.Error("media_metadata_save_failed", "job_id", job.ID, "account_id", job.AccountID, "error", err)
 	}
 	_ = w.store.MarkMediaJobDone(job.ID, job.AccountID, rel)
 	w.broadcastDone(job, filePath)
