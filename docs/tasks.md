@@ -518,10 +518,34 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
   `/api/sync/v2/status`, `/chat` hoạt động; không còn global state trong
   `internal/api`.
 
-### H6, H5, H1 — Còn lại trong plan
+### H6 — Schema migration versioning ✅ done (commit f17dbc2)
 
-Xem plan chi tiết ở `memory/2026-10-11.md` và báo cáo gốc trước đó.
+- Bảng `schema_migrations` ghi version đã apply cho Postgres; runner chạy tuần tự, idempotent (chạy lại không lỗi).
+- `internal/store/store_postgres.go` đăng ký + apply version theo thứ tự.
+- Verify: build + test pass; service restart; bảng `schema_migrations` có trong DB.
 
+### H5 — Structured logging (slog, key=value) 🟡 H5.1 + H5.2 xong, còn H5.3
+
+- **H5.1** (commit `d28799c`): thêm `internal/logging` — wrapper `*slog.Logger` dùng `log/slog` `TextHandler` (key=value), giữ `Printf/Print/Println` compat trong lúc chuyển dần. Wire vào `internal/api` + `internal/server`.
+- **H5.2**: migrate nốt runtime `internal/api` + `internal/server` + `internal/servcmd/watch` sang `logger.Info/Warn/Error("event_name", "key", val)`. Bỏ `Fatalf` trong `server.Run` → `Error` + `return err` (shutdown sạch). Cancel funcs chuyển thành `defer` → `go vet` sạch (hết cảnh báo context-leak).
+- **H5.3** (còn lại): `internal/core` vẫn dùng `fmt.Printf` (~25 chỗ: `websocket.go`, `chat.go`, `websocket_events.go`, `auth.go`). Cần inject logger vào `core.Client` → đổi signature nhiều callsite, tách riêng.
+- CLI `internal/servcmd/servcmd.go` giữ `fmt.Printf` (output cho user, không phải log runtime).
+- Verify: build pass; `go vet ./...` sạch; test pass (chỉ còn 1 fail pre-existing `TestEncodeDecodeAESGCM_RoundTrip/mode_2` thuộc core). Live: `journalctl -u zcloud -o cat` ra `msg=http_request method=GET path=/api/health duration=...`.
+
+### H1 — Tách `internal/api/web/chat.html` module hóa 🟡 Pending
+
+- Mục tiêu: tách file HTML tĩnh lớn thành module (JS/CSS) để dễ bảo trì.
+- Chưa bắt đầu — chờ Sếp chốt phạm vi tách (theo tab? theo component?).
+
+## 5.20. Ops — Postgres cluster down sau reboot (17/10/2026)
+
+**Sự cố**: zcloud crash-loop (~20000 restart) do Postgres trên `postgresql.diepxuan.corp` (10.0.0.105) không kết nối được; host .105 vẫn ping/SSH OK.
+
+**Nguyên nhân**: cluster thật `postgresql@18-main` **DOWN** từ lúc host reboot `16/10 03:46` (+07); log cuối `lock file "postmaster.pid" contains wrong PID` → immediate shutdown. `postgresql.service` (meta-service, `ExecStart=/bin/true`) vẫn báo `active` → dễ nhầm DB còn chạy. `systemctl is-enabled postgresql@18-main` = `enabled-runtime` (không bền qua reboot).
+
+**Fix tạm**: `pg_ctlcluster 18 main start` → online, zcloud tự hồi phục (port 8080, WS listener, `/api/health` OK).
+
+**Cần làm (chờ Sếp duyệt)**: đảm bảo cluster auto-start bền vững (`systemctl enable postgresql@18-main` trên .105) + cân nhắc monitor/healthcheck để phát hiện sớm thay vì chỉ nhìn meta-service.
 
 ## 6. References
 
