@@ -3,7 +3,7 @@
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5 (tồn đọng T1 "WS AES-GCM decrypt
   hoàn chỉnh" + T3 "integration test") + §5.21
-- **Trạng thái:** 🟡 In Progress
+- **Trạng thái:** ✅ Done (18/10/2026)
 - **Phụ thuộc:** [04-build-core.md](04-build-core.md), `internal/core/encrypt.go`
 
 ## Bối cảnh
@@ -92,3 +92,17 @@ Với mỗi mode ∈ {2, 3}:
 - Thấp — chỉ test. Rủi ro chính là "sửa test cho xanh" mà không phản ánh đúng
   contract → đã chốt contract ở mục Bối cảnh (primitive thô + gunzip ở
   `DecodeWSEvent`), test mới phải phản ánh đúng contract đó.
+
+## Kết quả (18/10/2026)
+
+- Sửa `internal/core/encrypt_test.go` (`TestEncodeDecodeAESGCM_RoundTrip` tách
+  kỳ vọng theo mode) + tạo `internal/core/encrypt_wsgcm_test.go`
+  (`TestEncodeDecodeWSRoundTrip`, `TestGunzipIfNeeded`, `TestDecodeWSBase64`,
+  `TestDecryptAESGCMWithKey`).
+- **KHÔNG** đổi production code (chỉ `_test.go`).
+- Verify: `go test ./internal/core/...` **PASS, 0 fail** (trước đó FAIL);
+  `go build ./...` + `go vet ./...` sạch; coverage `internal/core`
+  31.0% → 31.2%.
+- Ghi chú kỹ thuật: `decryptAESGCMWithKey` luôn thử base64-decode `cipherKey`
+  trước → test nhánh "raw key" phải dùng key nhị phân (không phải ASCII hợp lệ
+  base64), nếu không sẽ bị decode nhầm. Hành vi production giữ nguyên.

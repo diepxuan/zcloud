@@ -157,9 +157,9 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 
 | # | Tính năng | Mức độ | Ghi chú |
 |:-:|-----------|:------:|---------|
-| T1 | WS AES-GCM decrypt hoàn chỉnh | 🟡 Medium | Có cipherKey nhưng chưa dùng |
+| T1 | WS AES-GCM decrypt hoàn chỉnh | 🟢 Core + tests (18/10) | cipherKey đã wire vào `DecodeWSEvent`; mode 2 (gzip) + 3 (raw) đã có round-trip test (§5.21). Còn: capture frame WS thật từ Zalo PC để verify schema payload. |
 | T2 | Auto-download media khi WS nhận event | ✅ Done (đợt 09/2026, polish 11/09) | `enqueueMessageMediaJobs` tự động vào `media_jobs` khi WS nhận new/old msg có attachment. `MediaWorker` (5s interval, batch 20) tải về disk + retry 3 + dedupe + skip nếu file đã có. UI fallback `/api/media/download` qua `imgErr` khi URL Zalo CDN die. Xem chi tiết T2.7–T2.10 dưới. |
-| T3 | Integration test (chat/store/api) | 🟡 Medium | Chỉ có `encrypt_test.go` |
+| T3 | Integration test (chat/store/api) | 🟡 Partial | Core đã có nhiều test (encrypt/ws-parse/host/service/syncv2); store + api có test `-tags testdb`. Còn thiếu: integration test HTTP client `chat.go` với mock Zalo server. |
 | T4 | Zalo OA webhook (task 08) | 🟢 Optional | Schema sẵn, thiếu handler |
 | T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
@@ -554,16 +554,18 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 
 **Cần làm (chờ Sếp duyệt)**: đảm bảo cluster auto-start bền vững (`systemctl enable postgresql@18-main` trên .105) + cân nhắc monitor/healthcheck để phát hiện sớm thay vì chỉ nhìn meta-service.
 
-## 5.21. Test hardening WS AES-GCM (T1) — fix test đỏ (18/10/2026)
+## 5.21. Test hardening WS AES-GCM (T1) — fix test đỏ ✅ Done (18/10/2026)
 
 Chi tiết: [tasks/26-ws-gcm-test-hardening.md](tasks/26-ws-gcm-test-hardening.md).
 
-`go test ./internal/core/...` đang FAIL ở `TestEncodeDecodeAESGCM_RoundTrip/mode_2`.
+`go test ./internal/core/...` trước đây FAIL ở `TestEncodeDecodeAESGCM_RoundTrip/mode_2`.
 Root cause: **test sai** — gọi thẳng primitive `DecodeAESGCM` cho mode 2 (gzip),
 trong khi gunzip nằm ở tầng `DecodeWSEvent` (`gunzipIfNeeded`). Production path
-đã đúng. Task: sửa test + bổ sung round-trip end-to-end qua `DecodeWSEvent` +
-test biên `gunzipIfNeeded`/`decodeWSBase64`/`decryptAESGCMWithKey`. Mục tiêu:
-`go test ./internal/core/...` xanh hoàn toàn.
+đã đúng. Kết quả (đệ thực thi, em verify độc lập): sửa test sai + thêm
+`encrypt_wsgcm_test.go` (round-trip qua `DecodeWSEvent` mode 2/3, test biên
+`gunzipIfNeeded`/`decodeWSBase64`/`decryptAESGCMWithKey`). **Chỉ sửa `_test.go`,
+không đổi production.** `go test ./internal/core/...` nay **PASS 0 fail**;
+coverage 31.0% → 31.2%.
 
 ## 6. References
 
