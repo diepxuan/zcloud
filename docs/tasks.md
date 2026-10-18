@@ -567,6 +567,15 @@ trong khi gunzip nằm ở tầng `DecodeWSEvent` (`gunzipIfNeeded`). Production
 không đổi production.** `go test ./internal/core/...` nay **PASS 0 fail**;
 coverage 31.0% → 31.2%.
 
+## 5.22. Integration test `chat.go` client với mock Zalo server (T3) — 18/10/2026
+
+Chi tiết: [tasks/27-chat-client-mock-test.md](tasks/27-chat-client-mock-test.md).
+
+Dựng mock Zalo HTTP server (`httptest`) để phủ `Client.SendMessage` end-to-end:
+build request + mã hoá AES-CBC + parse/decrypt response; nhánh success, server
+error, HTML (rate-limit), JSON hỏng, chưa đăng nhập. Chỉ thêm `_test.go`,
+không đổi production. Lấp gap T3 (integration test `chat.go`).
+
 ## 6. References
 
 | Lib | Lang | Stars | Path |
