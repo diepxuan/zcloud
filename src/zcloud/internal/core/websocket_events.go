@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 // Tách từ websocket.go (H7.1) — 8 function xử lý event WS Zalo.
@@ -19,7 +20,7 @@ func (w *WSClient) handleNewMessages(payload []byte, tt ThreadType) {
 		Data      json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(data, &rawData); err != nil {
-		fmt.Printf("[zcloud] ws: 501/521 parse err=%v\n", err)
+		slog.Error("ws_new_message_parse_failed", "error", err)
 		return
 	}
 
@@ -53,7 +54,7 @@ func (w *WSClient) handleOldMessages(payload []byte, tt ThreadType) {
 		Data      json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(data, &rawData); err != nil {
-		fmt.Printf("[zcloud] ws: 510/1 parse err=%v\n", err)
+		slog.Error("ws_old_message_parse_failed", "error", err)
 		return
 	}
 	msgsRaw := rawData.Msgs

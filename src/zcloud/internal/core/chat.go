@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -122,7 +123,7 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 	if err := json.Unmarshal(body, &sendResp); err != nil {
 		return nil, fmt.Errorf("parse: %w body=%s", err, string(body[:min(200, len(body))]))
 	}
-	fmt.Printf("[zcloud] SendMessage resp: status=%d raw=%s\n", resp.StatusCode, string(body[:min(1000, len(body))]))
+	slog.Debug("send_message_response", "status", resp.StatusCode, "raw", string(body[:min(1000, len(body))]))
 	if sendResp.ErrorCode != 0 {
 		return nil, fmt.Errorf("send error %d: %s — %s (raw=%s)",
 			sendResp.ErrorCode, sendResp.ErrorTitle, sendResp.ErrorMsg,
@@ -359,7 +360,7 @@ func resolveNames(c *Client, convs []Conversation) {
 	}
 	rawKey, err := base64.StdEncoding.DecodeString(c.Session.SecretKey)
 	if err != nil || len(rawKey) == 0 {
-		fmt.Printf("[zcloud] resolveNames: bad key\n")
+		slog.Warn("resolve_names_bad_key")
 		return
 	}
 
@@ -370,7 +371,7 @@ func resolveNames(c *Client, convs []Conversation) {
 	jsonP, _ := json.Marshal(payload)
 	enc, err := EncodeAESCBC(rawKey, string(jsonP))
 	if err != nil {
-		fmt.Printf("[zcloud] resolveNames: encrypt err=%v\n", err)
+		slog.Error("resolve_names_encrypt_failed", "error", err)
 		return
 	}
 
@@ -385,7 +386,7 @@ func resolveNames(c *Client, convs []Conversation) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		fmt.Printf("[zcloud] resolveNames: req err=%v\n", err)
+		slog.Error("resolve_names_request_failed", "error", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -397,7 +398,7 @@ func resolveNames(c *Client, convs []Conversation) {
 	}
 	json.Unmarshal(body, &result)
 	if result.ErrorCode != 0 {
-		fmt.Printf("[zcloud] resolveNames: api error=%d\n", result.ErrorCode)
+		slog.Warn("resolve_names_api_error", "error_code", result.ErrorCode)
 		return
 	}
 	if result.Data == nil {
@@ -411,7 +412,7 @@ func resolveNames(c *Client, convs []Conversation) {
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil {
-		fmt.Printf("[zcloud] resolveNames: decrypt err=%v len=%d\n", err, len(dataStr))
+		slog.Error("resolve_names_decrypt_failed", "error", err, "len", len(dataStr))
 		return
 	}
 
@@ -494,7 +495,7 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 	}
 	json.Unmarshal(body, &result)
 	if result.ErrorCode != 0 {
-		fmt.Printf("[zcloud] GetMyProfile: api error=%d\n", result.ErrorCode)
+		slog.Warn("get_my_profile_api_error", "error_code", result.ErrorCode)
 		return "", "", nil
 	}
 	if result.Data == nil {
@@ -508,7 +509,7 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 
 	decrypted, err := DecodeAESCBC(rawKey, dataStr)
 	if err != nil {
-		fmt.Printf("[zcloud] GetMyProfile: decrypt err=%v\n", err)
+		slog.Error("get_my_profile_decrypt_failed", "error", err)
 		return "", "", err
 	}
 
@@ -516,7 +517,7 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		Data *json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(decrypted, &wrap); err != nil {
-		fmt.Printf("[zcloud] GetMyProfile: wrap err=%v\n", err)
+		slog.Error("get_my_profile_wrap_failed", "error", err)
 		return "", "", nil
 	}
 	if wrap.Data == nil {
@@ -548,7 +549,7 @@ func (c *Client) GetMyProfile(ctx context.Context) (string, string, error) {
 		} `json:"changed_profiles"`
 	}
 	if err := json.Unmarshal(*wrap.Data, &profiles); err != nil {
-		fmt.Printf("[zcloud] GetMyProfile: profiles err=%v\n", err)
+		slog.Error("get_my_profile_profiles_failed", "error", err)
 		return "", "", nil
 	}
 
@@ -600,7 +601,7 @@ func (c *Client) GetFriends(ctx context.Context) ([]User, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) > 0 && body[0] == '<' {
-		fmt.Printf("[zcloud] GetFriends: html response=%s\n", string(body[:min(200, len(body))]))
+		slog.Warn("get_friends_html_response", "body", string(body[:min(200, len(body))]))
 		return nil, fmt.Errorf("friends: zalo returned html instead of json")
 	}
 
@@ -1131,7 +1132,7 @@ func (c *Client) HostRetry(ctx context.Context, method string, u *url.URL, body 
 			return resp, err
 		}
 		hc.lastErr = err
-		fmt.Fprintf(os.Stderr, "[zcloud] host fail %s — %v; trying next\n", target, err)
+		slog.Warn("host_fail_retry", "url", target, "error", err)
 	}
 }
 

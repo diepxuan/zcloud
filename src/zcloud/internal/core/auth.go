@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -236,7 +237,7 @@ func pollQRWaitingScan(ctx context.Context, client *http.Client, ph http.Header,
 			return nil
 		}
 		if i%10 == 0 {
-			fmt.Printf("[zcloud] scan poll %d code=%d\n", i+1, result.ErrorCode)
+			slog.Debug("qr_scan_poll", "attempt", i+1, "error_code", result.ErrorCode)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -271,7 +272,7 @@ func pollQRWaitingConfirm(ctx context.Context, client *http.Client, ph http.Head
 			return fmt.Errorf("từ chối trên điện thoại")
 		}
 		if i%5 == 0 {
-			fmt.Printf("[zcloud] confirm poll %d code=%d msg=%s\n", i+1, result.ErrorCode, result.ErrorMsg)
+			slog.Debug("qr_confirm_poll", "attempt", i+1, "error_code", result.ErrorCode, "error_message", result.ErrorMsg)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -410,7 +411,7 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 			}
 		}
 	}
-	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
+	slog.Info("login_ok", "uid", data.UID)
 
 	// Get cookies từ jar
 	domains := []string{"https://id.zalo.me/", "https://chat.zalo.me/", "https://wpa.chat.zalo.me/"}
@@ -436,10 +437,10 @@ func doCookieLogin(ctx context.Context, client *http.Client, jar *cookiejar.Jar,
 			sess.ExtraVer = string(si.ExtraVer)
 		}
 	} else {
-		fmt.Printf("[zcloud] getServerInfo failed (continue): %v\n", err)
+		slog.Warn("get_server_info_failed", "error", err)
 	}
 
-	fmt.Printf("[zcloud] login OK — uid=%s\n", data.UID)
+	slog.Info("login_ok", "uid", data.UID)
 	return &LoginResult{Session: sess, Cookies: cookies}, nil
 }
 

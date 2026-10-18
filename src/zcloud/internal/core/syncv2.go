@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -305,12 +306,12 @@ func (c *SyncV2Client) DecryptMessages(batch *PullBatchResponse) ([]Message, err
 		pt, err := sess.DecryptMessage(pm.Cipher)
 		if err != nil {
 			// Skip tin lỗi thay vì fail toàn batch; vẫn log để debug.
-			fmt.Fprintf(os.Stderr, "[zcloud] syncv2: decrypt msg sid=%s err=%v\n", pm.SessionID, err)
+			slog.Error("syncv2_decrypt_message_failed", "session_id", pm.SessionID, "error", err)
 			continue
 		}
 		var m wsMessage
 		if err := json.Unmarshal([]byte(pt), &m); err != nil {
-			fmt.Fprintf(os.Stderr, "[zcloud] syncv2: parse msg sid=%s err=%v\n", pm.SessionID, err)
+			slog.Error("syncv2_parse_message_failed", "session_id", pm.SessionID, "error", err)
 			continue
 		}
 		out = append(out, *m.toMessage(c.session))

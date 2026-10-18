@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -112,7 +113,7 @@ func (w *WSClient) Connect(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ws dial: %w", err)
 	}
-	fmt.Printf("[zcloud] ws connected: url=%s\n", wsURL)
+	slog.Info("ws_connected", "url", wsURL)
 
 	w.mu.Lock()
 	w.conn = conn
@@ -252,8 +253,7 @@ func (w *WSClient) handleDesktopSync(payload []byte, cmd uint16, subCmd uint8) {
 	default:
 		// channel đầy — bỏ qua, không block WS read loop.
 	}
-	fmt.Printf("[zcloud] ws desktop-sync: cmd=%d sub=%d len=%d payload=%s\n",
-		cmd, subCmd, len(dec), truncateForLog(dec, 300))
+	slog.Debug("ws_desktop_sync", "cmd", cmd, "sub_cmd", subCmd, "len", len(dec), "payload", truncateForLog(dec, 300))
 }
 
 // ====================================
@@ -282,7 +282,7 @@ func (w *WSClient) readLoop() {
 			return
 		}
 
-		fmt.Printf("[zcloud] ws frame: len=%d first=%x\n", len(msg), msg[:min(8, len(msg))])
+		slog.Debug("ws_frame", "len", len(msg), "first", fmt.Sprintf("%x", msg[:min(8, len(msg))]))
 		w.handleFrame(msg)
 	}
 }
@@ -306,7 +306,7 @@ func (w *WSClient) handleReadError(err error) {
 	closeErr := &websocket.CloseError{}
 	if errors.As(err, &closeErr) {
 		ce := CloseEvent{Code: int(closeErr.Code), Reason: closeErr.Reason}
-		fmt.Printf("[zcloud] ws closed: code=%d reason=%q\n", ce.Code, ce.Reason)
+		slog.Info("ws_closed", "code", ce.Code, "reason", ce.Reason)
 		select {
 		case w.closeChan <- ce:
 		default:
@@ -318,7 +318,7 @@ func (w *WSClient) handleReadError(err error) {
 		return
 	}
 
-	fmt.Printf("[zcloud] ws read error: %v\n", err)
+	slog.Error("ws_read_error", "error", err)
 	select {
 	case w.errChan <- fmt.Errorf("ws read: %w", err):
 	default:
@@ -344,7 +344,7 @@ func (w *WSClient) handleFrame(data []byte) {
 			ErrorMsg  string `json:"error_message"`
 		}
 		if err := json.Unmarshal(payload, &keyMsg); err == nil && keyMsg.Key != "" {
-			fmt.Printf("[zcloud] ws auth key received: keylen=%d transport=%q\n", len(keyMsg.Key), w.session.Transport)
+			slog.Debug("ws_auth_key_received", "key_len", len(keyMsg.Key), "transport", w.session.Transport)
 			w.mu.Lock()
 			decoded, decErr := base64.StdEncoding.DecodeString(keyMsg.Key)
 			if decErr == nil && len(decoded) > 0 {
@@ -371,7 +371,7 @@ func (w *WSClient) handleFrame(data []byte) {
 			w.mu.Lock()
 			w.authErr = fmt.Errorf("ws auth error %d: %s", keyMsg.ErrorCode, keyMsg.ErrorMsg)
 			w.mu.Unlock()
-			fmt.Printf("[zcloud] ws auth error: code=%d msg=%q\n", keyMsg.ErrorCode, keyMsg.ErrorMsg)
+			slog.Error("ws_auth_error", "error_code", keyMsg.ErrorCode, "error_message", keyMsg.ErrorMsg)
 			_ = w.conn.CloseNow()
 			return
 		}
@@ -435,7 +435,7 @@ func (w *WSClient) handleFrame(data []byte) {
 
 	case cmd == 3000:
 		// Duplicate connection - close ngay để listener không tự reconnect.
-		fmt.Printf("[zcloud] ws duplicate connection received\n")
+		slog.Warn("ws_duplicate_connection")
 		select {
 		case w.errChan <- fmt.Errorf("ws: duplicate connection detected"):
 		default:
@@ -491,7 +491,7 @@ func (w *WSClient) decryptPayload(payload []byte) []byte {
 		if dec, err := DecodeWSEvent(payload, ck); err == nil && len(dec) > 0 {
 			return dec
 		} else if err != nil {
-			fmt.Printf("[zcloud] ws: decrypt err=%v (keylen=%d)\n", err, len(ck))
+			slog.Error("ws_decrypt_failed", "error", err, "key_len", len(ck))
 		}
 	} else {
 	}
