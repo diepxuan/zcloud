@@ -596,13 +596,14 @@ marker qua `/api/messages/send` → `msgId=8389425368749` (msgId Zalo thật); D
 đúng 1 dòng/account, 0 cặp trùng mới. **Còn tồn (cần Sếp duyệt):** dọn 62 cặp
 bản ghi trùng cũ trong prod DB.
 
-## 5.24. Mock test `GetMyProfile` + `GetFriends` (T3) — 19/10/2026
+## 5.24. Mock test `GetMyProfile` + `GetFriends` (T3) ✅ Done (19/10/2026)
 
 Chi tiết: [tasks/29-mock-test-profile-friends.md](tasks/29-mock-test-profile-friends.md).
 
 Mở rộng mock harness (task 27) để phủ `GetMyProfile` (POST getprofiles/v2) và
 `GetFriends` (GET getfriends) — nhánh success/flat-fallback/error/html. Chỉ
-thêm `_test.go`, không đổi production.
+thêm `_test.go`, không đổi production. Kết quả: 7 test mới PASS,
+`go test ./internal/core/...` PASS 0 fail, coverage core 33.4% → 37.6%.
 
 ## 6. References
 

@@ -2,7 +2,7 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5 (T3) + §5.24
-- **Trạng thái:** 🟡 In Progress
+- **Trạng thái:** ✅ Done (19/10/2026)
 - **Tiền đề:** [27-chat-client-mock-test.md](27-chat-client-mock-test.md) (đã có
   mock harness `newChatMockSession` trong `internal/core/chat_mock_test.go`)
 
@@ -70,3 +70,11 @@ Thêm vào `internal/core/chat_mock_test.go` (tái dùng harness sẵn có):
 
 - Thấp — chỉ test. Chú ý: GetFriends dùng GET với `params` ở **query string**,
   GetMyProfile dùng POST với `params` ở **form body** — assert đúng kiểu.
+
+## Kết quả (19/10/2026)
+
+- Chỉ sửa `internal/core/chat_mock_test.go` (thêm `newProfileMockSession` + 7
+  test). KHÔNG đổi production.
+- Verify: `go test ./internal/core/...` **PASS 0 fail** (7 test mới PASS);
+  `go build`/`go vet` sạch; `gofmt -l` trên file test = clean; coverage core
+  **33.4% → 37.6%**.
