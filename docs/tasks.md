@@ -576,6 +576,20 @@ build request + mã hoá AES-CBC + parse/decrypt response; nhánh success, serve
 error, HTML (rate-limit), JSON hỏng, chưa đăng nhập. Chỉ thêm `_test.go`,
 không đổi production. Lấp gap T3 (integration test `chat.go`).
 
+## 5.23. Bug `SendMessage` bỏ msgId thật (18/10/2026)
+
+Chi tiết: [tasks/28-fix-sendmessage-msgid.md](tasks/28-fix-sendmessage-msgid.md).
+
+Phát hiện qua mock test (task 27): `internal/core/chat.go` `SendMessage` parse
+`sendResp.Data` sai → `msgId` thật bị bỏ, `Message.ID` rơi về `clientId`
+(timestamp tự sinh). Nguyên nhân: guard `json.Unmarshal(rawData,&dataMap)`
+luôn fail khi `data` là string (đúng format thật theo zca-js/za-go). Hệ quả
+prod: **62 tin outbound** của account Sep bị lưu 2 dòng (1 id timestamp, 1 id
+msgId thật từ WS echo). Fix: giải mã string → đọc `msgId` từ top-level hoặc
+envelope `data.msgId`, giữ fallback `clientId`. **Lưu ý:** verify T8 (§5.4)
+ngày 11/09 báo `msgId 1789096483961` — thực ra đó là `clientId`, không phải
+msgId Zalo.
+
 ## 6. References
 
 | Lib | Lang | Stars | Path |
