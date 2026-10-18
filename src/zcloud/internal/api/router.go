@@ -24,6 +24,14 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	// ====================================
 	mux.HandleFunc("GET /", s.HandleLoginPage)
 	mux.HandleFunc("GET /favicon.svg", s.HandleFavicon)
+	mux.HandleFunc("GET /static/{file}", s.HandleStatic)
+	// Mọi path khác dưới /static trả 404 thay vì rơi vào catch-all GET /.
+	mux.HandleFunc("GET /static", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc("GET /static/", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
 	mux.HandleFunc("GET /chat", s.HandleChatPage)
 
 	// ====================================
@@ -63,6 +71,34 @@ func SetupRouter(mux *http.ServeMux, s *Server, db *store.Store) {
 	// ====================================
 	mux.Handle("GET /media/", http.StripPrefix("/media/", http.HandlerFunc(s.HandleMedia)))
 	mux.HandleFunc("POST /api/media/download", s.HandleMediaDownload)
+}
+
+// HandleStatic phục vụ asset tĩnh (CSS/JS) từ embed.FS trong web/.
+// Whitelist cứng — chỉ cho phép các file đã biết, tránh lộ file khác.
+func (s *Server) HandleStatic(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("file")
+	switch name {
+	case "chat.css", "chat.js":
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	data, err := webFS.ReadFile("web/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	ct := "application/octet-stream"
+	switch filepath.Ext(name) {
+	case ".css":
+		ct = "text/css; charset=utf-8"
+	case ".js":
+		ct = "application/javascript; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", ct)
+	// no-store: tránh asset cũ bị cache sau deploy qua watch mode + atomic rename.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(data)
 }
 
 func (s *Server) HandleMediaJobs(w http.ResponseWriter, r *http.Request) {

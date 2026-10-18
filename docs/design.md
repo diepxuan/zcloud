@@ -52,7 +52,7 @@ src/zcloud/
 │   │   ├── router.go      # SetupRouter + media download
 │   │   ├── ws.go          # Browser WS + Zalo listener nền
 │   │   ├── embed.go       # //go:embed web/*
-│   │   └── web/           # login.html, chat.html, favicon.svg
+│   │   └── web/           # login.html, chat.html, chat.css, chat.js, favicon.svg, logo.svg
 │   ├── store/             # DB layer (Postgres only)
 │   │   ├── store.go       # Struct Store + NewPostgres
 │   │   ├── queries.go     # Postgres CRUD queries (constants only)
