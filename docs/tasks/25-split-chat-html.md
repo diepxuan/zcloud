@@ -2,7 +2,7 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.19 (H1)
-- **Trạng thái:** 🟡 In Progress
+- **Trạng thái:** ✅ Done (18/10/2026)
 - **Phụ thuộc:** [14-split-webui.md](14-split-webui.md) (đã tách UI ra
   file tĩnh `internal/api/web/`), `docs/design.md` Phần B (design system)
 

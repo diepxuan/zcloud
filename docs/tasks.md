@@ -532,13 +532,17 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 - CLI `internal/servcmd/servcmd.go` giữ `fmt.Printf` (output cho user, không phải log runtime).
 - Verify: build pass; `go vet ./...` sạch; test pass (chỉ còn 1 fail pre-existing `TestEncodeDecodeAESGCM_RoundTrip/mode_2` thuộc core). Live: `journalctl -u zcloud -o cat` ra `msg=http_request method=GET path=/api/health duration=...`.
 
-### H1 — Tách `internal/api/web/chat.html` module hóa 🟡 In Progress
+### H1 — Tách `internal/api/web/chat.html` module hóa ✅ done (task 25)
 
-- Kế hoạch chi tiết: [tasks/25-split-chat-html.md](tasks/25-split-chat-html.md).
-- Phạm vi chốt (em tự quyết theo hướng an toàn): tách `chat.html` (1671 dòng)
-  thành `web/chat.html` (markup) + `web/chat.css` (652 dòng CSS) +
-  `web/chat.js` (909 dòng JS), phục vụ qua route `GET /static/{file}`; giữ
-  nguyên hành vi. Không tách nhỏ JS thành nhiều module ở bước này.
+- Kế hoạch + kiểm chứng chi tiết: [tasks/25-split-chat-html.md](tasks/25-split-chat-html.md).
+- Kết quả: `chat.html` **1671 → 104 dòng** (chỉ còn markup shell). Tách ra
+  `web/chat.css` (650 dòng) + `web/chat.js` (907 dòng) — **byte-identical**
+  với khối gốc (verify bằng `diff`). Route mới `GET /static/{file}` (whitelist
+  `chat.css`/`chat.js`, content-type đúng, `Cache-Control: no-store`); mọi path
+  khác dưới `/static` trả 404.
+- Verify: `go build` + `go vet` sạch; `node --check chat.js` OK;
+  `go test -tags testdb ./internal/api/...` OK; `check-ui.sh` PASS 11/11
+  (`.cv=242`, `accounts=2`) trùng baseline. Đệ thực thi, em kiểm chứng độc lập.
 
 ## 5.20. Ops — Postgres cluster down sau reboot (17/10/2026)
 
