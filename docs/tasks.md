@@ -554,6 +554,17 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 
 **Cần làm (chờ Sếp duyệt)**: đảm bảo cluster auto-start bền vững (`systemctl enable postgresql@18-main` trên .105) + cân nhắc monitor/healthcheck để phát hiện sớm thay vì chỉ nhìn meta-service.
 
+## 5.21. Test hardening WS AES-GCM (T1) — fix test đỏ (18/10/2026)
+
+Chi tiết: [tasks/26-ws-gcm-test-hardening.md](tasks/26-ws-gcm-test-hardening.md).
+
+`go test ./internal/core/...` đang FAIL ở `TestEncodeDecodeAESGCM_RoundTrip/mode_2`.
+Root cause: **test sai** — gọi thẳng primitive `DecodeAESGCM` cho mode 2 (gzip),
+trong khi gunzip nằm ở tầng `DecodeWSEvent` (`gunzipIfNeeded`). Production path
+đã đúng. Task: sửa test + bổ sung round-trip end-to-end qua `DecodeWSEvent` +
+test biên `gunzipIfNeeded`/`decodeWSBase64`/`decryptAESGCMWithKey`. Mục tiêu:
+`go test ./internal/core/...` xanh hoàn toàn.
+
 ## 6. References
 
 | Lib | Lang | Stars | Path |
