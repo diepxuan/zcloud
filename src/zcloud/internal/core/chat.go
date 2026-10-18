@@ -130,19 +130,33 @@ func (c *Client) SendMessage(ctx context.Context, to, content string, msgType Ms
 			string(body[:min(300, len(body))]))
 	}
 	if sendResp.Data != nil {
-		var dataMap struct {
-			MsgID    string `json:"msgId"`
-			CliMsgID string `json:"cliMsgId"`
-		}
 		rawData := *sendResp.Data
+
+		// data có thể là object thô hoặc string base64 (AES-CBC) đã mã hoá.
+		decoded := rawData
 		var dataStr string
-		if json.Unmarshal(rawData, &dataStr) == nil {
+		if json.Unmarshal(rawData, &dataStr) == nil && dataStr != "" {
 			if dec, err := DecodeAESCBC(rawKey, dataStr); err == nil {
-				_ = json.Unmarshal(dec, &dataMap)
+				decoded = dec
 			}
 		}
-		if err := json.Unmarshal(rawData, &dataMap); err == nil && dataMap.MsgID != "" {
-			clientID = dataMap.MsgID
+
+		// Sau giải mã có thể là {msgId} top-level hoặc {error_code,data:{msgId}}.
+		var outer struct {
+			MsgID string           `json:"msgId"`
+			Data  *json.RawMessage `json:"data"`
+		}
+		if json.Unmarshal(decoded, &outer) == nil {
+			if outer.MsgID != "" {
+				clientID = outer.MsgID
+			} else if outer.Data != nil {
+				var inner struct {
+					MsgID string `json:"msgId"`
+				}
+				if json.Unmarshal(*outer.Data, &inner) == nil && inner.MsgID != "" {
+					clientID = inner.MsgID
+				}
+			}
 		}
 	}
 	return &Message{
