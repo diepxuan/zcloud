@@ -309,6 +309,10 @@ func gzipBytes(data []byte) ([]byte, error) {
 
 // TestEncodeDecodeAESGCM_RoundTrip kiểm tra encode + decode round-trip.
 // Layout: [iv 16][aad 16][ciphertext+tag].
+//
+// Lưu ý contract: DecodeAESGCM là primitive thô, KHÔNG gunzip. Với mode 2
+// (WSEncryptAESGCM) EncodeAESGCM gzip trước khi mã hoá nên DecodeAESGCM trả
+// về bytes gzip; chỉ sau gunzipIfNeeded (= tầng DecodeWSEvent) mới ra plaintext.
 func TestEncodeDecodeAESGCM_RoundTrip(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef") // 32 bytes = AES-256
 	plaintext := []byte(`{"cmd":501,"data":{"msg":"hello world from PC"}}`)
@@ -320,7 +324,6 @@ func TestEncodeDecodeAESGCM_RoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("encode: %v", err)
 			}
-			// Layout phải đúng: 16 (iv) + 16 (aad) + len(plaintext) + 16 (tag).
 			// Layout: 16 (iv) + 16 (aad) + ct + 16 (tag).
 			// Mode 2 gzip nên ciphertext length khác len(plaintext).
 			if len(ct) < 32+16 {
@@ -330,13 +333,36 @@ func TestEncodeDecodeAESGCM_RoundTrip(t *testing.T) {
 			if !bytes.Equal(ct[16:32], aad) {
 				t.Errorf("aad mismatch")
 			}
-			// Decode round-trip.
+
 			dec, err := DecodeAESGCM(key, ct[:16], ct[16:32], ct[32:])
 			if err != nil {
 				t.Fatalf("decode: %v", err)
 			}
-			if !bytes.Equal(dec, plaintext) {
-				t.Errorf("plaintext mismatch: want %q, got %q", plaintext, dec)
+
+			switch mode {
+			case WSEncryptAESGCMRaw:
+				// Mode 3 (raw): primitive thô trả về đúng plaintext.
+				if !bytes.Equal(dec, plaintext) {
+					t.Errorf("mode 3 decode mismatch: want %q, got %q", plaintext, dec)
+				}
+			case WSEncryptAESGCM:
+				// Mode 2 (gzip): DecodeAESGCM trả về bytes gzip, không phải plaintext.
+				wantGz, gzErr := gzipBytes(plaintext)
+				if gzErr != nil {
+					t.Fatalf("gzip: %v", gzErr)
+				}
+				if !bytes.Equal(dec, wantGz) {
+					t.Errorf("mode 2 decode mismatch: want gzip(%q) (%d bytes), got %q (%d bytes)",
+						plaintext, len(wantGz), dec, len(dec))
+				}
+				// Sau gunzipIfNeeded (tầng DecodeWSEvent) mới ra plaintext.
+				unzipped, gzErr := gunzipIfNeeded(dec)
+				if gzErr != nil {
+					t.Fatalf("gunzipIfNeeded: %v", gzErr)
+				}
+				if !bytes.Equal(unzipped, plaintext) {
+					t.Errorf("mode 2 gunzip mismatch: want %q, got %q", plaintext, unzipped)
+				}
 			}
 		})
 	}
