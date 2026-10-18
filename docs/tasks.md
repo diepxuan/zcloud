@@ -524,11 +524,11 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 - `internal/store/store_postgres.go` đăng ký + apply version theo thứ tự.
 - Verify: build + test pass; service restart; bảng `schema_migrations` có trong DB.
 
-### H5 — Structured logging (slog, key=value) 🟡 H5.1 + H5.2 xong, còn H5.3
+### H5 — Structured logging (slog, key=value) ✅ done
 
 - **H5.1** (commit `d28799c`): thêm `internal/logging` — wrapper `*slog.Logger` dùng `log/slog` `TextHandler` (key=value), giữ `Printf/Print/Println` compat trong lúc chuyển dần. Wire vào `internal/api` + `internal/server`.
 - **H5.2**: migrate nốt runtime `internal/api` + `internal/server` + `internal/servcmd/watch` sang `logger.Info/Warn/Error("event_name", "key", val)`. Bỏ `Fatalf` trong `server.Run` → `Error` + `return err` (shutdown sạch). Cancel funcs chuyển thành `defer` → `go vet` sạch (hết cảnh báo context-leak).
-- **H5.3** (còn lại): `internal/core` vẫn dùng `fmt.Printf` (~25 chỗ: `websocket.go`, `chat.go`, `websocket_events.go`, `auth.go`). Cần inject logger vào `core.Client` → đổi signature nhiều callsite, tách riêng.
+- **H5.3** (commit `8054073`): migrate nốt `internal/core` (`websocket.go`, `websocket_events.go`, `chat.go`, `auth.go`, `syncv2.go`) từ `fmt.Printf`/`fmt.Fprintf(os.Stderr,...)` sang `log/slog` key=value (`slog.Info/Warn/Error/Debug("event_name", "key", val)`). Dùng package-level `slog` thay vì inject logger vào `core.Client` → không phải đổi signature callsite. `rg "fmt.Print" internal/core` = 0. Verify: build pass, `go vet ./...` sạch, `go test ./internal/...` pass (chỉ còn 1 fail pre-existing `TestEncodeDecodeAESGCM_RoundTrip/mode_2`).
 - CLI `internal/servcmd/servcmd.go` giữ `fmt.Printf` (output cho user, không phải log runtime).
 - Verify: build pass; `go vet ./...` sạch; test pass (chỉ còn 1 fail pre-existing `TestEncodeDecodeAESGCM_RoundTrip/mode_2` thuộc core). Live: `journalctl -u zcloud -o cat` ra `msg=http_request method=GET path=/api/health duration=...`.
 
