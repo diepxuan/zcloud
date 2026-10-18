@@ -2,7 +2,8 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5 (tồn đọng T3) + §5.22
-- **Trạng thái:** 🟡 In Progress
+- **Trạng thái:** ✅ Done (18/10/2026) — mock test tạo xong; phát hiện bug thật
+  trong `SendMessage` → fix ở [28-fix-sendmessage-msgid.md](28-fix-sendmessage-msgid.md)
 - **Phụ thuộc:** `internal/core/chat.go`, `internal/core/encrypt.go`
 
 ## Bối cảnh

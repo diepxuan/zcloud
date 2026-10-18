@@ -2,7 +2,7 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.23
-- **Trạng thái:** 🟡 In Progress
+- **Trạng thái:** ✅ Done (18/10/2026)
 - **Nguồn:** phát hiện qua [27-chat-client-mock-test.md](27-chat-client-mock-test.md)
 
 ## Bối cảnh (bug thật — đã kiểm chứng)
@@ -130,3 +130,16 @@ if sendResp.Data != nil {
 - Thay đổi đường gửi tin đang chạy prod. Giảm thiểu: giữ fallback `clientId`;
   payload lạ → không lấy được msgId → hành vi y như cũ. Verify bằng unit test +
   live send (marker) ở thread Trần Ngọc Đức xác nhận không còn lưu trùng.
+
+## Kết quả (18/10/2026)
+
+- Sửa `internal/core/chat.go` (khối parse `sendResp.Data`) + `chat_mock_test.go`
+  (`TestSendMessage_RoundTrip` dùng envelope thật + thêm
+  `TestSendMessage_DataTopLevelMsgID`).
+- `go test ./internal/core/...` **PASS 0 fail**; `go test ./internal/...` PASS;
+  `go build`/`go vet` sạch; coverage core 33.2% → 33.4%.
+- **Live verify (prod)**: gửi `[T28-1792339859] ...` qua `/api/messages/send` →
+  response `msgId = 8389425368749` (msgId Zalo thật, KHÔNG còn là timestamp).
+  DB: đúng **1 dòng/account** cho msgId đó; **0 cặp trùng mới** trong 30 phút.
+  Trước fix: 62 tin outbound bị lưu 2 dòng (timestamp + msgId thật).
+- Còn tồn (cần Sếp duyệt): dọn 62 cặp bản ghi trùng cũ trong prod DB.

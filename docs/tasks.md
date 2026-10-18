@@ -567,7 +567,7 @@ trong khi gunzip nằm ở tầng `DecodeWSEvent` (`gunzipIfNeeded`). Production
 không đổi production.** `go test ./internal/core/...` nay **PASS 0 fail**;
 coverage 31.0% → 31.2%.
 
-## 5.22. Integration test `chat.go` client với mock Zalo server (T3) — 18/10/2026
+## 5.22. Integration test `chat.go` client với mock Zalo server (T3) ✅ Done (18/10/2026)
 
 Chi tiết: [tasks/27-chat-client-mock-test.md](tasks/27-chat-client-mock-test.md).
 
@@ -576,7 +576,7 @@ build request + mã hoá AES-CBC + parse/decrypt response; nhánh success, serve
 error, HTML (rate-limit), JSON hỏng, chưa đăng nhập. Chỉ thêm `_test.go`,
 không đổi production. Lấp gap T3 (integration test `chat.go`).
 
-## 5.23. Bug `SendMessage` bỏ msgId thật (18/10/2026)
+## 5.23. Bug `SendMessage` bỏ msgId thật ✅ Fixed + live-verified (18/10/2026)
 
 Chi tiết: [tasks/28-fix-sendmessage-msgid.md](tasks/28-fix-sendmessage-msgid.md).
 
@@ -589,6 +589,12 @@ msgId thật từ WS echo). Fix: giải mã string → đọc `msgId` từ top-l
 envelope `data.msgId`, giữ fallback `clientId`. **Lưu ý:** verify T8 (§5.4)
 ngày 11/09 báo `msgId 1789096483961` — thực ra đó là `clientId`, không phải
 msgId Zalo.
+
+**Fix + verify (18/10):** sửa `internal/core/chat.go` + `chat_mock_test.go`.
+`go test ./internal/core/...` PASS 0 fail; coverage 33.2% → 33.4%. Live: gửi
+marker qua `/api/messages/send` → `msgId=8389425368749` (msgId Zalo thật); DB
+đúng 1 dòng/account, 0 cặp trùng mới. **Còn tồn (cần Sếp duyệt):** dọn 62 cặp
+bản ghi trùng cũ trong prod DB.
 
 ## 6. References
 
