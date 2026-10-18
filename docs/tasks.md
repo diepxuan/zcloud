@@ -532,10 +532,13 @@ Sep (acc ↔ za mapping OK). **Chờ Sếp login lại để verify end-to-end.*
 - CLI `internal/servcmd/servcmd.go` giữ `fmt.Printf` (output cho user, không phải log runtime).
 - Verify: build pass; `go vet ./...` sạch; test pass (chỉ còn 1 fail pre-existing `TestEncodeDecodeAESGCM_RoundTrip/mode_2` thuộc core). Live: `journalctl -u zcloud -o cat` ra `msg=http_request method=GET path=/api/health duration=...`.
 
-### H1 — Tách `internal/api/web/chat.html` module hóa 🟡 Pending
+### H1 — Tách `internal/api/web/chat.html` module hóa 🟡 In Progress
 
-- Mục tiêu: tách file HTML tĩnh lớn thành module (JS/CSS) để dễ bảo trì.
-- Chưa bắt đầu — chờ Sếp chốt phạm vi tách (theo tab? theo component?).
+- Kế hoạch chi tiết: [tasks/25-split-chat-html.md](tasks/25-split-chat-html.md).
+- Phạm vi chốt (em tự quyết theo hướng an toàn): tách `chat.html` (1671 dòng)
+  thành `web/chat.html` (markup) + `web/chat.css` (652 dòng CSS) +
+  `web/chat.js` (909 dòng JS), phục vụ qua route `GET /static/{file}`; giữ
+  nguyên hành vi. Không tách nhỏ JS thành nhiều module ở bước này.
 
 ## 5.20. Ops — Postgres cluster down sau reboot (17/10/2026)
 
