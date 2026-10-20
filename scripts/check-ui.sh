@@ -147,6 +147,13 @@ await check('createQR function exists', 'typeof createQR === "function"', true);
 // Test renderAccounts() neu co accounts
 await check('renderAccounts function exists', 'typeof renderAccounts === "function"', true);
 
+// T30: realtime WebSocket manager + dispatch.
+await check('typeof wsStates', 'typeof wsStates', 'object');
+await check('typeof syncWS', 'typeof syncWS', 'function');
+await check('typeof _onIncomingMessage', 'typeof _onIncomingMessage', 'function');
+// Dispatch new_message cho thread hiện tại → render đúng 1 bubble, lần 2 dedupe.
+await check('ws dispatch + dedupe', '(function(){try{cc="conv-test-30";ccAccountId="acc-test-30";ccAccountMe="me-uid-30";document.getElementById("ml").innerHTML="";var ev={id:"m-30",convId:"conv-test-30",fromId:"other-uid",fromName:"Ai do",content:"xin chao",timestamp:Date.now(),type:0};_onIncomingMessage("acc-test-30",ev);var after=document.querySelectorAll(\'#ml .msg[data-msg="m-30"]\').length;_onIncomingMessage("acc-test-30",ev);var dup=document.querySelectorAll(\'#ml .msg[data-msg="m-30"]\').length;return after===1&&dup===1;}catch(e){return "ERR:"+e.message;}})()', true);
+
 ws.close();
 NODEEOF
 

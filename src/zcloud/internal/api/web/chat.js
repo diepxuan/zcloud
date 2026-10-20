@@ -1,10 +1,12 @@
-var cu=0,ld=false,pt=null,cvCache={};
+var cc='',cu=0,ld=false,pt=null,cvCache={};
 // me: userId (uid thuần) của account đang chọn, dùng để so sánh m.fromId.
 var ccAccountId='';var ccAccountMe='';var ccOtherUid='';
-// Browser WS đã bỏ — backend tự broadcast new_message qua API endpoint
-// (TODO: thay bằng SSE hoặc polling nếu cần realtime). Composer tự
-// load messages khi gửi xong.
-var wsr=null;
+// Browser WS manager (T30): mở 1 WebSocket /ws?accountId=... cho mỗi account
+// đang enabled → nhận realtime new_message/old_message/media_downloaded…
+// wsStates[accountId] = {sock, timer, attempt, closed}.
+var wsStates={};
+// unreadConvs['convId|accountId'] = {count, preview} cho conv chưa mở.
+var unreadConvs={};
 // healthVersionPoll: poll /api/health mỗi 30s. Nếu version khác version lưu
 // trong window → location.reload() để pick up code mới (CSS/HTML/JS binary
 // mới đã được deploy qua watch mode + atomic rename). Lưu version ban đầu ở
@@ -23,7 +25,7 @@ function _checkHealthAndMaybeReload(){
 	}).catch(function(){});
 }
 setInterval(_checkHealthAndMaybeReload,30000);
-document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();_checkHealthAndMaybeReload();});
+document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();syncWS();_checkHealthAndMaybeReload();});
 // accounts: cache list account cho tab Quan ly. Reload khi can.
 var accounts=[];
 // qrPollTimer: interval id cua QR poll loop.
@@ -33,6 +35,166 @@ var qrToken='';
 
 // loadAccounts lay danh sach account tu server (kem status listening/hasActiveSession).
 async function loadAccounts(){try{var r=await fetch('/api/account/list');var d=await r.json();if(d.ok&&d.data){accounts=d.data;renderAccounts();renderStats();renderHeaderAvatars();return true}return false}catch(e){return false}}
+
+// ====================================
+// Realtime WebSocket (T30)
+// ====================================
+// Backend /ws?accountId=... room theo accountId; broadcast new_message,
+// old_message, media_downloaded, typing, reaction, seen, delivered.
+// Mở 1 socket/account enabled, reconnect backoff khi rớt (server restart...).
+function _wsURL(accountId){
+	var proto=(location.protocol==='https:')?'wss:':'ws:';
+	return proto+'//'+location.host+'/ws?accountId='+encodeURIComponent(accountId);
+}
+// syncWS: mở socket cho account enabled, đóng socket của account đã tắt/xoá.
+function syncWS(){
+	if(typeof accounts==='undefined'||!accounts)return;
+	var want={};
+	accounts.forEach(function(a){if(a&&a.enabled&&a.id)want[a.id]=true;});
+	Object.keys(want).forEach(function(id){_wsOpen(id);});
+	Object.keys(wsStates).forEach(function(id){if(!want[id])_wsClose(id);});
+}
+function _wsOpen(accountId){
+	if(!accountId)return;
+	if(typeof WebSocket==='undefined')return;
+	var st=wsStates[accountId];
+	if(!st){st=wsStates[accountId]={sock:null,timer:null,attempt:0,closed:false};}
+	if(st.sock&&(st.sock.readyState===0||st.sock.readyState===1))return; // CONNECTING/OPEN
+	if(st.timer)return;
+	st.closed=false;
+	var sock;
+	try{sock=new WebSocket(_wsURL(accountId));}catch(e){_wsScheduleReconnect(accountId);return;}
+	st.sock=sock;
+	sock.onopen=function(){st.attempt=0;};
+	sock.onmessage=function(ev){
+		var m;try{m=JSON.parse(ev.data);}catch(e){return;}
+		_wsDispatch(accountId,m);
+	};
+	sock.onerror=function(){try{sock.close();}catch(e){}};
+	sock.onclose=function(){st.sock=null;if(!st.closed)_wsScheduleReconnect(accountId);};
+}
+function _wsScheduleReconnect(accountId){
+	var st=wsStates[accountId];if(!st||st.closed||st.timer)return;
+	// Chỉ reconnect khi account vẫn còn và đang enabled — tránh loop vô ích.
+	var acc=accounts.find(function(a){return a.id===accountId;});
+	if(!acc||!acc.enabled)return;
+	if(st.attempt<6)st.attempt++;
+	var delay=Math.min(30000,1000*Math.pow(2,st.attempt));
+	st.timer=setTimeout(function(){st.timer=null;_wsOpen(accountId);},delay);
+}
+function _wsClose(accountId){
+	var st=wsStates[accountId];if(!st)return;
+	st.closed=true;
+	if(st.timer){clearTimeout(st.timer);st.timer=null;}
+	if(st.sock){try{st.sock.close();}catch(e){}st.sock=null;}
+	delete wsStates[accountId];
+}
+// _wsDispatch route event realtime. Mọi nhánh bọc try/catch để 1 event lỗi
+// không làm chết socket.
+function _wsDispatch(accountId,m){
+	if(!m||!m.type)return;
+	var d=m.data||{};
+	try{
+		switch(m.type){
+		case 'new_message':
+		case 'old_message':
+			_onIncomingMessage(accountId,d);
+			break;
+		case 'media_downloaded':
+			applyMediaDownloaded(d,cc);
+			break;
+		case 'upload_attachment':
+		case 'typing':
+		case 'reaction':
+		case 'seen':
+		case 'delivered':
+		case 'desktop_sync':
+			// Chưa cần xử lý UI — bỏ qua an toàn.
+			break;
+		}
+	}catch(e){console.log('[zcloud] ws dispatch err',m.type,e);}
+}
+// _convKey khoá dedupe unread theo (convId, accountId) vì 2 account có thể
+// trùng convId (vd self-thread).
+function _convKey(convId,accountId){return convId+'|'+(accountId||'');}
+function _hasMsgNode(id){
+	if(!id)return false;
+	var ml=document.getElementById('ml');
+	return !!(ml&&ml.querySelector('.msg[data-msg="'+cssEsc(id)+'"]'));
+}
+// _nearBottom: user đang ở gần cuối thread → auto-scroll tin mới.
+function _nearBottom(ml){
+	if(!ml)return true;
+	return (ml.scrollHeight-ml.scrollTop-ml.clientHeight)<120;
+}
+// appendMessage chèn 1 bubble realtime vào thread hiện tại. Dedupe theo id,
+// giữ vị trí scroll nếu user đang đọc tin cũ, auto-scroll nếu đang ở cuối.
+function appendMessage(d,accountId){
+	var ml=document.getElementById('ml');if(!ml)return;
+	if(_hasMsgNode(d.id))return;
+	var near=_nearBottom(ml);
+	var em=ml.querySelector('.em');if(em)em.remove();
+	ml.appendChild(renderMsg(d));
+	regroupMessages();
+	if(near)scrollLastMessage(ml,true);
+}
+// _adoptOutgoing: WS echo của tin mình vừa gửi có thể về TRƯỚC khi response
+// /api/messages/send trả msgId. Nếu có bubble optimistic (data-tmp) khớp nội
+// dung → gắn data-msg vào luôn thay vì thêm bubble mới (tránh trùng).
+function _adoptOutgoing(d){
+	var ml=document.getElementById('ml');if(!ml)return false;
+	// Chỉ adopt khi tin là do chính mình gửi (tránh nuốt tin của người khác
+	// trùng nội dung).
+	if(d.fromId&&ccAccountMe&&d.fromId!==ccAccountMe)return false;
+	// Tìm đúng bubble optimistic khớp nội dung (có thể có nhiều tin gửi dồn).
+	var nodes=ml.querySelectorAll('.msg[data-tmp]'),tmp=null;
+	for(var i=0;i<nodes.length;i++){
+		if(nodes[i].dataset.tmpContent===d.content){tmp=nodes[i];break;}
+	}
+	if(!tmp)return false;
+	tmp.dataset.msg=d.id;
+	tmp.dataset.from=d.fromId||'';
+	if(d.timestamp)tmp.dataset.ts=d.timestamp;
+	delete tmp.dataset.tmp;
+	delete tmp.dataset.tmpContent;
+	return true;
+}
+// _onIncomingMessage: new_message/old_message từ WS.
+//  - đúng conversation đang mở → chèn ngay (dedupe), cập nhật sidebar.
+//  - conversation khác → đánh dấu unread + debounce refresh sidebar.
+function _onIncomingMessage(accountId,d){
+	if(!d||!d.id||!d.convId)return;
+	var isCur=(cc&&d.convId===cc&&accountId===ccAccountId);
+	if(isCur){
+		if(_hasMsgNode(d.id))return;
+		if(_adoptOutgoing(d)){regroupMessages();_debounceSy();return;}
+		appendMessage(d,accountId);
+		_debounceSy();
+		return;
+	}
+	_markUnread(d.convId,accountId,d);
+	_debounceSy();
+}
+function _markUnread(convId,accountId,d){
+	var k=_convKey(convId,accountId);
+	var u=unreadConvs[k]||{count:0,preview:''};
+	u.count++;
+	if(d&&d.content)u.preview=d.content;
+	unreadConvs[k]=u;
+}
+// clearUnread: xoá badge khi user mở conversation.
+function clearUnread(convId,accountId){
+	var k=_convKey(convId,accountId);
+	if(unreadConvs[k])delete unreadConvs[k];
+	var ml=document.getElementById('cl');
+	if(ml){var row=ml.querySelector('.cv[data-id="'+cssEsc(convId)+'"][data-account-id="'+cssEsc(accountId)+'"]');if(row){row.classList.remove('unread');var b=row.querySelector('.cv-un');if(b)b.remove();}}
+}
+// _debounceSy: gộp nhiều event dồn dập thành 1 lần refresh sidebar.
+var _syTimer=null;
+function _debounceSy(){
+	if(_syTimer)return;
+	_syTimer=setTimeout(function(){_syTimer=null;sy();},600);
+}
 
 // renderAccounts ve lai danh sach account theo cache + filter search.
 function renderAccounts(){
@@ -193,6 +355,7 @@ async function toggleAccountEnabled(id,enabled){
 	await loadAccounts();
 	renderAccounts();renderStats();
 	sy();loadFriends();
+	syncWS();
 }
 
 // toggleAllEnabled bật/tắt tất cả cùng lúc.
@@ -214,6 +377,7 @@ async function toggleAllEnabled(){
 	await loadAccounts();
 	renderAccounts();renderStats();
 	sy();loadFriends();
+	syncWS();
 }
 
 // restartListener stop+start listener (fix khi WS bi loi, session con song).
@@ -733,15 +897,21 @@ async function sy(){
 	if(!allConvs.length){el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có hội thoại</div>');return;}
 	allConvs.forEach(function(c){
 		cvCache[c.id]={name:c.name,avatar:c.avatar};
-		var dv=document.createElement('div');dv.className='cv';dv.dataset.id=c.id;dv.dataset.accountId=c._accountId;
+		var isCur=(cc&&c.id===cc&&c._accountId===ccAccountId);
+		var un=unreadConvs[_convKey(c.id,c._accountId)];
+		var dv=document.createElement('div');
+		dv.className='cv'+(isCur?' on':'')+(un?' unread':'');
+		dv.dataset.id=c.id;dv.dataset.accountId=c._accountId;
 		var accLabel=enabled.length>1?'<div class="cv-acc">'+esc(c._accountLabel)+'</div>':'';
+		var unBadge=un?'<span class="cv-un" title="'+un.count+' tin chưa đọc">'+(un.count>9?'9+':un.count)+'</span>':'';
 		dv.innerHTML='<div class="cv-a"><img src="'+(c.avatar||'')+'" onerror="this.style.display=\'none\'"></div>'
 			+'<div class="cv-b">'
 			+'<div class="cv-n">'+(c.name||c.id)+'</div>'
 			+'<div class="cv-p">'+(esc(c.lastMsgContent||c.lastMsgId||''))+'</div>'
 			+accLabel
-			+'</div>';
-		dv.onclick=function(){var acc=accounts.find(function(a){return a.id===c._accountId;});sc(c.id,c._accountId,(acc&&acc.userId)||'',c.name,c.avatar);};
+			+'</div>'
+			+unBadge;
+		dv.onclick=function(){clearUnread(c.id,c._accountId);var acc=accounts.find(function(a){return a.id===c._accountId;});sc(c.id,c._accountId,(acc&&acc.userId)||'',c.name,c.avatar);};
 		el('cl').appendChild(dv);
 	});
 }
@@ -755,7 +925,7 @@ function scrollLastMessage(ml, smooth){
   var last=ml.lastElementChild;
   if(!last||last.classList.contains('lm-end')||last.id==='lm-btn'||last.id==='lm-load'){
     // Nếu element cuối là button/spinner/end marker, tìm .msg cuối.
-    var msgs=ms.querySelectorAll('.msg');
+    var msgs=ml.querySelectorAll('.msg');
     if(msgs.length===0) return;
     last=msgs[msgs.length-1];
   }
@@ -771,7 +941,8 @@ function scrollLastMessage(ml, smooth){
 
 
 function sc(id,accId,accMe,nm,av){cc=id;ccAccountId=accId;ccAccountMe=accMe;ccOtherUid='';cvCache[id]={name:nm,avatar:av};cu=0;cuEnd=false;
-document.querySelectorAll('.cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id)});
+clearUnread(id,accId);
+document.querySelectorAll('#cl .cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id&&(c.dataset.accountId||'')===accId)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ctt-id').textContent=id;document.getElementById('ia').classList.remove('hd');
 el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
 fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
@@ -868,19 +1039,40 @@ document.addEventListener('DOMContentLoaded',function(){
     if(ml.scrollTop<=80&&!ld&&!cuEnd&&cc){lm(false);}
   });
 });
-async function sm(){var inp=document.getElementById('mi');var c=inp.value.trim();if(!c||!cc)return;inp.value='';
-try{var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:cc,content:c})});var d=await r.json();
-if(d.ok){var ml=el('ml');var dv=document.createElement('div');dv.className='msg out';
-dv.dataset.from=ccAccountMe||'';
-dv.dataset.ts=Date.now();
-// Self-render không có id từ server (id đến sau qua broadcast). Để tránh
-// trùng dataset.msg khi broadcast về, KHÔNG set dataset.msg ở đây —
-// broadcast sẽ set hoặc replace.
-var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
-dv.innerHTML='<div class="av empty"></div><div class="bubble"><div class="nm">Bạn</div><div>'+esc(c)+'</div><div class="tm">'+ts+'</div></div>';
-ml.appendChild(dv);
-regroupMessages();
-scrollLastMessage(ml,dv,false);}}catch(e){}}
+async function sm(){
+	var inp=document.getElementById('mi');if(!inp)return;
+	var c=inp.value.trim();if(!c||!cc)return;inp.value='';
+	var sendConv=cc,sendAcc=ccAccountId;
+	var ml=el('ml');
+	var em=ml.querySelector('.em');if(em)em.remove();
+	var dv=document.createElement('div');dv.className='msg out';
+	// data-tmp: đánh dấu bubble optimistic đang chờ msgId. WS echo có thể về
+	// trước response /api/messages/send → _adoptOutgoing() gắn data-msg luôn
+	// thay vì thêm bubble thứ hai.
+	dv.dataset.tmp='t'+Date.now()+Math.random().toString(36).slice(2,7);
+	dv.dataset.tmpContent=c;
+	dv.dataset.from=ccAccountMe||'';
+	dv.dataset.ts=Date.now();
+	var t=new Date();var ts=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+	dv.innerHTML='<div class="av empty"></div><div class="bubble"><div class="nm">Bạn</div><div>'+esc(c)+'</div><div class="tm">'+ts+'</div></div>';
+	ml.appendChild(dv);
+	regroupMessages();
+	scrollLastMessage(ml,true);
+	try{
+		var r=await fetch('/api/messages/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:sendConv,content:c,accountId:sendAcc||undefined})});
+		var d=await r.json();
+		if(d.ok&&d.data&&d.data.msgId){
+			// WS echo chưa adopt → gắn data-msg từ response.
+			if(dv.dataset.tmp){delete dv.dataset.tmp;delete dv.dataset.tmpContent;dv.dataset.msg=d.data.msgId;if(d.data.timestamp)dv.dataset.ts=d.data.timestamp;regroupMessages();}
+		}else{
+			if(dv.parentNode)dv.remove();
+			alert('Gửi thất bại: '+((d&&d.error)||r.statusText));
+		}
+	}catch(e){
+		if(dv.parentNode)dv.remove();
+		alert('Gửi thất bại: '+e);
+	}
+}
 // xd xoá toàn bộ user Zalo khỏi zcloud (T24.3 — cascade: accounts +
 // sessions + messages + conversations + media + contacts + zalo_accounts).
 // Confirm 2 lần vì hành động không thể undo. Khác HandleLogout (chỉ xoá

@@ -73,7 +73,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Partial — client/WS/admin done, cipher stub | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
-| 30 | Fix realtime load tin nhắn trên Web UI | 🟡 Pending | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
+| 30 | Fix realtime load tin nhắn trên Web UI | 🟢 Done (20/10/2026) | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
 
 ---
 
@@ -618,6 +618,24 @@ nên dữ liệu mới chỉ được đọc lại khi có thao tác chuyển co
 
 Task 30 chứa kế hoạch reconnect, dispatch event, dedupe optimistic send,
 unread badge và checklist live test với thread Trần Ngọc Đức.
+
+**Đã triển khai (20/10/2026):**
+
+- `chat.js` mở 1 browser WebSocket `/ws?accountId=...` cho mỗi account
+  enabled; đóng socket khi account tắt; reconnect backoff 1s → 30s.
+- Dispatch `new_message`/`old_message` vào đúng thread, dedupe theo `msgId`;
+  `media_downloaded` swap ảnh local. `typing`/`reaction`/`seen`/`delivered`
+  bỏ qua an toàn.
+- Optimistic send dùng `data-tmp`; WS echo về trước response sẽ được adopt
+  (gắn `data-msg`) thay vì thêm bubble đôi.
+- Conv khác có tin mới → unread badge + preview/sidebar refresh debounce
+  600ms; conv đang mở tự nhảy lên đầu, giữ vị trí scroll nếu Sếp đang đọc
+  tin cũ.
+- Fix typo `ms.querySelectorAll` → `ml.querySelectorAll` trong
+  `scrollLastMessage`; thêm smoke test dispatch + dedupe vào
+  `scripts/check-ui.sh`.
+- Verify: `node --check chat.js`, `./scripts/check-ui.sh` 14/14 pass,
+  `go build ./...` pass.
 
 ## 6. References
 

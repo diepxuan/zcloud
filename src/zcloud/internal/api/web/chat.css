@@ -183,6 +183,14 @@ body{
 .cv-b{flex:1;min-width:0}
 .cv-n{font-size:var(--fz-md);font-weight:var(--fw-m);color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-p{font-size:var(--fz-xs);color:var(--c-text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Unread: preview đậm hơn + badge số tin chưa đọc (T30 realtime). */
+.cv.unread .cv-p{color:var(--c-text-2);font-weight:var(--fw-m)}
+.cv-un{
+  flex-shrink:0;min-width:20px;height:20px;padding:0 var(--s-1);
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--c-brand);color:var(--c-text-onbrand);
+  border-radius:var(--r-pill);font-size:var(--fz-xs);font-weight:var(--fw-b);
+}
 
 /* === Mgmt panel === */
 .mg-h{

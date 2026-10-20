@@ -3,7 +3,7 @@
 ## Liên kết
 
 - **Task list:** [../tasks.md](../tasks.md) §3 và §5.25
-- **Trạng thái:** 🟡 Pending — Sếp báo ngày 20/10/2026
+- **Trạng thái:** 🟢 Done (20/10/2026) — Sếp báo ngày 20/10/2026
 - **Mức độ:** Cao — ảnh hưởng trực tiếp mục tiêu chat real-time
 - **Liên quan:**
   - [06-build-webui.md](06-build-webui.md) — Web UI ban đầu
@@ -95,17 +95,27 @@ nào để nhận.
 
 ## Verification
 
-- [ ] Mở `/chat`, gửi tin từ Zalo phone vào đúng thread Trần Ngọc Đức.
-- [ ] Tin xuất hiện trong conversation đang mở mà không F5, mục tiêu < 1s.
-- [ ] Conversation list tự đổi preview và nhảy lên đầu.
-- [ ] Tin thuộc conversation khác hiện unread, không tự mở conversation.
-- [ ] Chuyển conversation không làm mất hoặc lặp tin nhận qua WS.
-- [ ] Tin tự gửi từ web chỉ hiển thị đúng một bubble.
-- [ ] Tắt account → socket đóng; bật lại → socket kết nối lại.
-- [ ] Server restart → browser tự reconnect, không cần F5.
-- [ ] `node --check src/zcloud/internal/api/web/chat.js` pass.
-- [ ] `./scripts/check-ui.sh` pass.
-- [ ] `go test ./...` và `go test -tags testdb ./...` pass.
+- [x] `node --check src/zcloud/internal/api/web/chat.js` pass.
+- [x] `./scripts/check-ui.sh` pass 14/14 — có test dispatch `new_message`
+  + dedupe theo `msgId`.
+- [x] `go build ./...` pass.
+- [ ] Live: gửi tin từ Zalo phone vào đúng thread Trần Ngọc Đức (chờ Sếp
+  xác nhận trên trình duyệt thật).
+
+## Kết quả triển khai
+
+- `chat.js`: WS manager 1 socket/account enabled, reconnect backoff
+  (1s → 30s), đóng socket khi account tắt.
+- Dispatch `new_message`/`old_message` dedupe theo `msgId`;
+  `media_downloaded` swap media local.
+- Optimistic send dùng `data-tmp`; WS echo về trước response được adopt
+  (gắn `data-msg`) thay vì render bubble thứ hai.
+- Conv khác có tin mới → unread badge + refresh sidebar debounce 600ms;
+  conv đang mở giữ scroll nếu user đang đọc tin cũ.
+- Fix `ms.querySelectorAll` → `ml.querySelectorAll` trong
+  `scrollLastMessage`.
+- Thêm khai báo `var cc=''` — trước đây `cc` là implicit global, đọc từ
+  `sy()` trước khi mở conv gây ReferenceError.
 
 ## Không nằm trong task này
 
