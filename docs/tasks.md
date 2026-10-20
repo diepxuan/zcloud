@@ -634,7 +634,7 @@ unread badge và checklist live test với thread Trần Ngọc Đức.
 - Fix typo `ms.querySelectorAll` → `ml.querySelectorAll` trong
   `scrollLastMessage`; thêm smoke test dispatch + dedupe vào
   `scripts/check-ui.sh`.
-- Verify: `node --check chat.js`, `./scripts/check-ui.sh` 14/14 pass,
+- Verify: `node --check chat.js`, `./scripts/check-ui.sh` 15/15 pass,
   `go build ./...` pass.
 
 ## 6. References

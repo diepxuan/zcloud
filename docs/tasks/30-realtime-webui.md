@@ -96,7 +96,7 @@ nào để nhận.
 ## Verification
 
 - [x] `node --check src/zcloud/internal/api/web/chat.js` pass.
-- [x] `./scripts/check-ui.sh` pass 14/14 — có test dispatch `new_message`
+- [x] `./scripts/check-ui.sh` pass 15/15 — có test dispatch `new_message`
   + dedupe theo `msgId`.
 - [x] `go build ./...` pass.
 - [ ] Live: gửi tin từ Zalo phone vào đúng thread Trần Ngọc Đức (chờ Sếp
