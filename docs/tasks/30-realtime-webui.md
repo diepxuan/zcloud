@@ -96,8 +96,8 @@ nào để nhận.
 ## Verification
 
 - [x] `node --check src/zcloud/internal/api/web/chat.js` pass.
-- [x] `./scripts/check-ui.sh` pass 15/15 — có test dispatch `new_message`
-  + dedupe theo `msgId`.
+- [x] `./scripts/check-ui.sh` pass 17/17 — có test dispatch `new_message`
+  + dedupe theo `msgId`, grouping class và cột avatar của tin grouped.
 - [x] `go build ./...` pass.
 - [ ] Live: gửi tin từ Zalo phone vào đúng thread Trần Ngọc Đức (chờ Sếp
   xác nhận trên trình duyệt thật).
@@ -116,6 +116,9 @@ nào để nhận.
   `scrollLastMessage`.
 - Thêm khai báo `var cc=''` — trước đây `cc` là implicit global, đọc từ
   `sy()` trước khi mở conv gây ReferenceError.
+- Giữ chỗ avatar 28px cho tin grouped incoming (head/middle dùng
+  `visibility:hidden`), hiện avatar ở tin cuối nhóm. Trước đây `display:none`
+  làm bubble grouped tụt sát lề trái, lệch so với tin đơn lẻ.
 
 ## Không nằm trong task này
 

@@ -421,17 +421,15 @@ body{
 .msg.out .tm{color:var(--c-text-onbrand);opacity:.85}
 .msg.img-only .tm{color:var(--c-text-2);opacity:.85}
 
-/* Group consecutive: ẩn avatar + tên + timestamp ở middle messages.
+/* Group consecutive: ẩn tên + timestamp trùng lặp, giữ cột avatar.
    Middle = .msg.grouped (không phải head/tail).
    Tail (.group-tail) = tin cuối của group: hiện avatar + timestamp (không hiện tên).
-   Head (.group-head) = tin đầu: hiện tên, có thể ẩn avatar.
-   Quy tắc:
-     .msg.grouped .av { display:none }   /* middle: không avatar */
-     .msg.grouped:not(.group-head) .nm { display:none }  /* middle + không phải head: ẩn tên */
-     .msg.grouped:not(.group-tail) .tm { display:none }  /* middle + không phải tail: ẩn tm */
-*/
+   Head (.group-head) = tin đầu: hiện tên, giữ chỗ avatar.
+   Avatar của middle/head để visibility:hidden (không display:none) để bubble
+   không bị tụt vào sát lề trái so với tin đơn lẻ. */
 .msg.grouped{margin-top:1px}
-.msg.grouped .av{display:none}
+.msg.in.grouped .av{visibility:hidden}
+.msg.in.grouped.group-tail .av{visibility:visible}
 .msg.grouped:not(.group-head) .nm{display:none}
 .msg.grouped:not(.group-tail) .tm{display:none}
 /* Bubble của tin grouped dính liền: bỏ border-radius phía dưới tuỳ hướng */

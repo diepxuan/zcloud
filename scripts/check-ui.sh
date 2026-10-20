@@ -63,8 +63,22 @@ ok "Lightpanda CDP ready"
 
 TEST_JS="/tmp/zcloud_check_ui.mjs"
 cat > "$TEST_JS" << NODEEOF
-const URL = process.argv[2];
+const PAGE_URL = process.argv[2];
 const PORT = parseInt(process.argv[3], 10);
+
+let groupedCssOk = false;
+let groupedCssDetail = '';
+try {
+	const cssText = await (await fetch(new URL('/static/chat.css', PAGE_URL))).text();
+	const hideRule = /\.msg\.in\.grouped\s+\.av\s*\{[^}]*visibility\s*:\s*hidden/;
+	const tailRule = /\.msg\.in\.grouped\.group-tail\s+\.av\s*\{[^}]*visibility\s*:\s*visible/;
+	const hidesGrouped = hideRule.test(cssText);
+	const showsTail = tailRule.test(cssText);
+	groupedCssOk = hidesGrouped && showsTail;
+	groupedCssDetail = 'hidden=' + hidesGrouped + ',tail=' + showsTail;
+} catch (e) {
+	groupedCssDetail = 'ERR:' + e.message;
+}
 
 let nextId = 1;
 const pending = new Map();
@@ -102,7 +116,7 @@ await rpc('Page.enable', {}, sessionId);
 await rpc('Runtime.enable', {}, sessionId);
 
 const t0 = Date.now();
-await rpc('Page.navigate', { url: URL }, sessionId);
+await rpc('Page.navigate', { url: PAGE_URL }, sessionId);
 await new Promise(r => setTimeout(r, 3000));
 console.log('NAV=' + (Date.now() - t0) + 'ms');
 
@@ -126,6 +140,7 @@ async function check(name, expr, expected) {
 	console.log('CHECK=' + name + ': ' + (ok ? 'OK' : 'FAIL') + ' actual=' + JSON.stringify(actual) + ' expected=' + JSON.stringify(typeof expected === 'function' ? '<fn>' : expected));
 }
 
+console.log('CHECK=grouped avatar css: ' + (groupedCssOk ? 'OK' : 'FAIL') + ' actual=' + JSON.stringify(groupedCssDetail) + ' expected=true');
 await check('document.title', 'document.title', 'ZCloud Chat');
 // CK_SCRIPT đã bị bỏ ở T18.5 (cookie UI dùng 2 ô input, không còn script trong DevTools).
 // ca (current account) đã bỏ — composer tự chọn account theo conv qua backend.
@@ -153,6 +168,8 @@ await check('typeof syncWS', 'typeof syncWS', 'function');
 await check('typeof _onIncomingMessage', 'typeof _onIncomingMessage', 'function');
 // Dispatch new_message cho thread hiện tại → render đúng 1 bubble, lần 2 dedupe.
 await check('ws dispatch + dedupe', '(function(){try{cc="conv-test-30";ccAccountId="acc-test-30";ccAccountMe="me-uid-30";document.getElementById("ml").innerHTML="";var ev={id:"m-30",convId:"conv-test-30",fromId:"other-uid",fromName:"Ai do",content:"xin chao",timestamp:Date.now(),type:0};_onIncomingMessage("acc-test-30",ev);var after=document.querySelectorAll(\'#ml .msg[data-msg="m-30"]\').length;_onIncomingMessage("acc-test-30",ev);var dup=document.querySelectorAll(\'#ml .msg[data-msg="m-30"]\').length;return after===1&&dup===1;}catch(e){return "ERR:"+e.message;}})()', true);
+// Grouped incoming messages phải giữ cột avatar để bubble không tụt sát lề trái.
+await check('grouped classes + avatar nodes', '(function(){try{document.getElementById("ml").innerHTML="";ccAccountMe="me-group";cc="conv-group";var base=Date.now();for(var i=0;i<3;i++){var m=renderMsg({id:"g-"+i,convId:"conv-group",fromId:"other-group",fromName:"Hoai Nhi",content:"tin "+i,timestamp:base+i*1000,type:0});document.getElementById("ml").appendChild(m);}regroupMessages();var ns=document.querySelectorAll("#ml .msg");if(ns.length!==3)return "count="+ns.length;return ns[0].classList.contains("grouped")&&ns[0].classList.contains("group-head")&&!ns[1].classList.contains("group-head")&&!ns[1].classList.contains("group-tail")&&ns[2].classList.contains("grouped")&&ns[2].classList.contains("group-tail")&&!!ns[0].querySelector(".av")&&!!ns[1].querySelector(".av")&&!!ns[2].querySelector(".av");}catch(e){return "ERR:"+e.message;}})()', true);
 
 ws.close();
 NODEEOF
