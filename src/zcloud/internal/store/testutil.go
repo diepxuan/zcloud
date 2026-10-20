@@ -51,6 +51,12 @@ func dsnWithSchema(dsn, schema string) string {
 	return u.String()
 }
 
+// TestDSNWithSchema exposes schema-scoped DSN cho integration test ở package
+// api/core. Chỉ build với tag testdb.
+func TestDSNWithSchema(dsn, schema string) string {
+	return dsnWithSchema(dsn, schema)
+}
+
 // newTestStore mở Postgres, tạo schema riêng cho test, chạy migration,
 // trả về *Store sẵn dùng. Tự cleanup schema khi test xong.
 func newTestStore(t *testing.T) *Store {

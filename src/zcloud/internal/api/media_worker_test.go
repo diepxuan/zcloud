@@ -24,8 +24,8 @@ func TestEnqueueMessageMediaJobsWritesJobsAndIsIdempotent(t *testing.T) {
 	msg := &core.Message{
 		ID: "m-1", ConvID: "c-1", Type: core.MsgTypeImage,
 		Attachments: []core.Attachment{
-			{ID: "f-1", URL: "https://example.com/1.jpg", FileName: "1.jpg"},
-			{ID: "f-2", URL: "https://example.com/2.jpg", FileName: "2.jpg"},
+			{ID: "f-1-0", URL: "https://example.com/1.jpg", FileName: "1.jpg"},
+			{ID: "f-2-0", URL: "https://example.com/2.jpg", FileName: "2.jpg"},
 		},
 	}
 	enqueueMessageMediaJobs(st, nil, "acc-1", msg, testLogger())
@@ -96,7 +96,7 @@ func TestMediaWorkerProcessJob(t *testing.T) {
 			http.Error(w, "server not ready", http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write([]byte("image-bytes"))
+		_, _ = w.Write([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F'})
 	}))
 	defer srv.Close()
 

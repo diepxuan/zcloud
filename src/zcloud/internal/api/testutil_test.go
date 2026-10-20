@@ -40,12 +40,9 @@ func newTestStore(t *testing.T) *store.Store {
 		_ = admin.Close()
 	})
 
-	st, err := store.NewPostgres(dsn, filepath.Join(dir, "media"), 4, 2)
+	st, err := store.NewPostgres(store.TestDSNWithSchema(dsn, schema), filepath.Join(dir, "media"), 4, 2)
 	if err != nil {
 		t.Fatalf("NewPostgres: %v", err)
-	}
-	if _, err := st.DB().Exec("SET search_path TO " + schema); err != nil {
-		t.Fatalf("set search_path: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st

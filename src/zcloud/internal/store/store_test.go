@@ -95,7 +95,10 @@ func TestMediaJobLifecycle(t *testing.T) {
 // TestSetAccountEnabled kiểm tra SetAccountEnabled + ListAccounts với
 // enabledOnly — verify flag persist qua DB.
 func TestSetAccountEnabled(t *testing.T) {
-	s := newTestStore(t)
+	s, err := newTestStoreFull(t)
+	if err != nil {
+		t.Fatalf("newTestStoreFull: %v", err)
+	}
 
 	// Tạo 2 accounts
 	if err := s.CreateAccount("acc-en-1", "Test 1", 1); err != nil {
