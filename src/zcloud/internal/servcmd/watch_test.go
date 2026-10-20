@@ -92,3 +92,34 @@ func TestAtomicRenameBinary(t *testing.T) {
 		t.Errorf(".new vẫn tồn tại sau rename")
 	}
 }
+
+func TestInitialBuildChangedBinary(t *testing.T) {
+	dir := t.TempDir()
+	running := dir + "/running"
+	built := dir + "/built"
+	if err := os.WriteFile(running, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(built, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := initialBuildChangedBinary(running, built)
+	if err != nil {
+		t.Fatalf("initialBuildChangedBinary: %v", err)
+	}
+	if changed {
+		t.Fatal("binary giống nhau nhưng báo changed")
+	}
+
+	if err := os.WriteFile(built, []byte("new binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = initialBuildChangedBinary(running, built)
+	if err != nil {
+		t.Fatalf("initialBuildChangedBinary changed: %v", err)
+	}
+	if !changed {
+		t.Fatal("binary khác nhau nhưng không báo changed")
+	}
+}

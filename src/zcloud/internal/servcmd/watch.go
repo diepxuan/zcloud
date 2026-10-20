@@ -20,6 +20,7 @@ package servcmd
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -89,6 +90,48 @@ func gitShortHash(sourceDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// fileSHA256 dùng để so binary đang chạy với binary vừa build. os.Executable()
+// không đủ tin cậy khi file trên đĩa đã bị rename: /proc/self/exe vẫn trỏ tới
+// inode cũ, còn os.Executable() có thể trả path đã bị thay bằng binary mới.
+func fileSHA256(path string) ([sha256.Size]byte, error) {
+	var sum [sha256.Size]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return sum, err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return sum, err
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
+func runningBinaryPath() string {
+	if _, err := os.Stat("/proc/self/exe"); err == nil {
+		return "/proc/self/exe"
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
+}
+
+func initialBuildChangedBinary(runningBinary, builtBinary string) (bool, error) {
+	runningHash, err := fileSHA256(runningBinary)
+	if err != nil {
+		return false, fmt.Errorf("hash running binary: %w", err)
+	}
+	builtHash, err := fileSHA256(builtBinary)
+	if err != nil {
+		return false, fmt.Errorf("hash built binary: %w", err)
+	}
+	return runningHash != builtHash, nil
 }
 
 // runSmokeTest chạy binary trên port random, poll /api/health đến khi 200 OK
@@ -197,6 +240,7 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 		binary = filepath.Join(ProjectRoot(), "zcloudd")
 	}
 	logger := logging.New(0)
+	runningBinary := runningBinaryPath()
 
 	// 1. Initial build (đảm bảo binary đang chạy là mới nhất).
 	logger.Info("watch_initial_build_starting")
@@ -205,6 +249,18 @@ func Watch(ctx context.Context, binary string, sourceDir string) error {
 	}
 	if err := os.Chmod(binary, 0755); err != nil {
 		return fmt.Errorf("chmod binary: %w", err)
+	}
+	if runningBinary != "" {
+		changed, err := initialBuildChangedBinary(runningBinary, binary)
+		if err != nil {
+			return fmt.Errorf("compare initial build: %w", err)
+		}
+		if changed {
+			logger.Info("watch_initial_build_changed_binary", "running_binary", runningBinary, "built_binary", binary)
+			// Binary trên đĩa đã mới hơn process hiện tại. Thoát để systemd
+			// Restart=always nạp đúng binary vừa build.
+			os.Exit(0)
+		}
 	}
 
 	// 2. Setup fsnotify.
