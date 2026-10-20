@@ -2,7 +2,7 @@
 
 > File này merge nội dung từ `master-plan.md` (kiến trúc + 4 mục tiêu) và
 > `audit.md` (trạng thái chi tiết từng module + tồn đọng). Cập nhật
-> 15/09/2026 (đợt task 21 verified live).
+> 20/10/2026 (đồng bộ trạng thái task 19, 20, 22, 24 và T3/T5).
 
 ---
 
@@ -46,7 +46,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 
 ---
 
-## 3. Trạng thái 14 tasks
+## 3. Trạng thái tasks
 
 | ID | Tên | Trạng thái | Chi tiết |
 |:--:|-----|:----------:|----------|
@@ -67,12 +67,12 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 14 | Tách Web UI ra file tĩnh | 🟢 Xong | [14-split-webui.md](tasks/14-split-webui.md) |
 | 15 | Reverse Zalo PC Desktop (static) | 🟢 Xong | [15-reverse-zalo-pc.md](tasks/15-reverse-zalo-pc.md) |
 | 18 | Terminal UI (TUI) | ✅ Done | [18-tui.md](tasks/18-tui.md) |
-| 19 | Multi-account filter (chọn account hiển thị UI) | 🟡 Pending | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
-| 20 | Login Zalo PC (trusted-device) | 🟡 Pending | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
+| 19 | Multi-account filter (chọn account hiển thị UI) | 🟢 Done (11/09/2026) | [19-multi-account-filter.md](tasks/19-multi-account-filter.md) |
+| 20 | Login Zalo PC (trusted-device) | 🟡 Partial — PC transport skeleton | [20-zalo-pc-login.md](tasks/20-zalo-pc-login.md) |
 | 21 | Fix bug parse EventNewMessage wrapper (Phase A — sync sâu) | ✅ Done (15/09/2026) | [21-fix-newmessage-parse.md](tasks/21-fix-newmessage-parse.md) |
-| 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Pending | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
+| 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Partial — client/WS/admin done, cipher stub | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
-| 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟡 Skeleton migration | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
+| 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 
 ---
 
@@ -159,9 +159,9 @@ branches trong `queries.go`). Xem commit `3f4e88c` → `0546771`.
 |:-:|-----------|:------:|---------|
 | T1 | WS AES-GCM decrypt hoàn chỉnh | 🟢 Core + tests (18/10) | cipherKey đã wire vào `DecodeWSEvent`; mode 2 (gzip) + 3 (raw) đã có round-trip test (§5.21). Còn: capture frame WS thật từ Zalo PC để verify schema payload. |
 | T2 | Auto-download media khi WS nhận event | ✅ Done (đợt 09/2026, polish 11/09) | `enqueueMessageMediaJobs` tự động vào `media_jobs` khi WS nhận new/old msg có attachment. `MediaWorker` (5s interval, batch 20) tải về disk + retry 3 + dedupe + skip nếu file đã có. UI fallback `/api/media/download` qua `imgErr` khi URL Zalo CDN die. Xem chi tiết T2.7–T2.10 dưới. |
-| T3 | Integration test (chat/store/api) | 🟡 Partial | Core đã có nhiều test (encrypt/ws-parse/host/service/syncv2); store + api có test `-tags testdb`. Còn thiếu: integration test HTTP client `chat.go` với mock Zalo server. |
+| T3 | Integration test (chat/store/api) | 🟡 Partial | Core đã có mock test `SendMessage` (task 27) + `GetMyProfile`/`GetFriends` (task 29); store + api có test `-tags testdb`. Còn thiếu integration test HTTP handler tổng hợp và mở rộng độ phủ API. |
 | T4 | Zalo OA webhook (task 08) | 🟢 Optional | Schema sẵn, thiếu handler |
-| T5 | Logging tập trung | 🔵 Low | `fmt.Printf` lẫn `log.Printf` |
+| T5 | Logging tập trung | ✅ Done (H5, 18/10) | Runtime `api/server/core/servcmd` đã dùng `log/slog` key=value; `fmt.Printf` còn lại chỉ để in CLI cho user. |
 | T6 | Dọn `zcloudd` binary trong git history | 🔵 Low | Đã ignore, history cũ |
 | T7 | ~~Re-login QR cho account hiện tại~~ | ✅ Resolved | Lỗi `zpw_sek không đúng` xảy ra 11/08/2026 khi test SendMessage. Sau đó session được refresh qua background (commit đợt 29/07 cập nhật `secret_key bZMgG6RLiSa/DrYbIotXIg==`), từ 01/09/2026 trở đi không còn lỗi. Verify 11/09/2026: `listening=true`, `hasActiveSession=true`, WS connect `wss://ws3-msg.chat.zalo.me?zpw_ver=688` OK, ping/pong đều, sync old messages nhiều conv. Ghi chú cũ trong audit có thể bỏ. |
 | T8 | Verify end-to-end (Sep ↔ Trần Ngọc Đức) | ✅ Verified 11/09/2026 | `/api/messages/send` (Sep → Trần Ngọc Đức) → `sent: true`; DB có row (15→16); WS broadcast `new_message` <1s; Zalo echo cmd 501 parse + dedupe OK. Xem chi tiết §5.4. |
@@ -707,7 +707,6 @@ vẫn fail nhưng là pre-existing (xác nhận bằng `git stash` trên HEAD).
 
 Smoke test live (gửi `[T21-...]` từ Trần Ngọc Đức) đã verify 15/09/2026 —
 xem chi tiết tại §5.15 phía trên. PASS.
-| 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 T22.2a xong | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 
 ## Phase B da co skeleton — 13/09/2026
 

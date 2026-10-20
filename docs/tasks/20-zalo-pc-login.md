@@ -2,12 +2,22 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.14 (T14)
-- **Trạng thái:** 🟡 Pending — chờ Sếp duyệt plan
+- **Trạng thái:** 🟡 Partial — Phase 1/2 skeleton, Phase 3 pending
 - **Phụ thuộc:**
   - [11-getfriends.md](11-getfriends.md) — `accountID + userID`
   - [15-reverse-zalo-pc.md](15-reverse-zalo-pc.md) — reverse Zalo PC bundle
   - T11.4 (commit `d577778`) — `core.EventType` 8 type + `DesktopSyncEvent`
   - T11.6 (incomplete) — WASM reverse cho trusted-device key exchange
+
+## Tiến độ thực tế (20/10/2026)
+
+- Đã có `POST /api/login/pc`, lưu `transport=pc`, `cipher_key`, và
+  chuyển listener sang client PC (commit `43bac36`).
+- Đã có helper ed25519 + HKDF-SHA256 + AES-GCM và test round-trip
+  (commit `8f725fe`).
+- Chưa có trusted-device key exchange bằng WASM, nên chưa đạt mục tiêu
+  session PC không bị kickout khi login web ở nơi khác.
+- Các mục verification live vẫn để mở cho đến khi reverse WASM xong.
 
 ## Bối cảnh & yêu cầu
 

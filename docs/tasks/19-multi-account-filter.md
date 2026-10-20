@@ -2,11 +2,24 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.13 (T13)
-- **Trạng thái:** 🟡 Pending
+- **Trạng thái:** 🟢 Done (11/09/2026)
 - **Phụ thuộc:**
   - [07-multi-user.md](07-multi-user.md) — accounts + sessions
   - [11-getfriends.md](11-getfriends.md) — friends + contacts
   - [09-database.md](09-database.md) — `accounts` table
+
+## Kết quả
+
+- Backend: cột `accounts.enabled`, `SetAccountEnabled`, filter
+  `?enabledOnly=true`, endpoint `POST /api/account/enabled`
+  (commit `ac3044c`).
+- Frontend: checkbox trong panel Quản lý, bật/tắt tất cả, hợp nhất
+  conversation + friends theo account enabled, composer tự chọn account
+  theo conversation (commit `02b6595` và các fix sau).
+- Verify 20/10/2026: `/api/account/list?enabledOnly=true` chỉ trả account
+  enabled; UI smoke test thấy đủ 2 account và 244 hội thoại.
+- Tài khoản disabled vẫn giữ WS listener và dữ liệu DB; trạng thái chỉ
+  ảnh hưởng hiển thị UI.
 
 ## Bối cảnh & yêu cầu
 

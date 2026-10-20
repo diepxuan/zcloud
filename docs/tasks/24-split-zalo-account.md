@@ -3,11 +3,24 @@
 ## Liên kết
 
 - **Task list:** [../tasks.md](../tasks.md) §3 (mới)
-- **Trạng thái:** 🟡 Đề xuất — chờ Sếp duyệt
+- **Trạng thái:** 🟢 Done (13/09/2026)
 - **Ngày tạo:** 13/09/2026
 - **Phụ thuộc:**
   - [12-logout.md](12-logout.md) — luồng logout hiện tại (xoá cả account)
   - [09-database.md](09-database.md) — schema Postgres hiện tại
+
+## Kết quả
+
+- Migration 16-18 tạo `zalo_accounts`, thêm `accounts.zalo_account_id`,
+  backfill dữ liệu cũ và đăng ký trong `schema_migrations`.
+- Luồng login dùng `UpsertZaloAccount` +
+  `FindOrCreateAccountByZaloAccountID`; login lại cùng UID tái sử dụng
+  account ID.
+- `LogoutAccount` chỉ xoá credentials, giữ messages/conversations/media;
+  `DeleteAccountByZaloAccountID` cascade sạch khi Sếp bấm Xoá
+  (commit `f5043ee`, regression fix `0d5770f`).
+- Verify 20/10/2026: 7 test trọng tâm trên PostgreSQL pass, gồm reuse
+  account, logout giữ dữ liệu và cascade delete.
 
 ## Bối cảnh
 

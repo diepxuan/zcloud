@@ -2,13 +2,24 @@
 
 ## Liên kết
 - **Task list:** [../tasks.md](../tasks.md) §5.16 (T16 — mới)
-- **Trạng thái:** 🟡 Pending — Sếp duyệt ngày 12/09/2026
+- **Trạng thái:** 🟡 Partial — T22.2a/T22.3/T22.5 done, cipher/E2E pending
 - **Phụ thuộc:**
   - [21-fix-newmessage-parse.md](21-fix-newmessage-parse.md) — Phase A (parse đúng)
   - [16-auto-sync-media.md](16-auto-sync-media.md) — T11 đang in-progress
   - `docs/protocol/pc-desktop.md` § Desktop-specific Sync + WASM
   - `work/reverse-zalo-pc-20260811/evidence/E-008.md` — WASM exports
   - `work/reverse-zalo-pc-20260811/evidence/E-010.md` — SyncV2 sub-worker
+
+## Tiến độ thực tế (20/10/2026)
+
+- Đã có `SyncV2Client` với ed25519 keypair, `RequestSync`, `PullBatch`,
+  `HandleEvent` và REST wrapper (commit `77ab314`).
+- Đã hook WS 590/591/592/632, persist `accounts.syncv2_state` JSONB và
+  resume pull loop sau restart (commit `ebaabe9`).
+- Đã có admin API `start/stop/reset/status` (commit `a43f47b`).
+- `syncv2_cipher.go` hiện vẫn là stub HKDF/AES-GCM; chưa thay bằng logic
+  WASM thật và chưa verify decrypt batch thật từ Zalo PC.
+- T22.1 capture, T22.2b/c real decrypt, T22.4 live E2E vẫn pending.
 
 ## Bối cảnh
 
