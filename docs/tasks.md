@@ -73,6 +73,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 22 | SyncV2 backup từ Zalo server (Phase B — sync sâu) | 🟡 Partial — client/WS/admin done, cipher stub | [22-syncv2-backup.md](tasks/22-syncv2-backup.md) |
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
+| 30 | Fix realtime load tin nhắn trên Web UI | 🟡 Pending | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
 
 ---
 
@@ -604,6 +605,19 @@ Mở rộng mock harness (task 27) để phủ `GetMyProfile` (POST getprofiles/
 `GetFriends` (GET getfriends) — nhánh success/flat-fallback/error/html. Chỉ
 thêm `_test.go`, không đổi production. Kết quả: 7 test mới PASS,
 `go test ./internal/core/...` PASS 0 fail, coverage core 33.4% → 37.6%.
+
+## 5.25. Task 30 — Realtime Web UI regression (20/10/2026)
+
+Chi tiết: [tasks/30-realtime-webui.md](tasks/30-realtime-webui.md).
+
+Sếp báo tin nhắn mới không tự xuất hiện trên `/chat`; phải F5 hoặc chuyển
+conversation rồi quay lại. Nguyên nhân đã xác định: frontend hiện không mở
+browser WebSocket `/ws?accountId=...`, trong khi backend vẫn lưu DB và
+broadcast `new_message`. `sc()` chỉ gọi `lm()` một lần khi chọn conversation,
+nên dữ liệu mới chỉ được đọc lại khi có thao tác chuyển conv hoặc F5.
+
+Task 30 chứa kế hoạch reconnect, dispatch event, dedupe optimistic send,
+unread badge và checklist live test với thread Trần Ngọc Đức.
 
 ## 6. References
 
