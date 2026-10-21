@@ -74,6 +74,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 | 30 | Fix realtime load tin nhắn trên Web UI | 🟢 Done (20/10/2026) | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
+| 31 | Fix tin nhắn nhóm bị ghi/gom nhầm vào chat riêng | 🟡 In Progress | [31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md) |
 
 ---
 
@@ -639,6 +640,24 @@ unread badge và checklist live test với thread Trần Ngọc Đức.
   class grouping + CSS avatar.
 - Verify: `node --check chat.js`, `./scripts/check-ui.sh` 17/17 pass,
   `go build ./...` pass.
+
+## 5.26. Task 31 — Tin nhắn nhóm bị gom với chat riêng (21/10/2026)
+
+Chi tiết: [tasks/31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md).
+
+Sếp phát hiện tin nhắn nhóm bị trộn với tin nhắn riêng. Điều tra dữ liệu
+Postgres ngày 21/10/2026 xác định 44/94 conversation nhóm có `last_msg_id`
+trỏ tới message đang mang `conv_id` của conversation khác; 41 case thuộc
+account đang bật `acc_2291602426651082808`.
+
+Nguyên nhân trực tiếp: parser `wsMessage.toMessage` không nhận `ThreadType`,
+nên tin trong `groupMsgs` thiếu `grid` bị fallback conversation về UID người
+gửi. Query sidebar cũng join preview chỉ theo message ID, không kiểm tra
+`conv_id`, khiến nội dung chat riêng xuất hiện trong dòng nhóm.
+
+Fix gồm parser thread-aware, preview scoped theo conversation, UI truyền
+`accountId` khi load/sync history, và repair idempotent cho các last message
+nhóm đã ghi sai.
 
 ## 6. References
 
