@@ -192,3 +192,228 @@ func (s *Store) moveMediaFile(accountID, oldConvID, newConvID, fileID, ext strin
 	}
 	return nil
 }
+
+// ====================================
+// Repair: tin nhóm bị lưu nhầm vào chat riêng
+// ====================================
+//
+// Trước bản vá parser, groupMsgs thiếu grid bị fallback conv_id về uid người
+// gửi. Các message cũ đã nằm sai conversation nên SaveMessage không thể sửa
+// (PK là id + account_id, sync lại không đổi conv_id). Repair này dùng
+// last_msg_id của conversation nhóm làm nguồn xác nhận conversation đúng.
+
+// GroupThreadRepair mô tả kết quả một lần dọn message nhóm sai thread.
+type GroupThreadRepair struct {
+	Messages       int
+	Media          int
+	MediaJobs      int
+	PrivateThreads int
+	MovedFiles     int
+	FileErrors     []string
+}
+
+type groupMediaMove struct {
+	id        string
+	fileExt   string
+	oldConvID string
+	newConvID string
+}
+
+// CountMisclassifiedGroupMessages đếm group last message đang trỏ tới message
+// có conv_id khác. Bỏ qua message ID bị nhiều group cùng account tham chiếu.
+func (s *Store) CountMisclassifiedGroupMessages(accountID string) (int, error) {
+	if accountID == "" {
+		return 0, fmt.Errorf("repair group: thiếu accountID")
+	}
+	const q = `SELECT COUNT(*)
+		FROM conversations c
+		JOIN messages m ON m.account_id = c.account_id AND m.id = c.last_msg_id
+		WHERE c.account_id = $1
+		  AND c.conv_type = 1
+		  AND m.conv_id <> c.id
+		  AND NOT EXISTS (
+			SELECT 1 FROM conversations c2
+			WHERE c2.account_id = c.account_id
+			  AND c2.conv_type = 1
+			  AND c2.last_msg_id = m.id
+			  AND c2.id <> c.id
+		  )`
+	var n int
+	err := s.db.QueryRow(q, accountID).Scan(&n)
+	return n, err
+}
+
+// RepairMisclassifiedGroupMessages chuyển group last message về đúng group,
+// kéo media/media_jobs theo và cập nhật last_msg_at. Idempotent.
+func (s *Store) RepairMisclassifiedGroupMessages(accountID string) (GroupThreadRepair, error) {
+	var rep GroupThreadRepair
+	if accountID == "" {
+		return rep, fmt.Errorf("repair group: thiếu accountID")
+	}
+
+	moves, err := s.collectGroupMediaMoves(accountID)
+	if err != nil {
+		return rep, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return rep, fmt.Errorf("repair group begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE messages m SET conv_id = c.id
+		FROM conversations c
+		WHERE m.account_id = c.account_id
+		  AND m.id = c.last_msg_id
+		  AND c.account_id = $1
+		  AND c.conv_type = 1
+		  AND m.conv_id <> c.id
+		  AND NOT EXISTS (
+			SELECT 1 FROM conversations c2
+			WHERE c2.account_id = c.account_id
+			  AND c2.conv_type = 1
+			  AND c2.last_msg_id = m.id
+			  AND c2.id <> c.id
+		  )`, accountID)
+	if err != nil {
+		return rep, fmt.Errorf("repair group messages: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		rep.Messages = int(n)
+	}
+
+	// Message nhóm từng là last message của chat riêng. Sau khi chuyển nó đi,
+	// khôi phục last message thật của chat riêng để sidebar không bị mồ côi.
+	res, err = tx.Exec(`WITH stale_private AS (
+			SELECT c.account_id, c.id
+			FROM conversations c
+			JOIN messages m ON m.account_id = c.account_id AND m.id = c.last_msg_id
+			JOIN conversations g ON g.account_id = m.account_id
+				AND g.id = m.conv_id
+				AND g.conv_type = 1
+			WHERE c.account_id = $1
+			  AND c.conv_type = 0
+			  AND c.id <> m.conv_id
+		), latest AS (
+			SELECT s.account_id, s.id, latest_msg.id AS msg_id, latest_msg.timestamp
+			FROM stale_private s
+			LEFT JOIN LATERAL (
+				SELECT id, timestamp
+				FROM messages
+				WHERE account_id = s.account_id AND conv_id = s.id
+				ORDER BY timestamp DESC
+				LIMIT 1
+			) latest_msg ON TRUE
+		)
+		UPDATE conversations c SET
+			last_msg_id = COALESCE(latest.msg_id, ''),
+			last_msg_at = CASE WHEN latest.msg_id IS NULL THEN NULL
+				ELSE to_timestamp(latest.timestamp / 1000.0) END
+		FROM latest
+		WHERE c.account_id = latest.account_id AND c.id = latest.id`, accountID)
+	if err != nil {
+		return rep, fmt.Errorf("repair group private conversations: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		rep.PrivateThreads = int(n)
+	}
+
+	res, err = tx.Exec(`UPDATE media md SET
+			conv_id = m.conv_id,
+			file_path = md.account_id || '/' || m.conv_id || '/' || md.id || '.' || md.file_ext
+		FROM messages m
+		JOIN conversations c ON c.account_id = m.account_id
+			AND c.id = m.conv_id
+			AND c.last_msg_id = m.id
+		WHERE md.account_id = $1
+		  AND md.account_id = m.account_id
+		  AND md.msg_id = m.id
+		  AND c.conv_type = 1
+		  AND md.conv_id <> m.conv_id`, accountID)
+	if err != nil {
+		return rep, fmt.Errorf("repair group media: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		rep.Media = int(n)
+	}
+
+	res, err = tx.Exec(`UPDATE media_jobs mj SET
+			conv_id = m.conv_id,
+			local_path = CASE WHEN mj.status = 'done' THEN
+				mj.account_id || '/' || m.conv_id || '/' || mj.id || '.' || mj.file_ext
+			ELSE mj.local_path END
+		FROM messages m
+		JOIN conversations c ON c.account_id = m.account_id
+			AND c.id = m.conv_id
+			AND c.last_msg_id = m.id
+		WHERE mj.account_id = $1
+		  AND mj.account_id = m.account_id
+		  AND mj.msg_id = m.id
+		  AND c.conv_type = 1
+		  AND mj.conv_id <> m.conv_id`, accountID)
+	if err != nil {
+		return rep, fmt.Errorf("repair group media_jobs: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil {
+		rep.MediaJobs = int(n)
+	}
+
+	if _, err := tx.Exec(`UPDATE conversations c SET last_msg_at = to_timestamp(m.timestamp / 1000.0)
+		FROM messages m
+		WHERE c.account_id = $1
+		  AND c.conv_type = 1
+		  AND m.account_id = c.account_id
+		  AND m.id = c.last_msg_id
+		  AND m.conv_id = c.id
+		  AND (c.last_msg_at IS NULL
+		       OR c.last_msg_at < to_timestamp(m.timestamp / 1000.0))`, accountID); err != nil {
+		return rep, fmt.Errorf("repair group last_msg_at: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return rep, fmt.Errorf("repair group commit: %w", err)
+	}
+
+	for _, mv := range moves {
+		if err := s.moveMediaFile(accountID, mv.oldConvID, mv.newConvID, mv.id, mv.fileExt); err != nil {
+			rep.FileErrors = append(rep.FileErrors, err.Error())
+			continue
+		}
+		rep.MovedFiles++
+	}
+	return rep, nil
+}
+
+func (s *Store) collectGroupMediaMoves(accountID string) ([]groupMediaMove, error) {
+	const q = `SELECT md.id, md.file_ext, md.conv_id, c.id
+		FROM media md
+		JOIN messages m ON m.account_id = md.account_id AND m.id = md.msg_id
+		JOIN conversations c ON c.account_id = m.account_id
+			AND c.last_msg_id = m.id
+			AND c.conv_type = 1
+		WHERE md.account_id = $1
+		  AND md.conv_id <> c.id
+		  AND NOT EXISTS (
+			SELECT 1 FROM conversations c2
+			WHERE c2.account_id = c.account_id
+			  AND c2.conv_type = 1
+			  AND c2.last_msg_id = m.id
+			  AND c2.id <> c.id
+		  )`
+	rows, err := s.db.Query(q, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("repair group media scan: %w", err)
+	}
+	defer rows.Close()
+
+	var out []groupMediaMove
+	for rows.Next() {
+		var mv groupMediaMove
+		if err := rows.Scan(&mv.id, &mv.fileExt, &mv.oldConvID, &mv.newConvID); err != nil {
+			return nil, fmt.Errorf("repair group media scan: %w", err)
+		}
+		out = append(out, mv)
+	}
+	return out, rows.Err()
+}

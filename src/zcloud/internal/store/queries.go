@@ -617,7 +617,9 @@ func (s *Store) GetConversations(accountID string) ([]Conversation, error) {
 		       END AS preview,
 		       c.unread_count, c.updated_at
 		FROM conversations c
-		LEFT JOIN messages m ON m.account_id = c.account_id AND m.id = c.last_msg_id
+		LEFT JOIN messages m ON m.account_id = c.account_id
+			AND m.conv_id = c.id
+			AND m.id = c.last_msg_id
 		WHERE c.account_id = $1
 		ORDER BY c.last_msg_at DESC NULLS LAST, c.updated_at DESC`, maxLastMsgPreview, maxLastMsgPreview)
 	rows, err := s.db.Query(q, accountID)

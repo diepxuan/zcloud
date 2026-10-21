@@ -96,6 +96,8 @@ func Run() error {
 
 	// Dọn tin 1-1 bị gom nhầm vào thread mang uid của chính account.
 	repairSelfThreads(db, logger)
+	// Dọn group last message bị ghi nhầm sang chat riêng của người gửi.
+	repairGroupThreads(db, logger)
 
 	// Boot Zalo listener cho mọi account đang active.
 	activeIDs, err := db.ListActiveAccountIDs()
@@ -227,6 +229,43 @@ func repairSelfThreads(db *store.Store, logger *logging.Logger) {
 		)
 		for _, e := range rep.FileErrors {
 			logger.Error("self_thread_file_repair_failed", "account_id", a.ID, "error", e)
+		}
+	}
+}
+
+// repairGroupThreads chuyển group last message đang nằm sai conversation về
+// đúng group. Chỉ xử lý quan hệ đã được conversations.last_msg_id xác nhận và
+// bỏ qua message ID bị nhiều group cùng account tham chiếu.
+func repairGroupThreads(db *store.Store, logger *logging.Logger) {
+	accounts, err := db.ListAccounts(0, false)
+	if err != nil {
+		logger.Error("group_thread_account_list_failed", "error", err)
+		return
+	}
+	for _, a := range accounts {
+		n, err := db.CountMisclassifiedGroupMessages(a.ID)
+		if err != nil {
+			logger.Error("group_thread_count_failed", "account_id", a.ID, "error", err)
+			continue
+		}
+		if n == 0 {
+			continue
+		}
+		rep, err := db.RepairMisclassifiedGroupMessages(a.ID)
+		if err != nil {
+			logger.Error("group_thread_repair_failed", "account_id", a.ID, "error", err)
+			continue
+		}
+		logger.Info("group_thread_repaired",
+			"account_id", a.ID,
+			"messages", rep.Messages,
+			"media", rep.Media,
+			"jobs", rep.MediaJobs,
+			"private_threads", rep.PrivateThreads,
+			"files", rep.MovedFiles,
+		)
+		for _, e := range rep.FileErrors {
+			logger.Error("group_thread_file_repair_failed", "account_id", a.ID, "error", e)
 		}
 	}
 }

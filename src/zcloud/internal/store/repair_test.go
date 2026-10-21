@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const (
@@ -121,5 +122,181 @@ func TestRepairSelfThreadMessages(t *testing.T) {
 	}
 	if rep2.Messages != 0 || rep2.Media != 0 || rep2.MediaJobs != 0 {
 		t.Errorf("khong idempotent: %+v", rep2)
+	}
+}
+
+func TestRepairMisclassifiedGroupMessages(t *testing.T) {
+	s := newTestStore(t)
+	const accountID = "acc-1"
+	const privateConvID = "private-1"
+	const groupConvID = "group-1"
+	const groupMsgID = "group-last-1"
+
+	if err := s.SaveConversation(&Conversation{
+		ID: privateConvID, AccountID: accountID, Name: "Private",
+		ConvType: 0, LastMsgID: groupMsgID,
+	}); err != nil {
+		t.Fatalf("save private conv: %v", err)
+	}
+	if err := s.SaveConversation(&Conversation{
+		ID: groupConvID, AccountID: accountID, Name: "Group",
+		ConvType: 1, LastMsgID: groupMsgID,
+	}); err != nil {
+		t.Fatalf("save group conv: %v", err)
+	}
+	if err := s.SaveMessage(&Message{
+		ID: "private-last", AccountID: accountID, ConvID: privateConvID,
+		FromID: privateConvID, Content: "private hello", MsgType: 1, Timestamp: 1000,
+	}); err != nil {
+		t.Fatalf("save private msg: %v", err)
+	}
+	// Group message bị parser cũ ghi nhầm vào chat riêng.
+	if err := s.SaveMessage(&Message{
+		ID: groupMsgID, AccountID: accountID, ConvID: privateConvID,
+		FromID: "member-1", Content: "group hello", MsgType: 1, Timestamp: 2000,
+	}); err != nil {
+		t.Fatalf("save group msg wrong conv: %v", err)
+	}
+
+	if _, err := s.SaveMedia(&MediaFile{
+		ID: groupMsgID, AccountID: accountID, ConvID: privateConvID, MsgID: groupMsgID,
+		FileName: "a.jpg", FileExt: "jpg", SourceURL: "https://example.com/a.jpg",
+		IsDownloaded: 1,
+	}); err != nil {
+		t.Fatalf("save media: %v", err)
+	}
+	oldPath := s.MediaFilePath(accountID, privateConvID, groupMsgID, "jpg")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(oldPath, []byte("jpeg-bytes"), 0644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	if err := s.SaveMediaJob(&MediaJob{
+		ID: groupMsgID, AccountID: accountID, ConvID: privateConvID, MsgID: groupMsgID,
+		FileName: "a.jpg", FileExt: "jpg", SourceURL: "https://example.com/a.jpg",
+	}); err != nil {
+		t.Fatalf("save media job: %v", err)
+	}
+
+	n, err := s.CountMisclassifiedGroupMessages(accountID)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("count=%d want 1", n)
+	}
+
+	rep, err := s.RepairMisclassifiedGroupMessages(accountID)
+	if err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if rep.Messages != 1 || rep.Media != 1 || rep.MediaJobs != 1 || rep.MovedFiles != 1 {
+		t.Fatalf("repair result=%+v", rep)
+	}
+	if len(rep.FileErrors) != 0 {
+		t.Fatalf("file errors=%v", rep.FileErrors)
+	}
+
+	groupMsgs, err := s.GetMessages(accountID, groupConvID, 1<<62, 10)
+	if err != nil {
+		t.Fatalf("get group: %v", err)
+	}
+	if len(groupMsgs) != 1 || groupMsgs[0].ID != groupMsgID {
+		t.Fatalf("group messages=%+v", groupMsgs)
+	}
+	privateMsgs, err := s.GetMessages(accountID, privateConvID, 1<<62, 10)
+	if err != nil {
+		t.Fatalf("get private: %v", err)
+	}
+	if len(privateMsgs) != 1 || privateMsgs[0].ID != "private-last" {
+		t.Fatalf("private messages=%+v", privateMsgs)
+	}
+	privateConv, err := s.GetConversation(accountID, privateConvID)
+	if err != nil {
+		t.Fatalf("get private conv: %v", err)
+	}
+	if privateConv.LastMsgID != "private-last" {
+		t.Fatalf("private last_msg_id=%q want private-last", privateConv.LastMsgID)
+	}
+	if !privateConv.LastMsgAt.Valid || privateConv.LastMsgAt.Time.UnixMilli() != 1000 {
+		t.Fatalf("private last_msg_at=%+v want 1000", privateConv.LastMsgAt)
+	}
+
+	groupConv, err := s.GetConversation(accountID, groupConvID)
+	if err != nil {
+		t.Fatalf("get group conv: %v", err)
+	}
+	if !groupConv.LastMsgAt.Valid {
+		t.Fatalf("group last_msg_at not set: %+v", groupConv.LastMsgAt)
+	}
+	wantTime := time.UnixMilli(2000)
+	if groupConv.LastMsgAt.Time.UnixMilli() != wantTime.UnixMilli() {
+		t.Fatalf("last_msg_at=%v want %v", groupConv.LastMsgAt.Time, wantTime)
+	}
+
+	newPath := s.MediaFilePath(accountID, groupConvID, groupMsgID, "jpg")
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("media file chua chuyen: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("file cu van con: %v", err)
+	}
+
+	n, err = s.CountMisclassifiedGroupMessages(accountID)
+	if err != nil {
+		t.Fatalf("count after repair: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("count after repair=%d want 0", n)
+	}
+	rep2, err := s.RepairMisclassifiedGroupMessages(accountID)
+	if err != nil {
+		t.Fatalf("repair lan 2: %v", err)
+	}
+	if rep2.Messages != 0 || rep2.Media != 0 || rep2.MediaJobs != 0 ||
+		rep2.PrivateThreads != 0 || rep2.MovedFiles != 0 {
+		t.Fatalf("khong idempotent: %+v", rep2)
+	}
+}
+
+func TestGetConversationsPreviewScopedByConv(t *testing.T) {
+	s := newTestStore(t)
+	const accountID = "acc-1"
+
+	if err := s.SaveConversation(&Conversation{
+		ID: "private-1", AccountID: accountID, Name: "Private",
+		ConvType: 0, LastMsgID: "shared-id",
+	}); err != nil {
+		t.Fatalf("save private conv: %v", err)
+	}
+	if err := s.SaveConversation(&Conversation{
+		ID: "group-1", AccountID: accountID, Name: "Group",
+		ConvType: 1, LastMsgID: "shared-id",
+	}); err != nil {
+		t.Fatalf("save group conv: %v", err)
+	}
+	if err := s.SaveMessage(&Message{
+		ID: "shared-id", AccountID: accountID, ConvID: "private-1",
+		FromID: "peer-1", Content: "private content", MsgType: 1, Timestamp: 1000,
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	convs, err := s.GetConversations(accountID)
+	if err != nil {
+		t.Fatalf("get conversations: %v", err)
+	}
+	for _, c := range convs {
+		switch c.ID {
+		case "private-1":
+			if c.LastMsgContent != "private content" {
+				t.Fatalf("private preview=%q", c.LastMsgContent)
+			}
+		case "group-1":
+			if c.LastMsgContent != "" {
+				t.Fatalf("group leaked private preview=%q", c.LastMsgContent)
+			}
+		}
 	}
 }

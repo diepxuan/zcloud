@@ -945,7 +945,7 @@ clearUnread(id,accId);
 document.querySelectorAll('#cl .cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id&&(c.dataset.accountId||'')===accId)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ctt-id').textContent=id;document.getElementById('ia').classList.remove('hd');
 el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
-fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
+fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:accId,convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
 // lm(manual) — load thêm tin cũ. manual=true khi user click button.
 // Khi cuộn lên đầu thread (scrollTop <= 80px) sẽ tự gọi.
 // Giữ vị trí scroll: trước khi append lưu scrollHeight, sau khi append
@@ -964,7 +964,7 @@ async function lm(manual){
     if(!load){load=document.createElement('div');load.id='lm-load';load.className='lm-load';load.textContent='Đang tải...';ml.insertBefore(load,ml.firstChild);}
   }
   try{
-    var r=await fetch('/api/messages?convId='+cc+'&cursor='+cu+'&limit=30');
+    var r=await fetch('/api/messages?accountId='+encodeURIComponent(ccAccountId||'')+'&convId='+encodeURIComponent(cc)+'&cursor='+cu+'&limit=30');
     var d=await r.json();
     if(d.ok&&d.data&&d.data.length>0){
       var oldH=ml.scrollHeight,oldT=ml.scrollTop;
