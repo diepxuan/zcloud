@@ -2,7 +2,7 @@
 
 > File này merge nội dung từ `master-plan.md` (kiến trúc + 4 mục tiêu) và
 > `audit.md` (trạng thái chi tiết từng module + tồn đọng). Cập nhật
-> 20/10/2026 (đồng bộ trạng thái task 19, 20, 22, 24 và T3/T5).
+> 21/10/2026 (đồng bộ trạng thái task 19, 20, 22, 24, 31, 32 và T3/T5).
 
 ---
 
@@ -75,6 +75,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 | 30 | Fix realtime load tin nhắn trên Web UI | 🟢 Done (20/10/2026) | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
 | 31 | Fix tin nhắn nhóm bị ghi/gom nhầm vào chat riêng | ✅ Done (21/10/2026) | [31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md) |
+| 32 | Review tên group và tên tài khoản Zalo | ✅ Done (21/10/2026) | [32-review-group-account-names.md](tasks/32-review-group-account-names.md) |
 
 ---
 
@@ -663,6 +664,38 @@ nhóm đã ghi sai.
 `78855d3`. Sau repair, PostgreSQL còn 0/94 group có `last_msg_id` trỏ sang
 conversation khác; 44 group được khôi phục `last_msg_at`. Test DB integration,
 `go test ./...`, JS syntax và UI smoke test đều pass.
+
+## 5.27. Task 32 — Review tên group và tên tài khoản Zalo (21/10/2026)
+
+Chi tiết: [tasks/32-review-group-account-names.md](tasks/32-review-group-account-names.md).
+
+Sau Task 31, một số group vẫn hiển thị ID số và tên tài khoản có nguy cơ
+không đồng bộ giữa `accounts` với `zalo_accounts`. Kiểm tra live xác định
+nguyên nhân nằm ở ba điểm: payload sync có thể trả tên rỗng/ID và ghi đè tên
+đã resolve; group cũ chỉ còn trong DB không được đưa vào batch resolve; và
+request sync bị timeout hoặc chạy chồng nhau.
+
+Fix đã triển khai:
+
+- Giữ tên/avatar/last message/unread cũ khi payload Zalo thiếu field; chỉ
+  `UpdateConversationIdentity` tên/avatar sau khi resolve group.
+- Resolve lại group stale trong DB, retry riêng từng group bị thiếu trong batch
+  lớn và log `missing_ids`.
+- Cập nhật tên/avatar đồng thời cho cả `accounts` và `zalo_accounts` từ
+  `GetMyProfile`; giữ avatar cũ nếu profile tạm thời không trả avatar.
+- Tách timeout conversations/profile/group, tăng HTTP `WriteTimeout`; khóa sync
+  theo từng `accountId` và nhả khóa trước khi ghi response; UI chỉ gọi server
+  sync khi mở trang, WS chỉ reload DB.
+
+Kết quả live:
+
+- `acc_2291602426651082808`: 86 group, 84 có tên.
+- `acc_559609701372941728`: 9 group, 8 có tên.
+- Còn 3 group Zalo API không trả metadata:
+  `2927187516150146410`, `6654693590337934511`,
+  `1816136005206752080`. Không ghi đè hoặc bịa tên cho các group này.
+- Tên tài khoản live khớp profile: `Trần Ngọc Đức` và
+  `Chăn Ga Gối Nệm Điệp Xuân`.
 
 ## 6. References
 

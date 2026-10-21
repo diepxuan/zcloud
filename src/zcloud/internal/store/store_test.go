@@ -3,7 +3,9 @@
 package store
 
 import (
+	"database/sql"
 	"testing"
+	"time"
 )
 
 func TestSaveMessageDedupe(t *testing.T) {
@@ -164,5 +166,38 @@ func TestSetAccountEnabled(t *testing.T) {
 	}
 	if len(enabled2) != 2 {
 		t.Fatalf("want 2 enabled after re-enable, got %d", len(enabled2))
+	}
+}
+
+func TestUpdateConversationIdentityPreservesMessageState(t *testing.T) {
+	s, err := newTestStoreFull(t)
+	if err != nil {
+		t.Fatalf("newTestStoreFull: %v", err)
+	}
+	if err := s.CreateAccount("acc-identity", "Test", 1); err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	conv := &Conversation{
+		ID: "group-identity", AccountID: "acc-identity",
+		Name: "group-identity", Avatar: "old-avatar", ConvType: 1,
+		LastMsgID: "msg-1", LastMsgAt: sql.NullTime{Time: time.UnixMilli(1000), Valid: true},
+		Unread: 9,
+	}
+	if err := s.SaveConversation(conv); err != nil {
+		t.Fatalf("SaveConversation: %v", err)
+	}
+
+	if err := s.UpdateConversationIdentity("acc-identity", "group-identity", "Tên nhóm", "new-avatar"); err != nil {
+		t.Fatalf("UpdateConversationIdentity: %v", err)
+	}
+	got, err := s.GetConversation("acc-identity", "group-identity")
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if got.Name != "Tên nhóm" || got.Avatar != "new-avatar" {
+		t.Fatalf("identity = %q/%q", got.Name, got.Avatar)
+	}
+	if got.LastMsgID != "msg-1" || !got.LastMsgAt.Valid || got.Unread != 9 {
+		t.Fatalf("state overwritten: %+v", got)
 	}
 }

@@ -25,7 +25,7 @@ function _checkHealthAndMaybeReload(){
 	}).catch(function(){});
 }
 setInterval(_checkHealthAndMaybeReload,30000);
-document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy();syncWS();_checkHealthAndMaybeReload();});
+document.addEventListener('DOMContentLoaded',async function(){await la();uh();sy(true);syncWS();_checkHealthAndMaybeReload();});
 // accounts: cache list account cho tab Quan ly. Reload khi can.
 var accounts=[];
 // qrPollTimer: interval id cua QR poll loop.
@@ -865,15 +865,20 @@ async function loadFriends(){
 		el('fl').appendChild(dv);
 	});
 }
-async function sy(){
+// sy(syncServer): tải conversation từ DB và (tuỳ chọn) yêu cầu server sync
+// với Zalo. Chỉ gọi syncServer=true lúc mở trang; event WS dồn dập nên chỉ
+// reload DB để tránh tạo hàng loạt request sync 30-90s chồng nhau.
+async function sy(syncServer){
 	// Không còn state 'ca' — backend tự tìm account theo convId khi gửi/nhận.
 	if(!accounts.some(function(a){return a.enabled;})){
 		el('cl','<div style="padding:20px;text-align:center;color:#999">Chưa có tài khoản hiển thị</div>');return;
 	}
-	// Sync conversations cho từng enabled account (background).
-	accounts.filter(function(a){return a.enabled;}).forEach(function(a){
-		try{fetch('/api/conversations/sync?accountId='+a.id);}catch(e){}
-	});
+	if(syncServer){
+		// Sync conversations cho từng enabled account (background).
+		accounts.filter(function(a){return a.enabled;}).forEach(function(a){
+			try{fetch('/api/conversations/sync?accountId='+a.id);}catch(e){}
+		});
+	}
 	// Load convs DB cho TẤT CẢ enabled accounts, merge + sort theo lastMsgAt DESC.
 	var enabled=accounts.filter(function(a){return a.enabled});
 	var allConvs=[];

@@ -534,6 +534,16 @@ func (s *Store) GetConversation(accountID, convID string) (*Conversation, error)
 	return c, err
 }
 
+// UpdateConversationIdentity chỉ cập nhật tên/avatar của conversation.
+// Không dùng SaveConversation cho bước resolve tên vì upsert đó còn ghi đè
+// last_msg_id/last_msg_at/unread_count bằng zero value.
+func (s *Store) UpdateConversationIdentity(accountID, convID, name, avatar string) error {
+	_, err := s.db.Exec(`UPDATE conversations
+		SET name = $1, avatar = $2, updated_at = NOW()
+		WHERE account_id = $3 AND id = $4`, name, avatar, accountID, convID)
+	return err
+}
+
 // FindAccountByConvID trả account_id sở hữu convId.
 // Nếu nhiều account cùng có conv (vd self-thread), trả theo enabled+lastMsgAt DESC
 // (ưu tiên account enabled + có tin nhắn gần nhất).

@@ -73,10 +73,13 @@ func Run() error {
 	handler = loggingMiddleware(handler, logger)
 
 	server := &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      handler,
+		Addr:    cfg.Addr(),
+		Handler: handler,
+		// ReadTimeout ngắn để chặn client gửi chậm. WriteTimeout phải đủ dài
+		// cho /api/conversations/sync: bước tải conversations + resolve group
+		// có thể mất 30-90s. Trước đây 15s làm response bị đóng dù DB đã cập nhật.
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 3 * time.Minute,
 		IdleTimeout:  60 * time.Second,
 	}
 

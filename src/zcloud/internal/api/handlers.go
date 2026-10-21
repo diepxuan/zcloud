@@ -29,6 +29,12 @@ type Server struct {
 	zaloListeners  map[string]*zaloListenerEntry
 	syncV2Mu       sync.Mutex
 	syncV2Registry map[string]*syncV2Entry
+
+	// Tránh nhiều request /api/conversations/sync của cùng account chạy chồng
+	// nhau. Sync có thể mất 30-45s; request cũ hoàn tất muộn có thể ghi đè dữ
+	// liệu mới hơn. Khóa theo account để các account vẫn sync song song.
+	conversationSyncMu    sync.Mutex
+	conversationSyncLocks map[string]*sync.Mutex
 }
 
 func NewServer(s *store.Store, logger *logging.Logger) *Server {
@@ -519,6 +525,20 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 		fail(w, 401, "not logged in")
 		return
 	}
+	unlock, locked := s.tryLockConversationSync(accountID)
+	if !locked {
+		dbConvs, _ := s.Store.GetConversations(accountID)
+		if dbConvs == nil {
+			dbConvs = []store.Conversation{}
+		}
+		ok(w, dbConvs)
+		return
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 
 	// Start Zalo WS listener nền (Go server tự làm Zalo client)
 	go s.StartZaloListener(accountID)
@@ -544,9 +564,22 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 		session.WSURLs = wsURLs
 	}
 	client := core.NewClient(session)
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	convs, lastMsgs, err := client.GetConversations(ctx)
+
+	existingConvs, _ := s.Store.GetConversations(accountID)
+	existingByID := make(map[string]*store.Conversation, len(existingConvs))
+	for i := range existingConvs {
+		existingByID[existingConvs[i].ID] = &existingConvs[i]
+	}
+
+	fetchConversations := func() ([]core.Conversation, []core.Message, error) {
+		// GetConversations thường mất 15-40s. Dùng timeout riêng để group/profile
+		// resolution phía sau vẫn có context còn hiệu lực.
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		return client.GetConversations(ctx)
+	}
+
+	convs, lastMsgs, err := fetchConversations()
 	if err != nil {
 		if sessRec2 := s.autoRefresh(sessRec); sessRec2.ID != sessRec.ID {
 			// Refresh thành công, thử lại
@@ -555,7 +588,7 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 			session.Cookies = cookies
 			session.SecretKey = sessRec.SecretKey
 			client = core.NewClient(session)
-			convs, lastMsgs, err = client.GetConversations(ctx)
+			convs, lastMsgs, err = fetchConversations()
 		}
 	}
 	if err != nil {
@@ -565,6 +598,8 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 		if dbConvs == nil {
 			dbConvs = []store.Conversation{}
 		}
+		unlock()
+		unlock = nil
 		ok(w, dbConvs)
 		return
 	}
@@ -605,41 +640,117 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 				conv.LastMsgAt = sql.NullTime{Time: time.UnixMilli(c.LastMsg.Timestamp), Valid: true}
 			}
 		}
+		mergeConversationForSync(&conv, existingByID[c.ID])
 		if err := s.Store.SaveConversation(&conv); err != nil {
 			s.Logger.Error("conversation_save_failed", "account_id", accountID, "conversation_id", conv.ID, "error", err)
 		}
 	}
 
 	// Cập nhật tên + avatar cho account (đồng bộ)
-	if n, a, err := client.GetMyProfile(context.Background()); err == nil && n != "" {
-		s.Store.UpdateAccount(accountID, n, a)
+	// Dùng context nền cho bước cập nhật DB: client có thể đóng tab/timeout
+	// sau khi conversations đã tải xong, nhưng tên Zalo vẫn nên được lưu.
+	profileCtx, profileCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	profileName, profileAvatar, profileErr := client.GetMyProfile(profileCtx)
+	profileCancel()
+	if profileErr != nil {
+		s.Logger.Warn("conversation_profile_failed", "account_id", accountID, "error", profileErr)
+	} else if profileName != "" {
+		if profileAvatar == "" {
+			if account, err := s.Store.GetAccount(accountID); err == nil && account != nil {
+				profileAvatar = account.Avatar
+			}
+		}
+		if err := s.Store.UpdateAccount(accountID, profileName, profileAvatar); err != nil {
+			s.Logger.Error("account_profile_update_failed", "account_id", accountID, "error", err)
+		}
+		if _, err := s.Store.UpsertZaloAccount(sessRec.UserID, profileName, profileAvatar, ""); err != nil {
+			s.Logger.Error("zalo_account_profile_update_failed", "account_id", accountID, "error", err)
+		}
 	}
 
 	// Resolve group names — cập nhật tên + avatar cho group vào cả convs và DB
 	var groupIDs []string
+	groupSeen := make(map[string]bool)
 	for _, c := range convs {
 		if c.Type == core.ConvGroup {
 			groupIDs = append(groupIDs, c.ID)
+			groupSeen[c.ID] = true
+		}
+	}
+	// Giữ các group cũ chỉ còn trong DB (stale conversation) — vẫn resolve
+	// lại để tên không bị kẹt ở ID số khi Zalo không trả group đó trong
+	// clearUnreads hiện tại.
+	for _, c := range existingConvs {
+		if c.ConvType == int(core.ConvGroup) && !groupSeen[c.ID] {
+			groupIDs = append(groupIDs, c.ID)
+			groupSeen[c.ID] = true
 		}
 	}
 	if len(groupIDs) > 0 {
-		if gm, err := client.GetGroupInfo(ctx, groupIDs); err == nil {
-			for i := range convs {
-				if g, ok := gm[convs[i].ID]; ok {
-					convs[i].Name = g.Name
-					convs[i].Avatar = g.Avatar
-					// Preserve lastMsgID/lastMsgAt từ conv hiện tại — nếu không
-					// truyền, SaveConversation sẽ overwrite với "" (default zero value
-					// của string field) → mất last_msg_id đã populate từ clearUnreads.
-					existingLastID := convs[i].LastMsgID
-					if convs[i].LastMsg != nil && existingLastID == "" {
-						existingLastID = convs[i].LastMsg.ID
+		groupCtx, groupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		gm, err := client.GetGroupInfo(groupCtx, groupIDs)
+		groupCancel()
+		if err != nil {
+			s.Logger.Warn("conversation_group_info_failed", "account_id", accountID, "groups", len(groupIDs), "error", err)
+		} else {
+			if gm == nil {
+				gm = make(map[string]struct{ Name, Avatar string })
+			}
+			// API đôi lúc bỏ sót 1 group trong batch lớn. Retry riêng các ID
+			// còn thiếu để tránh lưu tên group thành ID số.
+			var missingIDs []string
+			for _, id := range groupIDs {
+				if _, ok := gm[id]; !ok {
+					missingIDs = append(missingIDs, id)
+				}
+			}
+			for _, id := range missingIDs {
+				retryCtx, retryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				one, retryErr := client.GetGroupInfo(retryCtx, []string{id})
+				retryCancel()
+				if retryErr != nil {
+					s.Logger.Warn("conversation_group_info_retry_failed",
+						"account_id", accountID, "conversation_id", id, "error", retryErr)
+					continue
+				}
+				for gid, info := range one {
+					gm[gid] = info
+				}
+			}
+			var unresolved []string
+			for _, id := range groupIDs {
+				if _, ok := gm[id]; !ok {
+					unresolved = append(unresolved, id)
+				}
+			}
+			if len(unresolved) > 0 {
+				s.Logger.Warn("conversation_group_info_incomplete",
+					"account_id", accountID, "groups", len(groupIDs), "resolved", len(gm),
+					"missing", len(unresolved), "missing_ids", strings.Join(unresolved, ","))
+			}
+			for _, id := range groupIDs {
+				g, ok := gm[id]
+				if !ok {
+					continue
+				}
+				name := strings.TrimSpace(g.Name)
+				if name == "" {
+					continue
+				}
+				avatar := g.Avatar
+				if avatar == "" && existingByID[id] != nil {
+					avatar = existingByID[id].Avatar
+				}
+				for i := range convs {
+					if convs[i].ID == id {
+						convs[i].Name = name
+						convs[i].Avatar = avatar
+						break
 					}
-					s.Store.SaveConversation(&store.Conversation{
-						ID: convs[i].ID, AccountID: accountID, Name: g.Name, Avatar: g.Avatar,
-						ConvType: int(convs[i].Type), LastMsgID: existingLastID,
-						UpdatedAt: time.Now(),
-					})
+				}
+				if err := s.Store.UpdateConversationIdentity(accountID, id, name, avatar); err != nil {
+					s.Logger.Error("conversation_identity_update_failed",
+						"account_id", accountID, "conversation_id", id, "error", err)
 				}
 			}
 		}
@@ -650,7 +761,55 @@ func (s *Server) HandleSyncConversations(w http.ResponseWriter, r *http.Request)
 	if dbConvs == nil {
 		dbConvs = []store.Conversation{}
 	}
+	unlock()
+	unlock = nil
 	ok(w, dbConvs)
+}
+
+func (s *Server) tryLockConversationSync(accountID string) (func(), bool) {
+	s.conversationSyncMu.Lock()
+	if s.conversationSyncLocks == nil {
+		s.conversationSyncLocks = make(map[string]*sync.Mutex)
+	}
+	mu := s.conversationSyncLocks[accountID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.conversationSyncLocks[accountID] = mu
+	}
+	s.conversationSyncMu.Unlock()
+
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
+}
+
+func conversationNameMissing(name, id string) bool {
+	name = strings.TrimSpace(name)
+	return name == "" || name == id
+}
+
+// mergeConversationForSync giữ dữ liệu DB cũ khi payload Zalo thiếu field.
+// Đặc biệt không để tên group đã resolve bị ghi đè bằng ID chỉ vì
+// clearUnreads trả userName rỗng.
+func mergeConversationForSync(incoming, existing *store.Conversation) {
+	if existing == nil {
+		return
+	}
+	if conversationNameMissing(incoming.Name, incoming.ID) &&
+		!conversationNameMissing(existing.Name, existing.ID) {
+		incoming.Name = existing.Name
+	}
+	if incoming.Avatar == "" {
+		incoming.Avatar = existing.Avatar
+	}
+	if incoming.LastMsgID == "" {
+		incoming.LastMsgID = existing.LastMsgID
+	}
+	if !incoming.LastMsgAt.Valid {
+		incoming.LastMsgAt = existing.LastMsgAt
+	}
+	incoming.Unread = existing.Unread
 }
 
 // ========== MESSAGES ==========
