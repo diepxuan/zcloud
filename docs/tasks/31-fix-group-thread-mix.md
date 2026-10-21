@@ -3,7 +3,7 @@
 ## Liên kết
 
 - **Task list:** [../tasks.md](../tasks.md) §3 và §5.26
-- **Trạng thái:** 🟡 In Progress (21/10/2026)
+- **Trạng thái:** ✅ Done (21/10/2026)
 - **Mức độ:** Cao — sai conversation của dữ liệu, ảnh hưởng trực tiếp chat và lịch sử
 - **Liên quan:**
   - [21-fix-newmessage-parse.md](21-fix-newmessage-parse.md) — unwrap `groupMsgs`
@@ -116,9 +116,21 @@ Thêm repair idempotent:
 - Chuyển `messages.conv_id`, `media.conv_id`, `media_jobs.conv_id` về group.
 - Di chuyển file media nếu file đã tải.
 - Cập nhật `conversations.last_msg_at` từ timestamp message.
+- Khôi phục `last_msg_id/last_msg_at` của chat riêng nếu message nhóm từng
+  được dùng làm last message ở đó.
 - Chạy qua startup repair giống self-thread repair hiện có.
 
 Không thay đổi schema.
+
+### Thứ tự triển khai
+
+1. Sửa parser và truyền `ThreadType` ở mọi đường parse WS/REST.
+2. Scope preview sidebar theo `(account_id, conv_id, message_id)`.
+3. Scope UI load/sync history theo `accountId`.
+4. Chạy migration dữ liệu idempotent lúc startup:
+   xác định group đích từ `conversations.last_msg_id`, chuyển message và
+   metadata media, rồi phục hồi last message của chat riêng bị ảnh hưởng.
+5. Verify PostgreSQL, API và UI trước khi đóng task.
 
 ## Test hồi quy
 
@@ -133,14 +145,57 @@ Không thay đổi schema.
 
 ## Verification
 
-- [ ] Parser tests pass.
-- [ ] Store integration tests pass với `-tags testdb`.
-- [ ] `go test ./...` pass.
-- [ ] `./scripts/check-js.sh` pass.
-- [ ] `./scripts/check-ui.sh` pass.
-- [ ] Restart service; log repair hiển thị số row đã sửa.
-- [ ] DB sau repair: 0 group `last_msg_id` trỏ message khác `conv_id`.
-- [ ] API sidebar group không còn preview từ chat riêng.
+- [x] Parser tests pass.
+- [x] Store integration tests pass với `-tags testdb`.
+- [x] `go test ./...` pass.
+- [x] `./scripts/check-js.sh` pass.
+- [x] `./scripts/check-ui.sh` pass (16/16 check).
+- [x] Rebuild + restart service; startup repair đã chạy.
+- [x] DB sau repair: 0 group `last_msg_id` trỏ message khác `conv_id`.
+- [x] API sidebar group không còn preview từ chat riêng.
+
+## Kết quả triển khai (21/10/2026)
+
+Commit:
+
+- `35d6d82` — tạo Task 31 và ghi nhận bằng chứng ban đầu.
+- `fcdd9ab` — parser thread-aware + regression tests.
+- `78855d3` — preview scoping, repair dữ liệu, UI account scoping + tests.
+
+Trước repair:
+
+- 44/94 group có `last_msg_id` trỏ message mang `conv_id` khác.
+- 93/94 group không có `last_msg_at`.
+- 0 message ID bị nhiều group cùng account tham chiếu (không ambiguous).
+
+Sau repair:
+
+- `group_last_mismatch = 0`.
+- `ambiguous_group_last_ids = 0`.
+- `private_last_moved_to_group = 0`.
+- `media_conv_mismatch_for_group_last = 0`.
+- `jobs_conv_mismatch_for_group_last = 0`.
+- `group_last_null_at`: 93 → 49, đúng bằng 44 group đã khôi phục timestamp.
+
+Kiểm tra mẫu group `7594197834360446865` thuộc
+`acc_2291602426651082808`:
+
+- Message `8394889109935` đã có `conv_id=7594197834360446865`.
+- API `/api/messages` trả 3 message, cả 3 đều mang đúng group conv.
+- API `/api/conversations` trả preview nội dung group và `lastMsgAt` hợp lệ.
+- Chat riêng `Parent` (`1117310679873051764`) đã trở lại message riêng gần
+  nhất `8397037759069`, không còn dùng message group làm preview.
+
+Test đã chạy:
+
+- `go build ./...`: pass.
+- `go test ./...`: pass.
+- `go test -tags testdb ./internal/store -run
+  'Test(RepairMisclassifiedGroupMessages|GetConversationsPreviewScopedByConv)'`: pass.
+- `./scripts/check-js.sh`: pass.
+- `./scripts/check-ui.sh`: pass 16/16; render 244 conversation.
+- `POST /api/messages/sync` với `accountId + convId`: trả
+  `{"synced":1,"syncing":true}`.
 
 ## Rủi ro và kiểm soát
 
@@ -151,6 +206,9 @@ Không thay đổi schema.
   cùng account tham chiếu.
 - **Media file:** lỗi move file không rollback DB; media giữ `source_url` để
   worker tải lại.
+- **Lịch sử cũ không có `last_msg_id` xác nhận:** không thể suy ra group đích
+  một cách an toàn nên không backfill tự động. Parser fix chỉ bảo đảm dữ liệu
+  mới không tiếp tục bị ghi nhầm.
 
 ## Không nằm trong task này
 

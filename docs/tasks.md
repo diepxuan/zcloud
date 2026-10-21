@@ -74,7 +74,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 23 | Cross-device snapshot từ /api/message/get_crossdb (Phase C) | 🟡 Pending | [23-crossdb-snapshot.md](tasks/23-crossdb-snapshot.md) |
 | 24 | Tách bảng `zalo_accounts` khỏi `accounts` (3-tier identity) | 🟢 Done (13/09/2026) | [24-split-zalo-account.md](tasks/24-split-zalo-account.md) |
 | 30 | Fix realtime load tin nhắn trên Web UI | 🟢 Done (20/10/2026) | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
-| 31 | Fix tin nhắn nhóm bị ghi/gom nhầm vào chat riêng | 🟡 In Progress | [31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md) |
+| 31 | Fix tin nhắn nhóm bị ghi/gom nhầm vào chat riêng | ✅ Done (21/10/2026) | [31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md) |
 
 ---
 
@@ -658,6 +658,11 @@ gửi. Query sidebar cũng join preview chỉ theo message ID, không kiểm tra
 Fix gồm parser thread-aware, preview scoped theo conversation, UI truyền
 `accountId` khi load/sync history, và repair idempotent cho các last message
 nhóm đã ghi sai.
+
+Đã triển khai xong trên `main`: parser fix `fcdd9ab`, repair + UI scoping
+`78855d3`. Sau repair, PostgreSQL còn 0/94 group có `last_msg_id` trỏ sang
+conversation khác; 44 group được khôi phục `last_msg_at`. Test DB integration,
+`go test ./...`, JS syntax và UI smoke test đều pass.
 
 ## 6. References
 
