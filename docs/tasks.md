@@ -76,6 +76,7 @@ Xem chi tiết thiết kế tại `docs/design.md`.
 | 30 | Fix realtime load tin nhắn trên Web UI | 🟢 Done (20/10/2026) | [30-realtime-webui.md](tasks/30-realtime-webui.md) |
 | 31 | Fix tin nhắn nhóm bị ghi/gom nhầm vào chat riêng | ✅ Done (21/10/2026) | [31-fix-group-thread-mix.md](tasks/31-fix-group-thread-mix.md) |
 | 32 | Review tên group và tên tài khoản Zalo | ✅ Done (21/10/2026) | [32-review-group-account-names.md](tasks/32-review-group-account-names.md) |
+| 33 | Kiểm tra group thiếu tin nhắn cũ | ✅ Done (21/10/2026) | [33-group-missing-history.md](tasks/33-group-missing-history.md) |
 
 ---
 
@@ -696,6 +697,38 @@ Kết quả live:
   `1816136005206752080`. Không ghi đè hoặc bịa tên cho các group này.
 - Tên tài khoản live khớp profile: `Trần Ngọc Đức` và
   `Chăn Ga Gối Nệm Điệp Xuân`.
+
+## 5.28. Task 33 — Kiểm tra group thiếu tin nhắn cũ (21/10/2026)
+
+Chi tiết: [tasks/33-group-missing-history.md](tasks/33-group-missing-history.md).
+
+Audit PostgreSQL xác định 48 group có 0 message và 49 group có
+`last_msg_id` không tồn tại trong DB. Nguyên nhân chính là `HandleSyncMessages`
+coi request WS 510/511 là đã sync xong, parser `getrecentv2` bỏ sót envelope
+lồng chuỗi JSON, timestamp dạng chuỗi bị lưu thành `0`, và message nhóm từng
+bị ghi vào chat riêng không được chuyển lại khi sync.
+
+Fix đã triển khai:
+
+- Chờ WS ghi DB tối đa 2 giây, sau đó fallback V2 `/api/group/history` và
+  legacy `/api/cm/getrecentv2` với `zpw_ver=645`; thử nhiều host group.
+- Parser dùng chung cho V1/V2, giải mã envelope lồng, đọc timestamp number/
+  string, bỏ message không có timestamp hợp lệ và parse ảnh cũ thành attachment.
+- `SaveGroupHistoryMessage` chuyển message đang nằm sai conversation về group,
+  kéo media/media_jobs + file trên disk theo và phục hồi last message chat riêng.
+- UI chờ `/api/messages/sync` xong rồi mới load lịch sử.
+
+Kết quả live:
+
+- Group trống: 48 → 46.
+- Hiện còn 49 `last_msg_id` chưa có row trong DB: 46 thuộc group trống do
+  Zalo trả `groupMsgs=[]`; 3 group có 1-4 tin nhưng Zalo không trả message cuối
+  tương ứng.
+- Message `timestamp <= 0`: 3 → 0.
+- Group mẫu `7594197834360446865`: 7 → 10 message, 3 ảnh cũ có timestamp đúng.
+- Phục hồi group `5032666330621624354` và `5770111624378323430`, mỗi group
+  từ 0 → 1 message.
+- 46 group còn trống được Zalo trả `groupMsgs=[]`; không bịa lịch sử.
 
 ## 6. References
 

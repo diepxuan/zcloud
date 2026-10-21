@@ -949,8 +949,19 @@ function sc(id,accId,accMe,nm,av){cc=id;ccAccountId=accId;ccAccountMe=accMe;ccOt
 clearUnread(id,accId);
 document.querySelectorAll('#cl .cv').forEach(function(c){c.classList.toggle('on',c.dataset.id===id&&(c.dataset.accountId||'')===accId)});
 document.getElementById('ctt').textContent=nm||id;document.getElementById('ctt-id').textContent=id;document.getElementById('ia').classList.remove('hd');
-el('ml','<div class="lm" id="lm-btn" onclick="lm(true)">Tải tin nhắn cũ</div>');
-fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:accId,convId:id})}).then(function(r){if(!r.ok)console.log('sync unavailable')}).catch(function(){});lm()}
+el('ml','<div class="lm-load">Đang tải...</div>');
+// Chờ server kiểm tra WS rồi fallback REST, sau đó mới đọc DB. Nếu đọc ngay,
+// group chưa có message sẽ bị đánh dấu "hết lịch sử" trước khi sync hoàn tất.
+fetch('/api/messages/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:accId,convId:id})})
+	.then(function(r){return r.json();})
+	.then(function(d){
+		if(cc!==id||ccAccountId!==accId)return;
+		if(d&&d.ok&&d.data&&d.data.synced>0){cu=0;cuEnd=false;}
+		lm();
+	})
+	.catch(function(){
+		if(cc===id&&ccAccountId===accId)lm();
+	});}
 // lm(manual) — load thêm tin cũ. manual=true khi user click button.
 // Khi cuộn lên đầu thread (scrollTop <= 80px) sẽ tự gọi.
 // Giữ vị trí scroll: trước khi append lưu scrollHeight, sau khi append

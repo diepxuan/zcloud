@@ -98,3 +98,23 @@ func TestServiceBaseURL(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupHistoryBaseURLs(t *testing.T) {
+	session := &Session{ServiceMap: map[string][]string{
+		"group": {"https://tt-group-wpa.chat.zalo.me/"},
+	}}
+	got := groupHistoryBaseURLs(session)
+	want := []string{
+		"https://tt-group-wpa.chat.zalo.me",
+		"https://group-wpa.chat.zalo.me",
+		"https://tt-group-cm.chat.zalo.me",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("groupHistoryBaseURLs() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("groupHistoryBaseURLs()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

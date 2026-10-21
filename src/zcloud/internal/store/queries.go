@@ -682,6 +682,148 @@ func (s *Store) SaveMessage(m *Message) error {
 	return err
 }
 
+// SaveGroupHistoryMessage lưu message do API lịch sử nhóm trả về. Nếu message
+// đã tồn tại nhưng đang nằm ở conversation khác do parser cũ ghi nhầm, chuyển
+// row về group đích và kéo media/media_jobs theo. Các field nội dung gốc không
+// bị ghi đè.
+func (s *Store) SaveGroupHistoryMessage(m *Message) error {
+	if m == nil || m.ID == "" || m.AccountID == "" || m.ConvID == "" {
+		return fmt.Errorf("save group history: thiếu message/account/conversation")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var oldConvID string
+	err = tx.QueryRow(`SELECT conv_id FROM messages
+		WHERE account_id = $1 AND id = $2 FOR UPDATE`, m.AccountID, m.ID).Scan(&oldConvID)
+	switch {
+	case err == sql.ErrNoRows:
+		_, err = tx.Exec(insertMessageSQL, m.ID, m.AccountID, m.ConvID, m.FromID,
+			m.FromName, m.Content, m.MsgType, m.Timestamp, m.Attachments)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	case err != nil:
+		return err
+	case oldConvID == m.ConvID:
+		_, err = tx.Exec(`UPDATE messages SET
+				from_name = CASE WHEN $3 != '' AND from_name = '' THEN $3 ELSE from_name END,
+				attachments = CASE WHEN $4 != '[]' AND attachments = '[]' THEN $4 ELSE attachments END
+			WHERE account_id = $1 AND id = $2`, m.AccountID, m.ID, m.FromName, m.Attachments)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
+	rows, err := tx.Query(`SELECT id, file_ext, conv_id FROM media
+		WHERE account_id = $1 AND msg_id = $2 AND conv_id <> $3`,
+		m.AccountID, m.ID, m.ConvID)
+	if err != nil {
+		return err
+	}
+	var moves []mediaMove
+	for rows.Next() {
+		mv := mediaMove{newConvID: m.ConvID}
+		if err := rows.Scan(&mv.id, &mv.fileExt, &mv.oldConvID); err != nil {
+			rows.Close()
+			return err
+		}
+		moves = append(moves, mv)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	if _, err := tx.Exec(`UPDATE messages SET
+			conv_id = $3,
+			from_name = CASE WHEN $4 != '' AND from_name = '' THEN $4 ELSE from_name END,
+			attachments = CASE WHEN $5 != '[]' AND attachments = '[]' THEN $5 ELSE attachments END
+		WHERE account_id = $1 AND id = $2`, m.AccountID, m.ID, m.ConvID, m.FromName, m.Attachments); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`WITH latest AS (
+			SELECT id, timestamp
+			FROM messages
+			WHERE account_id = $1 AND conv_id = $2 AND id <> $3
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 1
+		)
+		UPDATE conversations c SET
+			last_msg_id = COALESCE((SELECT id FROM latest), ''),
+			last_msg_at = CASE WHEN EXISTS (SELECT 1 FROM latest)
+				THEN to_timestamp((SELECT timestamp FROM latest) / 1000.0) ELSE NULL END
+		WHERE c.account_id = $1 AND c.id = $2 AND c.last_msg_id = $3`,
+		m.AccountID, oldConvID, m.ID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`UPDATE media SET
+			conv_id = $3,
+			file_path = account_id || '/' || $3 || '/' || id || '.' || file_ext
+		WHERE account_id = $1 AND msg_id = $2 AND conv_id <> $3`,
+		m.AccountID, m.ID, m.ConvID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`UPDATE media_jobs SET
+			conv_id = $3,
+			local_path = CASE WHEN status = 'done'
+				THEN account_id || '/' || $3 || '/' || id || '.' || file_ext
+				ELSE local_path END
+		WHERE account_id = $1 AND msg_id = $2 AND conv_id <> $3`,
+		m.AccountID, m.ID, m.ConvID); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, mv := range moves {
+		if err := s.moveMediaFile(m.AccountID, mv.oldConvID, mv.newConvID, mv.id, mv.fileExt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) CountMessages(accountID, convID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE account_id = $1 AND conv_id = $2`,
+		accountID, convID).Scan(&count)
+	return count, err
+}
+
+// RefreshConversationLastMessage đặt lại preview/last_msg_at từ message mới
+// nhất đang có trong DB. Không lùi mốc thời gian nếu Zalo đã báo tin mới hơn
+// nhưng payload lịch sử chưa chứa tin đó.
+func (s *Store) RefreshConversationLastMessage(accountID, convID string) error {
+	_, err := s.db.Exec(`UPDATE conversations c
+		SET last_msg_id = latest.id,
+		    last_msg_at = to_timestamp(latest.timestamp / 1000.0),
+		    updated_at = NOW()
+		FROM (
+			SELECT id, timestamp
+			FROM messages
+			WHERE account_id = $1 AND conv_id = $2
+			ORDER BY timestamp DESC, id DESC
+			LIMIT 1
+		) latest
+		WHERE c.account_id = $1 AND c.id = $2
+		  AND (c.last_msg_at IS NULL
+		       OR latest.timestamp >= (EXTRACT(EPOCH FROM c.last_msg_at) * 1000)::bigint)`,
+		accountID, convID)
+	return err
+}
+
 func (s *Store) GetMessages(accountID, convID string, cursor int64, limit int) ([]Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50

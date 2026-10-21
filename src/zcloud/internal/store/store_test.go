@@ -201,3 +201,103 @@ func TestUpdateConversationIdentityPreservesMessageState(t *testing.T) {
 		t.Fatalf("state overwritten: %+v", got)
 	}
 }
+
+func TestCountAndRefreshConversationLastMessage(t *testing.T) {
+	s, err := newTestStoreFull(t)
+	if err != nil {
+		t.Fatalf("newTestStoreFull: %v", err)
+	}
+	if err := s.CreateAccount("acc-history", "Test", 1); err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	conv := &Conversation{
+		ID: "group-history", AccountID: "acc-history",
+		Name: "Nhóm lịch sử", ConvType: 1,
+	}
+	if err := s.SaveConversation(conv); err != nil {
+		t.Fatalf("SaveConversation: %v", err)
+	}
+	for _, m := range []*Message{
+		{ID: "msg-old", AccountID: "acc-history", ConvID: "group-history", Timestamp: 1000},
+		{ID: "msg-new", AccountID: "acc-history", ConvID: "group-history", Timestamp: 2000},
+	} {
+		if err := s.SaveMessage(m); err != nil {
+			t.Fatalf("SaveMessage(%s): %v", m.ID, err)
+		}
+	}
+	if got, err := s.CountMessages("acc-history", "group-history"); err != nil || got != 2 {
+		t.Fatalf("CountMessages() = %d, %v; want 2, nil", got, err)
+	}
+	if err := s.RefreshConversationLastMessage("acc-history", "group-history"); err != nil {
+		t.Fatalf("RefreshConversationLastMessage: %v", err)
+	}
+	got, err := s.GetConversation("acc-history", "group-history")
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if got.LastMsgID != "msg-new" {
+		t.Fatalf("lastMsgId = %q, want msg-new", got.LastMsgID)
+	}
+	if !got.LastMsgAt.Valid || got.LastMsgAt.Time.UnixMilli() != 2000 {
+		t.Fatalf("lastMsgAt = %+v, want 2000ms", got.LastMsgAt)
+	}
+	if got.Name != "Nhóm lịch sử" {
+		t.Fatalf("name = %q, want Nhóm lịch sử", got.Name)
+	}
+}
+
+func TestSaveGroupHistoryMessageMovesMisclassifiedMessage(t *testing.T) {
+	s, err := newTestStoreFull(t)
+	if err != nil {
+		t.Fatalf("newTestStoreFull: %v", err)
+	}
+	if err := s.CreateAccount("acc-group-history", "Test", 1); err != nil {
+		t.Fatalf("CreateAccount: %v", err)
+	}
+	privateConv := &Conversation{
+		ID: "private-thread", AccountID: "acc-group-history", Name: "Private",
+		LastMsgID: "misassigned", LastMsgAt: sql.NullTime{Time: time.UnixMilli(3000), Valid: true},
+	}
+	groupConv := &Conversation{
+		ID: "group-thread", AccountID: "acc-group-history", Name: "Group", ConvType: 1,
+	}
+	for _, conv := range []*Conversation{privateConv, groupConv} {
+		if err := s.SaveConversation(conv); err != nil {
+			t.Fatalf("SaveConversation(%s): %v", conv.ID, err)
+		}
+	}
+	for _, m := range []*Message{
+		{ID: "private-old", AccountID: "acc-group-history", ConvID: "private-thread", Timestamp: 1000},
+		{ID: "misassigned", AccountID: "acc-group-history", ConvID: "private-thread", Timestamp: 3000},
+	} {
+		if err := s.SaveMessage(m); err != nil {
+			t.Fatalf("SaveMessage(%s): %v", m.ID, err)
+		}
+	}
+
+	history := &Message{
+		ID: "misassigned", AccountID: "acc-group-history", ConvID: "group-thread",
+		Timestamp: 3000, MsgType: 2,
+	}
+	if err := s.SaveGroupHistoryMessage(history); err != nil {
+		t.Fatalf("SaveGroupHistoryMessage: %v", err)
+	}
+	if err := s.SaveGroupHistoryMessage(history); err != nil {
+		t.Fatalf("SaveGroupHistoryMessage idempotent: %v", err)
+	}
+
+	for convID, want := range map[string]int{"group-thread": 1, "private-thread": 1} {
+		got, err := s.CountMessages("acc-group-history", convID)
+		if err != nil || got != want {
+			t.Fatalf("CountMessages(%s) = %d, %v; want %d", convID, got, err, want)
+		}
+	}
+	gotPrivate, err := s.GetConversation("acc-group-history", "private-thread")
+	if err != nil {
+		t.Fatalf("GetConversation(private): %v", err)
+	}
+	if gotPrivate.LastMsgID != "private-old" || !gotPrivate.LastMsgAt.Valid ||
+		gotPrivate.LastMsgAt.Time.UnixMilli() != 1000 {
+		t.Fatalf("private last message not restored: %+v", gotPrivate)
+	}
+}

@@ -100,6 +100,7 @@ func (s *Store) repairMessagesSQL() string {
 type mediaMove struct {
 	id        string
 	fileExt   string
+	oldConvID string
 	newConvID string
 }
 

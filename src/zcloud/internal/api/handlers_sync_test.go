@@ -88,3 +88,25 @@ func TestConversationSyncLockScopedByAccount(t *testing.T) {
 	}
 	unlockA2()
 }
+
+func TestNeedsGroupHistoryFallback(t *testing.T) {
+	tests := []struct {
+		name                    string
+		convType                int
+		wsSent                  bool
+		beforeCount, afterCount int
+		want                    bool
+	}{
+		{name: "group ws silent", convType: 1, wsSent: true, beforeCount: 0, afterCount: 0, want: true},
+		{name: "group ws delivered", convType: 1, wsSent: true, beforeCount: 0, afterCount: 12, want: false},
+		{name: "group no listener", convType: 1, wsSent: false, beforeCount: 0, afterCount: 0, want: true},
+		{name: "individual", convType: 0, wsSent: true, beforeCount: 0, afterCount: 0, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := needsGroupHistoryFallback(tt.convType, tt.wsSent, tt.beforeCount, tt.afterCount); got != tt.want {
+				t.Fatalf("needsGroupHistoryFallback() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

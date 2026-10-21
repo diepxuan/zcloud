@@ -780,9 +780,25 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, ServiceKeyGroup, "https://tt-group-cm.chat.zalo.me")
-	serviceURL := fmt.Sprintf("%s/api/cm/getrecentv2?params=%s&zpw_ver=%d&zpw_type=%d&nretry=0",
-		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
+	var lastErr error
+	for _, baseURL := range groupHistoryBaseURLs(c.Session) {
+		msgs, err := c.getGroupHistoryFrom(ctx, baseURL, rawKey, enc)
+		if err == nil {
+			return msgs, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, nil
+}
+
+func (c *Client) getGroupHistoryFrom(ctx context.Context, baseURL string, rawKey []byte, enc string) ([]Message, error) {
+	// Endpoint getrecentv2 dùng API version cố định 645 (tham chiếu za-go);
+	// dùng zpw_ver của login Web (688) trả response rỗng.
+	serviceURL := fmt.Sprintf("%s/api/cm/getrecentv2?params=%s&zpw_ver=645&zpw_type=%d&nretry=0",
+		baseURL, url.QueryEscape(enc), c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
 	c.setHeaders(req)
 
@@ -792,51 +808,51 @@ func (c *Client) GetGroupHistory(ctx context.Context, groupID string, count int)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("group history %s: HTTP %d: %s", baseURL,
+			resp.StatusCode, strings.TrimSpace(string(body[:min(160, len(body))])))
+	}
 	if len(body) > 0 && body[0] == '<' {
 		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
 	}
 
 	var apiResp struct {
-		Data *json.RawMessage `json:"data"`
+		ErrorCode int              `json:"error_code"`
+		ErrorMsg  string           `json:"error_message"`
+		Data      *json.RawMessage `json:"data"`
 	}
 	json.Unmarshal(body, &apiResp)
 	if apiResp.Data == nil {
-		return nil, nil
+		return nil, fmt.Errorf("group history %s: error %d %s: %s", baseURL,
+			apiResp.ErrorCode, apiResp.ErrorMsg, strings.TrimSpace(string(body[:min(160, len(body))])))
 	}
 
 	var dataStr string
-	json.Unmarshal(*apiResp.Data, &dataStr)
+	if err := json.Unmarshal(*apiResp.Data, &dataStr); err != nil {
+		return nil, fmt.Errorf("group history decode data string: %w", err)
+	}
 
-	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	decrypted, err := decodeGroupHistoryData(rawKey, dataStr)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
-	// Parse ra mảng messages
-	var msgsData []any
-	if err := json.Unmarshal(decrypted, &msgsData); err != nil {
-		// Thử parse từ wrapper {data: [...]}
-		var wrap struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if err2 := json.Unmarshal(decrypted, &wrap); err2 != nil {
-			return nil, nil
-		}
-		json.Unmarshal(wrap.Data, &msgsData)
+	items, err := parseGroupHistoryPayload(decrypted)
+	if err != nil {
+		return nil, err
 	}
-
-	msgs := make([]Message, 0, len(msgsData))
-	for _, item := range msgsData {
-		if m, ok := item.(map[string]any); ok {
-			ts, _ := m["ts"].(float64)
-			msgType, _ := m["msgType"].(float64)
-			msgs = append(msgs, Message{
-				ID: toString(m["msgId"]), ConvID: toString(m["grid"]),
-				FromID: toString(m["uidFrom"]), FromName: toString(m["dName"]),
-				Content:   toString(m["content"]),
-				Timestamp: int64(ts), Type: MsgType(msgType),
-			})
+	msgs, skipped := groupHistoryMessagesFromItems(items)
+	if skipped > 0 {
+		slog.Debug("group_history_messages_skipped", "base_url", baseURL, "count", skipped)
+	}
+	if len(msgs) == 0 {
+		var shape map[string]json.RawMessage
+		_ = json.Unmarshal(decrypted, &shape)
+		keys := make([]string, 0, len(shape))
+		for key := range shape {
+			keys = append(keys, key)
 		}
+		return nil, fmt.Errorf("group history %s: empty response keys=%v", baseURL, keys)
 	}
 	return msgs, nil
 }
@@ -863,7 +879,43 @@ func (c *Client) GetGroupHistoryV2(ctx context.Context, groupID string, count in
 		return nil, err
 	}
 
-	baseURL := serviceBaseURL(c.Session, ServiceKeyGroup, "https://group-wpa.chat.zalo.me")
+	var lastErr error
+	for _, baseURL := range groupHistoryBaseURLs(c.Session) {
+		msgs, err := c.getGroupHistoryV2From(ctx, baseURL, rawKey, enc)
+		if err == nil {
+			return msgs, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, nil
+}
+
+func groupHistoryBaseURLs(session *Session) []string {
+	var urls []string
+	seen := make(map[string]bool)
+	add := func(rawURL string) {
+		rawURL = strings.TrimRight(strings.TrimSpace(rawURL), "/")
+		if rawURL == "" || seen[rawURL] {
+			return
+		}
+		seen[rawURL] = true
+		urls = append(urls, rawURL)
+	}
+
+	configured := serviceBaseURL(session, ServiceKeyGroup, "https://group-wpa.chat.zalo.me")
+	add(configured)
+	if strings.Contains(configured, "://tt-group-") {
+		add(strings.Replace(configured, "://tt-group-", "://group-", 1))
+	}
+	add("https://group-wpa.chat.zalo.me")
+	add("https://tt-group-cm.chat.zalo.me")
+	return urls
+}
+
+func (c *Client) getGroupHistoryV2From(ctx context.Context, baseURL string, rawKey []byte, enc string) ([]Message, error) {
 	serviceURL := fmt.Sprintf("%s/api/group/history?params=%s&zpw_ver=%d&zpw_type=%d",
 		baseURL, url.QueryEscape(enc), c.Session.APIVersion, c.Session.APIType)
 	req, _ := http.NewRequestWithContext(ctx, "GET", serviceURL, nil)
@@ -875,65 +927,258 @@ func (c *Client) GetGroupHistoryV2(ctx context.Context, groupID string, count in
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("group history v2 %s: HTTP %d: %s", baseURL,
+			resp.StatusCode, strings.TrimSpace(string(body[:min(160, len(body))])))
+	}
 	if len(body) > 0 && body[0] == '<' {
 		return nil, fmt.Errorf("zalo html: %s", string(body[:min(200, len(body))]))
 	}
 
 	var apiResp struct {
-		Data *json.RawMessage `json:"data"`
+		ErrorCode int              `json:"error_code"`
+		ErrorMsg  string           `json:"error_message"`
+		Data      *json.RawMessage `json:"data"`
 	}
 	json.Unmarshal(body, &apiResp)
 	if apiResp.Data == nil {
-		return nil, nil
+		return nil, fmt.Errorf("group history v2 %s: error %d %s: %s", baseURL,
+			apiResp.ErrorCode, apiResp.ErrorMsg, strings.TrimSpace(string(body[:min(160, len(body))])))
 	}
 
 	var dataStr string
 	if err := json.Unmarshal(*apiResp.Data, &dataStr); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("group history v2 decode data string: %w", err)
 	}
-	decrypted, err := DecodeAESCBC(rawKey, dataStr)
+	decrypted, err := decodeGroupHistoryData(rawKey, dataStr)
 	if err != nil {
-		// Một số response trả raw JSON thay vì encrypted.
-		decrypted = []byte(dataStr)
+		return nil, err
 	}
 
+	items, err := parseGroupHistoryPayload(decrypted)
+	if err != nil {
+		return nil, err
+	}
+	msgs, skipped := groupHistoryMessagesFromItems(items)
+	if skipped > 0 {
+		slog.Debug("group_history_v2_messages_skipped", "base_url", baseURL, "count", skipped)
+	}
+	return msgs, nil
+}
+
+// decodeGroupHistoryData handles the normal encrypted payload plus responses
+// that wrap another {error_code,error_message,data} envelope inside data.
+func decodeGroupHistoryData(rawKey []byte, data string) ([]byte, error) {
+	current := []byte(data)
+	for depth := 0; depth < 3; depth++ {
+		if decoded, err := DecodeAESCBC(rawKey, string(current)); err == nil {
+			current = decoded
+		}
+
+		var envelope struct {
+			ErrorCode int             `json:"error_code"`
+			ErrorMsg  string          `json:"error_message"`
+			Data      json.RawMessage `json:"data"`
+		}
+		if json.Unmarshal(current, &envelope) != nil {
+			return current, nil
+		}
+		if envelope.ErrorCode != 0 {
+			return nil, fmt.Errorf("group history error %d: %s", envelope.ErrorCode, envelope.ErrorMsg)
+		}
+		if len(envelope.Data) == 0 {
+			return current, nil
+		}
+
+		var nestedString string
+		if json.Unmarshal(envelope.Data, &nestedString) == nil {
+			if nestedString == "" {
+				return current, nil
+			}
+			current = []byte(nestedString)
+			continue
+		}
+		return envelope.Data, nil
+	}
+	return current, nil
+}
+
+// parseGroupHistoryPayload accepts both the groupMsgs/msgs wrapper and the
+// legacy data field, including the case where data is itself a JSON string.
+func parseGroupHistoryPayload(payload []byte) ([]map[string]any, error) {
 	var raw struct {
 		GroupMsgs []map[string]any `json:"groupMsgs"`
 		Msgs      []map[string]any `json:"msgs"`
 		Data      json.RawMessage  `json:"data"`
 	}
-	if err := json.Unmarshal(decrypted, &raw); err != nil {
-		return nil, nil
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		var array []map[string]any
+		if arrayErr := json.Unmarshal(payload, &array); arrayErr != nil {
+			return nil, fmt.Errorf("group history parse: %w", err)
+		}
+		return array, nil
 	}
 	items := raw.GroupMsgs
 	if len(items) == 0 {
 		items = raw.Msgs
 	}
 	if len(items) == 0 && len(raw.Data) > 0 {
+		nested := raw.Data
+		var nestedString string
+		if json.Unmarshal(nested, &nestedString) == nil && nestedString != "" {
+			nested = json.RawMessage(nestedString)
+		}
+		var array []map[string]any
+		if json.Unmarshal(nested, &array) == nil {
+			items = array
+		}
 		var inner struct {
 			GroupMsgs []map[string]any `json:"groupMsgs"`
 			Msgs      []map[string]any `json:"msgs"`
 		}
-		if json.Unmarshal(raw.Data, &inner) == nil {
+		if len(items) == 0 && json.Unmarshal(nested, &inner) == nil {
 			items = inner.GroupMsgs
 			if len(items) == 0 {
 				items = inner.Msgs
 			}
 		}
 	}
+	return items, nil
+}
 
+func groupHistoryMessagesFromItems(items []map[string]any) ([]Message, int) {
 	msgs := make([]Message, 0, len(items))
+	skipped := 0
 	for _, item := range items {
-		ts, _ := item["ts"].(float64)
-		msgType, _ := item["msgType"].(float64)
+		id := toString(item["msgId"])
+		ts := historyTimestamp(item["ts"])
+		if id == "" || ts <= 0 {
+			skipped++
+			continue
+		}
+		attachments := historyAttachments(item["content"])
+		msgType := historyMessageType(item["msgType"])
+		if msgType == 0 && len(attachments) > 0 {
+			msgType = MsgTypeImage
+		}
 		msgs = append(msgs, Message{
-			ID: toString(item["msgId"]), ConvID: toString(firstNonEmpty(item["grid"], item["idTo"], item["toid"])),
+			ID: id, ConvID: toString(firstNonEmpty(item["grid"], item["idTo"], item["toid"])),
 			FromID: toString(firstNonEmpty(item["uidFrom"], item["userId"])), FromName: toString(item["dName"]),
-			Content:   toString(item["content"]),
-			Timestamp: int64(ts), Type: MsgType(msgType),
+			Content:   historyContent(item["content"], len(attachments) > 0),
+			Timestamp: ts, Type: msgType, Attachments: attachments,
 		})
 	}
-	return msgs, nil
+	return msgs, skipped
+}
+
+func historyTimestamp(value any) int64 {
+	switch v := value.(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	case string:
+		var n int64
+		fmt.Sscanf(strings.TrimSpace(v), "%d", &n)
+		return n
+	}
+	return 0
+}
+
+func historyMessageType(value any) MsgType {
+	switch v := value.(type) {
+	case float64:
+		return MsgType(int(v))
+	case int64:
+		return MsgType(v)
+	case int:
+		return MsgType(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return MsgType(n)
+	case string:
+		var n int
+		fmt.Sscanf(strings.TrimSpace(v), "%d", &n)
+		return MsgType(n)
+	}
+	return 0
+}
+
+func historyContent(value any, hasAttachments bool) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case map[string]any:
+		if text := firstNonEmpty(toString(v["text"]), toString(v["title"]), toString(v["description"])); text != "" {
+			return text
+		}
+		if hasAttachments {
+			return ""
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(b)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprint(v)
+		}
+		return string(b)
+	}
+}
+
+func historyAttachments(value any) []Attachment {
+	content := historyContentObject(value)
+	if content == nil {
+		return nil
+	}
+	mediaURL := firstNonEmpty(toString(content["href"]), toString(content["thumb"]))
+	if mediaURL == "" {
+		return nil
+	}
+	width, height := historyMediaSize(content["params"])
+	return []Attachment{{
+		ID:     mediaURL,
+		URL:    mediaURL,
+		Width:  width,
+		Height: height,
+	}}
+}
+
+func historyContentObject(value any) map[string]any {
+	switch v := value.(type) {
+	case map[string]any:
+		return v
+	case string:
+		var obj map[string]any
+		if json.Unmarshal([]byte(v), &obj) == nil {
+			return obj
+		}
+	}
+	return nil
+}
+
+func historyMediaSize(value any) (int, int) {
+	var params map[string]any
+	switch v := value.(type) {
+	case map[string]any:
+		params = v
+	case string:
+		_ = json.Unmarshal([]byte(v), &params)
+	}
+	if params == nil {
+		return 0, 0
+	}
+	return int(historyTimestamp(params["width"])), int(historyTimestamp(params["height"]))
 }
 
 func (c *Client) setHeaders(req *http.Request) {

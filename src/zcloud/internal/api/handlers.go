@@ -974,13 +974,36 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 			lastID = conv.LastMsgID
 		}
 	}
-	if s.RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType, lastID) {
-		synced++
+	beforeCount, _ := s.Store.CountMessages(req.AccountID, req.ConvID)
+	wsSent := s.RequestOldMessagesViaListener(req.AccountID, req.ConvID, convType, lastID)
+
+	// 510/511 chỉ xác nhận đã gửi request, không đảm bảo Zalo trả dữ liệu.
+	// Chờ DB tăng trong thời gian ngắn; nếu WS im lặng thì dùng REST history.
+	afterCount := beforeCount
+	if wsSent {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+			afterCount, _ = s.Store.CountMessages(req.AccountID, req.ConvID)
+			if afterCount > beforeCount {
+				break
+			}
+		}
+	}
+	if afterCount > beforeCount {
+		synced += afterCount - beforeCount
+		if err := s.Store.RefreshConversationLastMessage(req.AccountID, req.ConvID); err != nil {
+			s.Logger.Error("conversation_last_message_refresh_failed",
+				"account_id", req.AccountID, "conversation_id", req.ConvID, "error", err)
+		}
 	}
 
-	// REST fallback: nếu WS không chạy hoặc không có response, thử lấy history
-	// qua REST để không để UI trống.
-	if convType == 1 && synced == 0 {
+	// REST fallback cho group khi WS không chạy hoặc không trả thêm message.
+	if needsGroupHistoryFallback(convType, wsSent, beforeCount, afterCount) {
 		sessRec, err := s.Store.GetActiveSession(req.AccountID)
 		if err == nil && sessRec != nil {
 			var cookies map[string]string
@@ -998,22 +1021,61 @@ func (s *Server) HandleSyncMessages(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
 			msgs, err := client.GetGroupHistoryV2(ctx, req.ConvID, 50)
+			if err != nil || len(msgs) == 0 {
+				if legacyMsgs, legacyErr := client.GetGroupHistory(ctx, req.ConvID, 50); legacyErr == nil && len(legacyMsgs) > 0 {
+					msgs, err = legacyMsgs, nil
+				} else if legacyErr != nil {
+					s.Logger.Warn("group_history_legacy_fallback_failed",
+						"account_id", req.AccountID, "conversation_id", req.ConvID, "error", legacyErr)
+				}
+			}
 			if err == nil {
 				for _, m := range msgs {
+					if m.ID == "" {
+						continue
+					}
 					attJSON, _ := json.Marshal(m.Attachments)
-					s.Store.SaveMessage(&store.Message{
+					if err := s.Store.SaveGroupHistoryMessage(&store.Message{
 						ID: m.ID, AccountID: req.AccountID, ConvID: req.ConvID,
 						FromID: m.FromID, FromName: m.FromName, Content: m.Content,
 						MsgType: int(m.Type), Timestamp: m.Timestamp, Attachments: string(attJSON),
-					})
+					}); err != nil {
+						s.Logger.Error("group_history_message_save_failed",
+							"account_id", req.AccountID, "conversation_id", req.ConvID,
+							"message_id", m.ID, "error", err)
+					}
+				}
+				restCount, _ := s.Store.CountMessages(req.AccountID, req.ConvID)
+				added := restCount - afterCount
+				if added > 0 {
+					synced += added
 				}
 				if len(msgs) > 0 {
-					synced++
+					if err := s.Store.RefreshConversationLastMessage(req.AccountID, req.ConvID); err != nil {
+						s.Logger.Error("conversation_last_message_refresh_failed",
+							"account_id", req.AccountID, "conversation_id", req.ConvID, "error", err)
+					}
 				}
+				s.Logger.Info("group_history_fallback_completed",
+					"account_id", req.AccountID, "conversation_id", req.ConvID,
+					"messages", len(msgs), "added", added)
+				if len(msgs) > 0 && added == 0 {
+					s.Logger.Warn("group_history_messages_not_inserted",
+						"account_id", req.AccountID, "conversation_id", req.ConvID,
+						"first_message_id", msgs[0].ID, "first_timestamp", msgs[0].Timestamp,
+						"first_type", msgs[0].Type)
+				}
+			} else {
+				s.Logger.Warn("group_history_fallback_failed",
+					"account_id", req.AccountID, "conversation_id", req.ConvID, "error", err)
 			}
 		}
 	}
-	ok(w, map[string]interface{}{"syncing": synced > 0, "synced": synced})
+	ok(w, map[string]interface{}{"syncing": wsSent || synced > 0, "synced": synced})
+}
+
+func needsGroupHistoryFallback(convType int, wsSent bool, beforeCount, afterCount int) bool {
+	return convType == int(core.ConvGroup) && (!wsSent || afterCount <= beforeCount)
 }
 
 // HandleFriends trả về danh sách friend cache trong DB (bảng contacts) cho
