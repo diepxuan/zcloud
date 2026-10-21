@@ -63,6 +63,76 @@ func TestParseNewMessagesGroupWrapped(t *testing.T) {
 	}
 }
 
+// TestParseNewMessagesGroupWithoutGridUsesIDTo: một số payload groupMsgs
+// không có grid. GroupMessage của zca-js dùng idTo làm threadId; không được
+// fallback conversation về uid người gửi.
+func TestParseNewMessagesGroupWithoutGridUsesIDTo(t *testing.T) {
+	w := &WSClient{
+		msgChan:   make(chan Event, 4),
+		errChan:   make(chan error, 2),
+		closeChan: make(chan CloseEvent, 1),
+		session:   &Session{UserID: "me"},
+	}
+	payload := []byte(`{"error_code":0,"data":{"groupMsgs":[
+		{"msgId":"g2","uidFrom":"member-1","dName":"Member","idTo":"group-1","content":"hello","ts":1700000010000,"msgType":1}
+	]}}`)
+	w.handleNewMessages(payload, ThreadGroup)
+
+	got := drainEventsAll(w.msgChan, 1, 200*time.Millisecond)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(got))
+	}
+	if got[0].Message.ConvID != "group-1" {
+		t.Fatalf("ConvID=%q want group-1", got[0].Message.ConvID)
+	}
+	if got[0].Message.FromID != "member-1" {
+		t.Fatalf("FromID=%q want member-1", got[0].Message.FromID)
+	}
+}
+
+// TestParseNewMessagesGroupUnknownConversationSkipped: không được đoán group
+// conversation từ uid người gửi rồi ghi vào chat riêng.
+func TestParseNewMessagesGroupUnknownConversationSkipped(t *testing.T) {
+	w := &WSClient{
+		msgChan:   make(chan Event, 4),
+		errChan:   make(chan error, 2),
+		closeChan: make(chan CloseEvent, 1),
+		session:   &Session{UserID: "me"},
+	}
+	payload := []byte(`{"groupMsgs":[
+		{"msgId":"g3","uidFrom":"member-1","content":"missing thread","ts":1700000010000,"msgType":1}
+	]}`)
+	w.handleNewMessages(payload, ThreadGroup)
+
+	got := drainEventsAll(w.msgChan, 0, 200*time.Millisecond)
+	if len(got) != 0 {
+		t.Fatalf("expected no event, got %+v", got)
+	}
+}
+
+// TestParseOldMessagesGroupWithoutGridUsesIDTo: nhánh 511 cũng phải giữ
+// conversation group khi payload thiếu grid.
+func TestParseOldMessagesGroupWithoutGridUsesIDTo(t *testing.T) {
+	w := &WSClient{
+		msgChan:   make(chan Event, 4),
+		errChan:   make(chan error, 2),
+		closeChan: make(chan CloseEvent, 1),
+		session:   &Session{UserID: "me"},
+	}
+	payload := []byte(`{"groupMsgs":[
+		{"msgId":"g4","uidFrom":"member-1","idTo":"group-2","content":"old","ts":1700000010000,"msgType":1}
+	]}`)
+	w.handleOldMessages(payload, ThreadGroup)
+
+	got := drainEventsAll(w.msgChan, 1, 200*time.Millisecond)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(got))
+	}
+	if got[0].Message.ConvID != "group-2" {
+		t.Fatalf("ConvID=%q want group-2", got[0].Message.ConvID)
+	}
+}
+
 // TestParseNewMessagesPlainRoot: tương thích ngược — payload không wrap vẫn parse.
 func TestParseNewMessagesPlainRoot(t *testing.T) {
 	w := &WSClient{

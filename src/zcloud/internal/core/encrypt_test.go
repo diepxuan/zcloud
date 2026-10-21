@@ -1,7 +1,6 @@
 package core
 
 import (
-	"fmt"
 	"bytes"
 	"compress/gzip"
 	"crypto/aes"
@@ -9,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -203,7 +203,7 @@ func TestWSMessageParseAndMedia(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("len=%d", len(msgs))
 	}
-	msg := msgs[0].toMessage(&Session{UserID: "me"})
+	msg := msgs[0].toMessage(&Session{UserID: "me"}, ThreadUser)
 	if msg.ID != "m1" || msg.ConvID != "u1" || msg.Type != MsgTypeImage {
 		t.Fatalf("bad msg: %+v", msg)
 	}

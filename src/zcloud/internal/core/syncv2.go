@@ -314,7 +314,7 @@ func (c *SyncV2Client) DecryptMessages(batch *PullBatchResponse) ([]Message, err
 			slog.Error("syncv2_parse_message_failed", "session_id", pm.SessionID, "error", err)
 			continue
 		}
-		out = append(out, *m.toMessage(c.session))
+		out = append(out, *m.toMessage(c.session, ThreadUser))
 	}
 	return out, nil
 }

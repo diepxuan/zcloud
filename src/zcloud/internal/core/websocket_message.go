@@ -43,7 +43,7 @@ type wsMention struct {
 	Name string `json:"name,omitempty"`
 }
 
-func (m wsMessage) toMessage(session *Session) *Message {
+func (m wsMessage) toMessage(session *Session, tt ThreadType) *Message {
 	msgID := m.MsgID
 	if msgID == "" {
 		msgID = m.CliMsgID
@@ -64,17 +64,21 @@ func (m wsMessage) toMessage(session *Session) *Message {
 	}
 	// Thread của tin 1-1 luôn là phía đối phương (xem zca-js UserMessage):
 	// mình gửi thì thread là người nhận, mình nhận thì thread là người gửi.
-	// Tin nhóm luôn dùng `grid`.
+	// Với group, zca-js GroupMessage dùng idTo làm threadId; grid là ưu tiên
+	// bổ sung khi payload có. Không bao giờ fallback group về uid người gửi.
 	convID := skipZero(m.Grid)
 	if convID == "" {
-		if isSelf {
+		if tt == ThreadGroup {
+			convID = firstNonEmptyID(m.IDTo, m.ConvID, m.ToID)
+		} else if isSelf {
 			convID = firstNonEmptyID(m.IDTo, m.ToID, m.ConvID)
 		} else {
 			convID = firstNonEmptyID(fromID, m.IDTo, m.ToID, m.ConvID)
 		}
 	}
-	// Không xác định được đối phương (vd tin tự gửi cho chính mình).
-	if convID == "" {
+	// Chỉ self-thread 1-1 mới được fallback về uid của chính account.
+	// Group thiếu conversation phải giữ rỗng để caller skip, tránh ghi bẩn.
+	if convID == "" && tt != ThreadGroup {
 		convID = selfUID
 	}
 	msg := &Message{
@@ -229,4 +233,3 @@ func (m wsMessage) msgType() MsgType {
 	json.Unmarshal(m.Type, &n)
 	return MsgType(n)
 }
-

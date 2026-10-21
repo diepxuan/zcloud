@@ -91,7 +91,17 @@ func (w *WSClient) parseMessages(msgsRaw json.RawMessage, evtType EventType, tt 
 		if m.MsgID == "" && m.CliMsgID == "" {
 			continue
 		}
-		evt := Event{Type: evtType, Message: m.toMessage(w.session)}
+		msg := m.toMessage(w.session, tt)
+		if msg.ConvID == "" {
+			id := m.MsgID
+			if id == "" {
+				id = m.CliMsgID
+			}
+			slog.Warn("ws_message_missing_conversation",
+				"message_id", id, "sender_id", m.FromUID, "thread_type", tt)
+			continue
+		}
+		evt := Event{Type: evtType, Message: msg}
 		select {
 		case w.msgChan <- evt:
 		default:

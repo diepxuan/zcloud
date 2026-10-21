@@ -302,7 +302,7 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, []Messag
 	lastByConv := map[string]*Message{}
 	var lastMessages []Message
 	if dataObj, ok := rawData["data"].(map[string]any); ok {
-		collect := func(arr []any) {
+		collect := func(arr []any, tt ThreadType) {
 			for _, item := range arr {
 				m, ok := item.(map[string]any)
 				if !ok {
@@ -316,11 +316,13 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, []Messag
 					DName:    toString(m["dName"]),
 					Grid:     toString(m["grid"]),
 					IDTo:     toString(m["idTo"]),
+					ConvID:   toString(m["convId"]),
+					ToID:     toString(m["toid"]),
 					UID:      toString(m["userId"]),
 					TS:       toRaw(m["ts"]),
 					Type:     toRaw(m["msgType"]),
 				}
-				msg := wm.toMessage(c.Session)
+				msg := wm.toMessage(c.Session, tt)
 				if msg == nil || msg.ID == "" || msg.ConvID == "" {
 					continue
 				}
@@ -334,10 +336,10 @@ func (c *Client) GetConversations(ctx context.Context) ([]Conversation, []Messag
 			}
 		}
 		if msgs, ok := dataObj["msgs"].([]any); ok {
-			collect(msgs)
+			collect(msgs, ThreadUser)
 		}
 		if gmsgs, ok := dataObj["groupMsgs"].([]any); ok {
-			collect(gmsgs)
+			collect(gmsgs, ThreadGroup)
 		}
 	}
 	for i := range convs {
