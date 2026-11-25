@@ -730,6 +730,43 @@ Kết quả live:
   từ 0 → 1 message.
 - 46 group còn trống được Zalo trả `groupMsgs=[]`; không bịa lịch sử.
 
+## 5.29. Ops — DB down 7 ngày do OOM, bật auto-restart + tune Postgres (25/11/2026)
+
+Sếp báo nghi DB không hoạt động. Kiểm tra xác định cluster
+`postgresql@18-main` trên `postgresql.diepxuan.corp` (10.0.0.105) đã down từ
+**18/11 19:51** đến **25/11 13:57**, zcloud log `connection refused` mỗi 5s.
+
+**Nguyên nhân gốc:**
+
+- OOM killer giết PostgreSQL (`Failed with result 'oom-kill'`, cgroup
+  `oom_kill=9`). Container khi đó 1GB RAM, 0 swap; `ductnd.service` chiếm
+  ~230MB; Postgres để mặc định `shared_buffers=128MB`, `max_connections=100`.
+- Lúc recovery sau crash, zcloud dồn 57 kết nối trong 0.3s (mỗi attempt FATAL
+  vẫn fork backend) → tăng áp lực RAM.
+- Unit Debian `postgresql@.service` có `#Restart=on-failure` bị comment nên
+  không tự start lại. `postgresql.service` meta chỉ là `/bin/true`, luôn
+  `active`. `/api/health` không ping DB nên vẫn trả `ok:true` suốt 7 ngày.
+
+**Đã fix (Sếp duyệt mục 1+2):**
+
+- Drop-in `/etc/systemd/system/postgresql@18-main.service.d/override.conf`:
+  `Restart=on-failure`, `RestartSec=5`, `StartLimitIntervalSec=300`,
+  `StartLimitBurst=5`. Verify thật: SIGKILL postmaster lúc 14:02:54, service
+  active lại sau 8s, `NRestarts=1`, dữ liệu nguyên vẹn.
+- RAM container nâng lên 2GB (Sếp làm). Tune qua `ALTER SYSTEM` (backup
+  `postgresql.conf.bak-20261125-140157`): `shared_buffers=256MB`,
+  `effective_cache_size=768MB`, `wal_buffers=16MB`, `max_connections=60`,
+  `max_worker_processes=4`, `max_parallel_workers=2`,
+  `max_parallel_workers_per_gather=1`.
+- Giảm pool zcloud `max_open_conns` 50 → 20 trong
+  `~/.config/ductn/zcloud.yml` (backup `.bak-20261125-140212`), restart zcloud.
+
+**Verify:** cluster online, `messages=40768`, 2 account đọc bình thường, 12
+backend, RAM dùng ~402MB/2048MB.
+
+**Còn đề xuất (chưa làm, chờ Sếp):** `/api/health` ping DB, backoff khi DB
+down thay vì retry 5s, monitor TCP 5432 + alert, xem lại `ductnd.service`.
+
 ## 6. References
 
 | Lib | Lang | Stars | Path |
